@@ -1,0 +1,19 @@
+node_modules/
+dist/
+out/
+*.log
+.env
+__pycache__/
+.venv/
+.pytest_cache/
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+.zcode/
+
+# Local-only project files — never pushed to GitHub (history preserved on backup/full-history)
+docs/
+AGENTS.md
+STACK.md
+PROGRESS.md
