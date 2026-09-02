@@ -1,0 +1,26 @@
+@import './base.css';
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  user-select: none;
+}
+
+#root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+
+.container {
+  text-align: center;
+  color: var(--ev-c-text-1);
+}
+
+.container p {
+  color: var(--ev-c-text-2);
+  font-size: 14px;
+}
