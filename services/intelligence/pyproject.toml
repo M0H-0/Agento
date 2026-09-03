@@ -1,0 +1,17 @@
+[project]
+name = "agento-intelligence"
+version = "0.1.0"
+description = "Agento's Python intelligence sidecar: trust layer, document engine, eval harness."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pydantic>=2",
+]
+
+[tool.uv]
+# Not a packaged project: no build backend, so uv.lock holds only the three
+# runtime dependencies (plus their transitive closure). The spawn contract
+# (docs/02 §2.4) runs uvicorn from this directory; uvicorn puts the cwd on
+# sys.path, which is how the `agento_intelligence` package resolves.
+package = false
