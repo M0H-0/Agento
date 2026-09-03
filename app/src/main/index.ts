@@ -1,8 +1,9 @@
-import { app, shell, BrowserWindow } from 'electron'
+import { app, dialog, shell, BrowserWindow } from 'electron'
 import { join, resolve } from 'path'
 import icon from '../../resources/icon.png?asset'
 import { registerChatIpc } from './ipc/chat'
 import { registerSidecarIpc } from './ipc/sidecar'
+import { dbFilePath, openDatabase, runSmokeQuery } from './storage/db'
 import { generateSidecarToken, killSidecar, onSidecarStatusChange, startSidecar } from './sidecar'
 
 function createWindow(): void {
@@ -46,6 +47,28 @@ function createWindow(): void {
 app.whenReady().then(() => {
   // Set app user model id for windows
   app.setAppUserModelId('com.agento.app')
+
+  // Storage gate (docs/02 §2.5, §4 step 1): open SQLite and prove it works
+  // before anything else starts. Docs/08 §7 DB gate — the select-1 smoke under
+  // Electron. On failure the launch is over: say so plainly and quit; the
+  // repos that come later (M1.3) report their own errors.
+  try {
+    const db = openDatabase(app.getPath('userData'))
+    runSmokeQuery(db)
+    const journalMode = db.pragma('journal_mode', { simple: true })
+    console.log(
+      `[storage] opened ${dbFilePath(app.getPath('userData'))} — journal_mode=${String(journalMode)}, select-1 smoke ok`
+    )
+  } catch (err) {
+    console.error('[storage] DB gate failed:', err)
+    dialog.showErrorBox(
+      'Agento',
+      `Agento could not open its data file at ${dbFilePath(app.getPath('userData'))}. ` +
+        (err instanceof Error ? err.message : String(err))
+    )
+    app.quit()
+    return
+  }
 
   // Chat transport contract (docs/02 §2.1): 'chat:send' invoke + 'chat:part' events.
   registerChatIpc()

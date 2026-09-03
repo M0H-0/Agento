@@ -1,5 +1,6 @@
 {
   "name": "agento",
+  "productName": "Agento",
   "version": "1.0.0",
   "description": "Agento — local-first desktop AI agent for Windows",
   "main": "./out/main/index.js",
@@ -25,12 +26,14 @@
     "@ai-sdk/react": "2.0.253",
     "@assistant-ui/react": "0.11.56",
     "@assistant-ui/react-ai-sdk": "1.1.21",
-    "ai": "5.0.250"
+    "ai": "5.0.250",
+    "better-sqlite3": "12.11.1"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",
     "@electron-toolkit/eslint-config-ts": "^3.1.0",
     "@electron-toolkit/tsconfig": "^2.0.0",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.19.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
