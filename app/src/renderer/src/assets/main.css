@@ -160,3 +160,156 @@ body {
   background: var(--status-dot-unhealthy);
 }
 
+/* Settings (M1.1) — fixed chrome entry beside the status dot + modal dialog
+   (docs/04 §3.7, Providers section only; M6.3 adds the other sections). */
+.settings-button {
+  position: fixed;
+  top: 0.55rem;
+  right: 1.9rem;
+  padding: 0.15rem 0.45rem;
+  border: none;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--ev-c-text-2);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  z-index: 1000;
+}
+
+.settings-button:hover {
+  color: var(--ev-c-text-1);
+  background: var(--ev-c-gray-3);
+}
+
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 1100;
+}
+
+.settings-dialog {
+  width: min(26rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 4rem);
+  overflow-y: auto;
+  padding: 1.25rem;
+  background: var(--ev-c-black-soft);
+  border: 1px solid var(--ev-c-gray-3);
+  border-radius: 0.75rem;
+  box-shadow: 0 1rem 2.5rem rgba(0, 0, 0, 0.45);
+  outline: none;
+}
+
+.settings-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.settings-heading {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ev-c-text-2);
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.settings-label {
+  font-size: 0.8rem;
+  color: var(--ev-c-text-2);
+}
+
+.settings-select,
+.settings-input {
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--ev-c-gray-3);
+  border-radius: 0.5rem;
+  background: var(--ev-c-black);
+  color: var(--ev-c-text-1);
+  font: inherit;
+  font-size: 0.875rem;
+  outline: none;
+}
+
+.settings-select:focus,
+.settings-input:focus {
+  border-color: var(--ev-c-gray-1);
+}
+
+.settings-key-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.settings-key-row .settings-input {
+  flex: 1;
+}
+
+.settings-key-display {
+  flex: 1;
+  padding: 0.4rem 0.55rem;
+  border: 1px dashed var(--ev-c-gray-3);
+  border-radius: 0.5rem;
+  color: var(--ev-c-text-2);
+  font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+  letter-spacing: 0.05em;
+  user-select: none;
+}
+
+.settings-save,
+.settings-remove {
+  padding: 0.4rem 0.9rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: var(--ev-c-gray-1);
+  color: var(--ev-c-text-1);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-save:hover:not(:disabled),
+.settings-remove:hover:not(:disabled) {
+  background: var(--ev-c-gray-2);
+}
+
+.settings-save:disabled,
+.settings-remove:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.settings-warning {
+  font-size: 0.8rem;
+  font-style: italic;
+  color: var(--ev-c-text-2);
+}
+
+.settings-error {
+  font-size: 0.8rem;
+  color: var(--ev-c-text-2);
+}
+
+.settings-note {
+  font-size: 0.875rem;
+  color: var(--ev-c-text-2);
+}
+

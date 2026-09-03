@@ -30,9 +30,47 @@ export interface AgentoSidecar {
   onStatus: (listener: (event: SidecarStatusEvent) => void) => () => void
 }
 
+export interface SettingsSnapshot {
+  provider: string
+  model: string
+  /** True when a key is stored for the selected provider (docs/06 §7). */
+  hasKey: boolean
+  /** Last 4 chars of the stored key; '' when absent — never the key itself. */
+  keyLast4: string
+  /** False when OS-level encryption is unavailable: keys stay session-only. */
+  storageAvailable: boolean
+  /** Curated model ids for the provider; main is the source of truth. */
+  models: string[]
+}
+
+export interface SetApiKeyPayload {
+  provider: string
+  key: string
+}
+
+export interface SetModelPayload {
+  model: string
+}
+
+export interface ClearApiKeyPayload {
+  provider: string
+}
+
+export interface AgentoSettings {
+  /** Invoke 'settings:get' — snapshot for the selected provider (docs/03 §4). */
+  get: () => Promise<SettingsSnapshot>
+  /** Invoke 'settings:set-api-key' — main stores the key via safeStorage (docs/06 §7). */
+  setApiKey: (payload: SetApiKeyPayload) => Promise<void>
+  /** Invoke 'settings:set-model'. */
+  setModel: (payload: SetModelPayload) => Promise<void>
+  /** Invoke 'settings:clear-api-key'. */
+  clearApiKey: (payload: ClearApiKeyPayload) => Promise<void>
+}
+
 export interface AgentoAPI {
   chat: AgentoChat
   sidecar: AgentoSidecar
+  settings: AgentoSettings
 }
 
 declare global {

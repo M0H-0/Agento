@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { useAISDKRuntime } from '@assistant-ui/react-ai-sdk'
 import {
@@ -7,6 +8,7 @@ import {
   ThreadPrimitive
 } from '@assistant-ui/react'
 import { ipcChatTransport } from './chat/transport'
+import SettingsDialog from './components/SettingsDialog'
 import SidecarStatusDot from './components/SidecarStatusDot'
 
 function MessageText({ text }: { text: string }): React.JSX.Element {
@@ -62,13 +64,37 @@ function App(): React.JSX.Element {
   // assistant-ui Thread.
   const chat = useChat({ transport: ipcChatTransport })
   const runtime = useAISDKRuntime(chat)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
+  // ⌘/Ctrl+, opens Settings (docs/04 §7). Renderer-side keydown rather than an
+  // Electron Menu accelerator: no Menu exists (autoHideMenuBar) and pure UI
+  // state needs no extra push channel.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if ((event.ctrlKey || event.metaKey) && event.key === ',') {
+        event.preventDefault()
+        setSettingsOpen((open) => !open)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   return (
     <>
       <SidecarStatusDot />
+      <button
+        type="button"
+        className="settings-button"
+        onClick={() => setSettingsOpen(true)}
+        aria-haspopup="dialog"
+      >
+        Settings
+      </button>
       <AssistantRuntimeProvider runtime={runtime}>
         <Thread />
       </AssistantRuntimeProvider>
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </>
   )
 }

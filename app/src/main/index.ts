@@ -2,7 +2,9 @@ import { app, dialog, shell, BrowserWindow } from 'electron'
 import { join, resolve } from 'path'
 import icon from '../../resources/icon.png?asset'
 import { registerChatIpc } from './ipc/chat'
+import { registerSettingsIpc } from './ipc/settings'
 import { registerSidecarIpc } from './ipc/sidecar'
+import { initSettings } from './settings'
 import { dbFilePath, openDatabase, runSmokeQuery } from './storage/db'
 import { generateSidecarToken, killSidecar, onSidecarStatusChange, startSidecar } from './sidecar'
 
@@ -70,8 +72,17 @@ app.whenReady().then(() => {
     return
   }
 
+  // Settings + secrets (docs/06 §7 split): preferences in settings.json,
+  // provider keys ONLY in safeStorage-encrypted secrets.bin. Runs before its
+  // IPC registers so every handler answers from initialized state.
+  initSettings(app.getPath('userData'))
+
   // Chat transport contract (docs/02 §2.1): 'chat:send' invoke + 'chat:part' events.
   registerChatIpc()
+
+  // Settings contract (docs/03 §4): 'settings:get' + 'settings:set-api-key' +
+  // 'settings:set-model' + 'settings:clear-api-key' invokes.
+  registerSettingsIpc()
 
   // Sidecar status contract (docs/03 §4): 'sidecar:get-status' invoke +
   // 'sidecar:status' push. Subscribe before spawning so no transition is missed.
