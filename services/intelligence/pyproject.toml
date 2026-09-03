@@ -11,7 +11,13 @@ dependencies = [
 
 [tool.uv]
 # Not a packaged project: no build backend, so uv.lock holds only the three
-# runtime dependencies (plus their transitive closure). The spawn contract
-# (docs/02 §2.4) runs uvicorn from this directory; uvicorn puts the cwd on
-# sys.path, which is how the `agento_intelligence` package resolves.
+# runtime dependencies (plus their transitive closure) and the dev group
+# (pytest). The spawn contract (docs/02 §2.4) runs uvicorn from this
+# directory; uvicorn puts the cwd on sys.path, which is how the
+# `agento_intelligence` package resolves.
 package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
