@@ -1,6 +1,7 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import icon from '../../resources/icon.png?asset'
+import { registerChatIpc } from './ipc/chat'
 
 function createWindow(): void {
   // Create the browser window.
@@ -44,9 +45,8 @@ app.whenReady().then(() => {
   // Set app user model id for windows
   app.setAppUserModelId('com.agento.app')
 
-  // Minimal proof-of-wiring handler behind the typed preload bridge.
-  // Real IPC contracts (src/main/ipc/) arrive in M0.3.
-  ipcMain.handle('agento:ping', () => 'pong')
+  // Chat transport contract (docs/02 §2.1): 'chat:send' invoke + 'chat:part' events.
+  registerChatIpc()
 
   createWindow()
 
