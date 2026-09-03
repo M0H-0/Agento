@@ -1,7 +1,9 @@
 import { app, shell, BrowserWindow } from 'electron'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import icon from '../../resources/icon.png?asset'
 import { registerChatIpc } from './ipc/chat'
+import { registerSidecarIpc } from './ipc/sidecar'
+import { generateSidecarToken, killSidecar, onSidecarStatusChange, startSidecar } from './sidecar'
 
 function createWindow(): void {
   // Create the browser window.
@@ -48,6 +50,20 @@ app.whenReady().then(() => {
   // Chat transport contract (docs/02 §2.1): 'chat:send' invoke + 'chat:part' events.
   registerChatIpc()
 
+  // Sidecar status contract (docs/03 §4): 'sidecar:get-status' invoke +
+  // 'sidecar:status' push. Subscribe before spawning so no transition is missed.
+  registerSidecarIpc()
+  onSidecarStatusChange((event) => {
+    // Push to every window — the focused window alone goes stale when blurred.
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('sidecar:status', event)
+    }
+  })
+
+  // Sidecar lifecycle (docs/02 §2.4): per-launch token, spawn, /health polling.
+  // Dev layout: services/intelligence sits beside app/; packaged layout is M6.6.
+  startSidecar(generateSidecarToken(), resolve(app.getAppPath(), '..', 'services', 'intelligence'))
+
   createWindow()
 
   app.on('activate', function () {
@@ -64,4 +80,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+// Tree-kill the sidecar process chain (uv→uvicorn→python) on quit so nothing
+// is left holding port 7891 (docs/02 §2.4).
+app.on('before-quit', () => {
+  killSidecar()
 })

@@ -7,6 +7,7 @@ import {
   ThreadPrimitive
 } from '@assistant-ui/react'
 import { ipcChatTransport } from './chat/transport'
+import SidecarStatusDot from './components/SidecarStatusDot'
 
 function MessageText({ text }: { text: string }): React.JSX.Element {
   return <div className="message-text">{text}</div>
@@ -63,9 +64,12 @@ function App(): React.JSX.Element {
   const runtime = useAISDKRuntime(chat)
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <Thread />
-    </AssistantRuntimeProvider>
+    <>
+      <SidecarStatusDot />
+      <AssistantRuntimeProvider runtime={runtime}>
+        <Thread />
+      </AssistantRuntimeProvider>
+    </>
   )
 }
 

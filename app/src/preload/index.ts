@@ -14,6 +14,13 @@ export interface ChatPartEvent {
   part: UIMessageChunk
 }
 
+// Sidecar status contract per docs/03 §4: app-level push + pull, deliberately
+// not a session-scoped 'agent:event' (no sessionId/runId exists for it).
+export interface SidecarStatusEvent {
+  status: 'starting' | 'healthy' | 'unhealthy'
+  detail?: string
+}
+
 const agento = {
   chat: {
     send: (payload: ChatSendPayload): Promise<void> => ipcRenderer.invoke('chat:send', payload),
@@ -23,6 +30,17 @@ const agento = {
       ipcRenderer.on('chat:part', handler)
       return () => {
         ipcRenderer.removeListener('chat:part', handler)
+      }
+    }
+  },
+  sidecar: {
+    getStatus: (): Promise<SidecarStatusEvent> => ipcRenderer.invoke('sidecar:get-status'),
+    onStatus: (listener: (event: SidecarStatusEvent) => void): (() => void) => {
+      const handler = (_event: IpcRendererEvent, statusEvent: SidecarStatusEvent): void =>
+        listener(statusEvent)
+      ipcRenderer.on('sidecar:status', handler)
+      return () => {
+        ipcRenderer.removeListener('sidecar:status', handler)
       }
     }
   }

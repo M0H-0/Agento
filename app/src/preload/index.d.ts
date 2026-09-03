@@ -16,8 +16,23 @@ export interface AgentoChat {
   onPart: (listener: (event: ChatPartEvent) => void) => () => void
 }
 
+export type SidecarStatus = 'starting' | 'healthy' | 'unhealthy'
+
+export interface SidecarStatusEvent {
+  status: SidecarStatus
+  detail?: string
+}
+
+export interface AgentoSidecar {
+  /** Invoke 'sidecar:get-status' — current sidecar health (docs/03 §4). */
+  getStatus: () => Promise<SidecarStatusEvent>
+  /** Subscribe to 'sidecar:status' pushes; returns an unsubscribe function. */
+  onStatus: (listener: (event: SidecarStatusEvent) => void) => () => void
+}
+
 export interface AgentoAPI {
   chat: AgentoChat
+  sidecar: AgentoSidecar
 }
 
 declare global {

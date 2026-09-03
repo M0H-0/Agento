@@ -136,3 +136,27 @@ body {
   cursor: default;
 }
 
+/* Sidecar status dot (M0.5) — fixed app chrome, top-right. Semantic green/red
+   only for status (docs/04 visual language); gray = starting. */
+.status-dot {
+  --status-dot-healthy: #22c55e;
+  --status-dot-unhealthy: #ef4444;
+  position: fixed;
+  top: 0.9rem;
+  right: 1rem;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 9999px;
+  background: var(--ev-c-gray-3);
+  transition: background 160ms ease;
+  z-index: 1000;
+}
+
+.status-dot--healthy {
+  background: var(--status-dot-healthy);
+}
+
+.status-dot--unhealthy {
+  background: var(--status-dot-unhealthy);
+}
+
