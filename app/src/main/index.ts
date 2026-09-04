@@ -2,6 +2,7 @@ import { app, dialog, shell, BrowserWindow } from 'electron'
 import { join, resolve } from 'path'
 import icon from '../../resources/icon.png?asset'
 import { registerChatIpc } from './ipc/chat'
+import { registerSessionsIpc } from './ipc/sessions'
 import { registerSettingsIpc } from './ipc/settings'
 import { registerSidecarIpc } from './ipc/sidecar'
 import { initSettings } from './settings'
@@ -46,20 +47,23 @@ function createWindow(): void {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Set app user model id for windows
   app.setAppUserModelId('com.agento.app')
 
-  // Storage gate (docs/02 §2.5, §4 step 1): open SQLite and prove it works
-  // before anything else starts. Docs/08 §7 DB gate — the select-1 smoke under
-  // Electron. On failure the launch is over: say so plainly and quit; the
-  // repos that come later (M1.3) report their own errors.
+  // Storage gate (docs/02 §2.5, §4 step 1): open SQLite, run the drizzle-kit
+  // migrations, and prove it works before anything else starts. Docs/08 §7 DB
+  // gate — the select-1 smoke under Electron. On failure the launch is over:
+  // say so plainly and quit; the repos report their own errors afterwards.
+  // The migrations folder lives beside the sources in dev; how it reaches a
+  // packaged build is an M6.6 question (app is dev-only until then).
   try {
-    const db = openDatabase(app.getPath('userData'))
+    const migrationsFolder = join(app.getAppPath(), 'drizzle')
+    const db = await openDatabase(app.getPath('userData'), migrationsFolder)
     runSmokeQuery(db)
     const journalMode = db.pragma('journal_mode', { simple: true })
     console.log(
-      `[storage] opened ${dbFilePath(app.getPath('userData'))} — journal_mode=${String(journalMode)}, select-1 smoke ok`
+      `[storage] opened ${dbFilePath(app.getPath('userData'))} — journal_mode=${String(journalMode)}, migrations applied from ${migrationsFolder}, select-1 smoke ok`
     )
   } catch (err) {
     console.error('[storage] DB gate failed:', err)
@@ -79,6 +83,10 @@ app.whenReady().then(() => {
 
   // Chat transport contract (docs/02 §2.1): 'chat:send' invoke + 'chat:part' events.
   registerChatIpc()
+
+  // Sessions contract (docs/03 §4): 'session:create' + 'session:list' +
+  // 'session:messages' invokes — lazy session rows for the sidebar.
+  registerSessionsIpc()
 
   // Settings contract (docs/03 §4): 'settings:get' + 'settings:set-api-key' +
   // 'settings:set-model' + 'settings:clear-api-key' invokes.

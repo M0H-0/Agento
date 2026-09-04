@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 
-// Settings modal (docs/04 §3.7): M1.1 ships ONLY the Providers section —
-// provider dropdown (Google AI Studio enabled; the rest are honest "later"
+// Settings modal (docs/04 §3.7): the Providers section — provider dropdown
+// (Google AI Studio + Groq enabled this phase; the rest are honest "later"
 // stubs), API-key entry stored via safeStorage (docs/06 §7), and the model
-// pick. Keys are never rendered back: after a save the dialog shows
-// "•••• <last4>", which is all main ever sends. Permissions / Appearance /
-// Data sections arrive with M6.3.
+// pick for the active provider. Keys are never rendered back: after a save
+// the dialog shows "•••• <last4>", which is all main ever sends. Permissions
+// / Appearance / Data sections arrive with M6.3.
 
 // Structural mirror of SettingsSnapshot in src/preload/index.d.ts — the
 // renderer consumes window.agento typed globally and doesn't import preload.
@@ -15,7 +15,15 @@ interface SettingsSnapshot {
   hasKey: boolean
   keyLast4: string
   storageAvailable: boolean
+  providers: string[]
   models: string[]
+}
+
+// Enabled-provider labels; anything in the dropdown beyond snapshot.providers
+// stays a disabled stub (main decides what's enabled, docs/04 §3.7).
+const PROVIDER_LABELS: Record<string, string> = {
+  google: 'Google AI Studio',
+  groq: 'Groq'
 }
 
 interface SettingsDialogProps {
@@ -110,6 +118,22 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
       .finally(() => setBusy(false))
   }
 
+  const changeProvider = (provider: string): void => {
+    if (snapshot === null || provider === snapshot.provider) return
+    setBusy(true)
+    // Clear any in-progress key draft: it belonged to the previous provider.
+    setKeyDraft('')
+    window.agento.settings
+      .setProvider({ provider })
+      .then(() => window.agento.settings.get())
+      .then((next) => {
+        setSnapshot(next)
+        setError(null)
+      })
+      .catch(() => setError('Changing the provider failed.'))
+      .finally(() => setBusy(false))
+  }
+
   if (!open) return null
 
   const maskedKey = snapshot?.keyLast4 === '' ? '••••' : `•••• ${snapshot?.keyLast4 ?? ''}`
@@ -143,17 +167,20 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
               <span className="settings-label" id="settings-provider-label">
                 Provider
               </span>
-              {/* Google is the only enabled provider this phase; the others
-                  are honest stubs until their phases land. */}
+              {/* Enabled providers come from main (snapshot.providers); the
+                  disabled entries are honest stubs until their phases land. */}
               <select
                 className="settings-select"
                 value={snapshot.provider}
                 aria-labelledby="settings-provider-label"
-                onChange={() => {
-                  // No-op: the enabled option cannot change this phase.
-                }}
+                disabled={busy}
+                onChange={(event) => changeProvider(event.target.value)}
               >
-                <option value="google">Google AI Studio</option>
+                {snapshot.providers.map((provider) => (
+                  <option key={provider} value={provider}>
+                    {PROVIDER_LABELS[provider] ?? provider}
+                  </option>
+                ))}
                 <option value="anthropic" disabled>
                   Anthropic (later)
                 </option>

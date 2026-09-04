@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
-import { clearApiKey, getSettings, setApiKey, setModel } from '../settings'
+import { clearApiKey, getSettings, setApiKey, setModel, setProvider } from '../settings'
 
 // Settings contract (docs/03 §4, docs/06 §7): plain invokes. Key material
 // travels renderer → main ONLY; 'settings:get' answers with a snapshot that
@@ -13,6 +13,10 @@ export interface SetApiKeyPayload {
 
 export interface SetModelPayload {
   model: string
+}
+
+export interface SetProviderPayload {
+  provider: string
 }
 
 export interface ClearApiKeyPayload {
@@ -40,6 +44,12 @@ export function registerSettingsIpc(): void {
   ipcMain.handle('settings:set-model', (_event: IpcMainInvokeEvent, payload: SetModelPayload) => {
     setModel(requireString(payload?.model, 'Model'))
   })
+  ipcMain.handle(
+    'settings:set-provider',
+    (_event: IpcMainInvokeEvent, payload: SetProviderPayload) => {
+      setProvider(requireString(payload?.provider, 'Provider'))
+    }
+  )
   ipcMain.handle(
     'settings:clear-api-key',
     (_event: IpcMainInvokeEvent, payload: ClearApiKeyPayload) => {

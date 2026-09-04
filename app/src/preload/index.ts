@@ -6,12 +6,30 @@ import type { UIMessage, UIMessageChunk } from 'ai'
 // never touches ipcRenderer directly. Chat transport contract per docs/02 §2.1:
 // 'chat:send' invoke + 'chat:part' stream-part events, parts forwarded verbatim.
 export interface ChatSendPayload {
+  sessionId: string
   messages: UIMessage[]
 }
 
 export interface ChatPartEvent {
   sessionId: string
   part: UIMessageChunk
+}
+
+// Sessions contract per docs/03 §4 + §8: plain invokes; the renderer holds the
+// active session id and passes it on every chat:send.
+export interface SessionInfo {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateSessionPayload {
+  title?: string
+}
+
+export interface SessionMessagesPayload {
+  sessionId: string
 }
 
 // Sidecar status contract per docs/03 §4: app-level push + pull, deliberately
@@ -30,6 +48,8 @@ export interface SettingsSnapshot {
   hasKey: boolean
   keyLast4: string
   storageAvailable: boolean
+  /** Provider ids enabled this phase — main is the source of truth. */
+  providers: string[]
   models: string[]
 }
 
@@ -40,6 +60,10 @@ export interface SetApiKeyPayload {
 
 export interface SetModelPayload {
   model: string
+}
+
+export interface SetProviderPayload {
+  provider: string
 }
 
 export interface ClearApiKeyPayload {
@@ -69,12 +93,21 @@ const agento = {
       }
     }
   },
+  sessions: {
+    create: (payload: CreateSessionPayload): Promise<SessionInfo> =>
+      ipcRenderer.invoke('session:create', payload),
+    list: (): Promise<SessionInfo[]> => ipcRenderer.invoke('session:list'),
+    messages: (payload: SessionMessagesPayload): Promise<UIMessage[]> =>
+      ipcRenderer.invoke('session:messages', payload)
+  },
   settings: {
     get: (): Promise<SettingsSnapshot> => ipcRenderer.invoke('settings:get'),
     setApiKey: (payload: SetApiKeyPayload): Promise<void> =>
       ipcRenderer.invoke('settings:set-api-key', payload),
     setModel: (payload: SetModelPayload): Promise<void> =>
       ipcRenderer.invoke('settings:set-model', payload),
+    setProvider: (payload: SetProviderPayload): Promise<void> =>
+      ipcRenderer.invoke('settings:set-provider', payload),
     clearApiKey: (payload: ClearApiKeyPayload): Promise<void> =>
       ipcRenderer.invoke('settings:clear-api-key', payload)
   }

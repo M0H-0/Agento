@@ -1,6 +1,6 @@
 @import './base.css';
 
-/* Full-viewport chat shell — the thread is the whole app surface (M0.2). */
+/* Sessions rail + thread shell (M1.3; the thread was the whole surface in M0.2). */
 html,
 body,
 #root {
@@ -12,15 +12,96 @@ body {
   user-select: none;
 }
 
+/* App shell (docs/04 §2): minimal M1.3 cut — a fixed left sessions rail plus
+   the thread. The Workspace section and the plan/changes columns arrive later. */
 #root {
   display: flex;
+  flex-direction: row;
+}
+
+.sessions-sidebar {
+  display: flex;
   flex-direction: column;
+  gap: 0.75rem;
+  width: 16rem;
+  flex-shrink: 0;
+  height: 100%;
+  padding: 0.9rem 0.75rem;
+  box-sizing: border-box;
+  border-right: 1px solid var(--ev-c-gray-3);
+  background: var(--ev-c-black-soft);
+}
+
+.sessions-new-chat {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--ev-c-gray-3);
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--ev-c-text-1);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sessions-new-chat:hover {
+  background: var(--ev-c-black-mute);
+  border-color: var(--ev-c-gray-2);
+}
+
+.sessions-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.session-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  width: 100%;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--ev-c-text-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-item:hover {
+  background: var(--ev-c-black-mute);
+}
+
+.session-item--active {
+  background: var(--ev-c-black-mute);
+  border-color: var(--ev-c-gray-3);
+}
+
+.session-item-title {
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-item-time {
+  font-size: 0.72rem;
+  color: var(--ev-c-text-3);
 }
 
 .thread {
   display: flex;
   flex-direction: column;
   width: 100%;
+  min-width: 0;
   max-width: 56rem;
   height: 100%;
   margin: 0 auto;
@@ -324,4 +405,3 @@ body {
   font-size: 0.875rem;
   color: var(--ev-c-text-2);
 }
-

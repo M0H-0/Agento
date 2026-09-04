@@ -21,6 +21,8 @@ export interface SettingsSnapshot {
   hasKey: boolean
   keyLast4: string
   storageAvailable: boolean
+  /** Provider ids enabled this phase ('google', 'groq') — renderer renders stubs for the rest. */
+  providers: string[]
   models: string[]
 }
 
@@ -39,7 +41,6 @@ interface SecretsEnvelope {
 const SETTINGS_VERSION = 1
 const SECRETS_VERSION = 1
 const DEFAULT_PROVIDER = 'google'
-const DEFAULT_MODEL = 'gemini-2.5-flash'
 
 // Curated Google AI Studio (Gemini API) model ids for a chat agent — text
 // generation only (no image/TTS/live/embedding variants), verified 2026-09-03
@@ -54,13 +55,36 @@ const GOOGLE_MODEL_IDS = [
   'gemini-3.1-pro-preview'
 ]
 
+// Curated Groq model ids — chat-capable, tool-calling models only (no
+// whisper/orpheus audio, no prompt-guard classifiers, no groq/compound
+// agentic systems whose tool semantics differ), verified 2026-09-05 against
+// console.groq.com/docs/models via the models.dev catalog. Served through the
+// OpenAI-compatible endpoint (STACK.md's Groq row: @ai-sdk/openai-compatible).
+const GROQ_MODEL_IDS = [
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+  'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
+  'qwen/qwen3.6-27b',
+  'qwen/qwen3.8-27b'
+]
+
+// Providers enabled this phase + their curated model lists. Main is the
+// source of truth for both the provider list and the model list (docs/04
+// §3.7); the renderer renders what this says, nothing more.
+const PROVIDERS: Record<string, { models: string[]; defaultModel: string }> = {
+  google: { models: GOOGLE_MODEL_IDS, defaultModel: 'gemini-2.5-flash' },
+  groq: { models: GROQ_MODEL_IDS, defaultModel: 'llama-3.3-70b-versatile' }
+}
+const ENABLED_PROVIDERS = Object.keys(PROVIDERS)
+
 let initialized = false
 let dataDir: string | undefined
 let storageAvailable = false
 let prefs: Prefs = {
   version: SETTINGS_VERSION,
   provider: DEFAULT_PROVIDER,
-  model: DEFAULT_MODEL
+  model: PROVIDERS[DEFAULT_PROVIDER].defaultModel
 }
 // Encrypted key map as loaded from / destined for secrets.bin (empty when
 // encryption is unavailable).
@@ -95,16 +119,24 @@ function loadPrefs(): Prefs {
       typeof (raw as Prefs).model === 'string'
     ) {
       const parsed = raw as Prefs
+      const provider = ENABLED_PROVIDERS.includes(parsed.provider)
+        ? parsed.provider
+        : DEFAULT_PROVIDER
+      const models = PROVIDERS[provider].models
       return {
         version: SETTINGS_VERSION,
-        provider: parsed.provider,
-        model: GOOGLE_MODEL_IDS.includes(parsed.model) ? parsed.model : DEFAULT_MODEL
+        provider,
+        model: models.includes(parsed.model) ? parsed.model : PROVIDERS[provider].defaultModel
       }
     }
   } catch {
     // Absent or unreadable — fall through to the defaults.
   }
-  return { version: SETTINGS_VERSION, provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL }
+  return {
+    version: SETTINGS_VERSION,
+    provider: DEFAULT_PROVIDER,
+    model: PROVIDERS[DEFAULT_PROVIDER].defaultModel
+  }
 }
 
 function loadSecrets(): Record<string, string> {
@@ -174,7 +206,8 @@ export function getSettings(): SettingsSnapshot {
     hasKey: key !== undefined,
     keyLast4,
     storageAvailable,
-    models: [...GOOGLE_MODEL_IDS]
+    providers: [...ENABLED_PROVIDERS],
+    models: [...PROVIDERS[prefs.provider].models]
   }
 }
 
@@ -213,9 +246,24 @@ export function setApiKey(provider: string, key: string): void {
   writePrefs()
 }
 
+export function setProvider(provider: string): void {
+  const cleanProvider = provider.trim()
+  if (!ENABLED_PROVIDERS.includes(cleanProvider)) {
+    throw new Error(`Unknown provider: ${cleanProvider === '' ? '(empty)' : cleanProvider}`)
+  }
+  if (cleanProvider === prefs.provider) return
+  // Keep the model only when it exists on the new provider; otherwise fall
+  // back to that provider's curated default.
+  const next = PROVIDERS[cleanProvider]
+  const model = next.models.includes(prefs.model) ? prefs.model : next.defaultModel
+  prefs = { ...prefs, provider: cleanProvider, model }
+  writePrefs()
+}
+
 export function setModel(model: string): void {
   const cleanModel = model.trim()
-  if (!GOOGLE_MODEL_IDS.includes(cleanModel)) {
+  const valid = PROVIDERS[prefs.provider].models.includes(cleanModel)
+  if (!valid) {
     throw new Error(`Unknown model: ${cleanModel === '' ? '(empty)' : cleanModel}`)
   }
   prefs = { ...prefs, model: cleanModel }

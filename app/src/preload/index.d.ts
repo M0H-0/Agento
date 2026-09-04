@@ -1,6 +1,7 @@
 import type { UIMessage, UIMessageChunk } from 'ai'
 
 export interface ChatSendPayload {
+  sessionId: string
   messages: UIMessage[]
 }
 
@@ -9,11 +10,35 @@ export interface ChatPartEvent {
   part: UIMessageChunk
 }
 
+export interface SessionInfo {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateSessionPayload {
+  title?: string
+}
+
+export interface SessionMessagesPayload {
+  sessionId: string
+}
+
 export interface AgentoChat {
-  /** Invoke 'chat:send' — main streams canned parts back via 'chat:part' (docs/02 §2.1). */
+  /** Invoke 'chat:send' — main streams UIMessageChunks back via 'chat:part' (docs/02 §2.1). */
   send: (payload: ChatSendPayload) => Promise<void>
   /** Subscribe to 'chat:part' events; returns an unsubscribe function. */
   onPart: (listener: (event: ChatPartEvent) => void) => () => void
+}
+
+export interface AgentoSessions {
+  /** Invoke 'session:create' — lazily creates the session row (docs/03 §8). */
+  create: (payload: CreateSessionPayload) => Promise<SessionInfo>
+  /** Invoke 'session:list' — sessions ordered updated_at DESC. */
+  list: () => Promise<SessionInfo[]>
+  /** Invoke 'session:messages' — the session's UIMessages in seq order. */
+  messages: (payload: SessionMessagesPayload) => Promise<UIMessage[]>
 }
 
 export type SidecarStatus = 'starting' | 'healthy' | 'unhealthy'
@@ -39,6 +64,8 @@ export interface SettingsSnapshot {
   keyLast4: string
   /** False when OS-level encryption is unavailable: keys stay session-only. */
   storageAvailable: boolean
+  /** Provider ids enabled this phase ('google', 'groq') — main is the source of truth. */
+  providers: string[]
   /** Curated model ids for the provider; main is the source of truth. */
   models: string[]
 }
@@ -52,6 +79,10 @@ export interface SetModelPayload {
   model: string
 }
 
+export interface SetProviderPayload {
+  provider: string
+}
+
 export interface ClearApiKeyPayload {
   provider: string
 }
@@ -63,12 +94,15 @@ export interface AgentoSettings {
   setApiKey: (payload: SetApiKeyPayload) => Promise<void>
   /** Invoke 'settings:set-model'. */
   setModel: (payload: SetModelPayload) => Promise<void>
+  /** Invoke 'settings:set-provider' — switches the active provider (model resets to that provider's default when needed). */
+  setProvider: (payload: SetProviderPayload) => Promise<void>
   /** Invoke 'settings:clear-api-key'. */
   clearApiKey: (payload: ClearApiKeyPayload) => Promise<void>
 }
 
 export interface AgentoAPI {
   chat: AgentoChat
+  sessions: AgentoSessions
   sidecar: AgentoSidecar
   settings: AgentoSettings
 }
