@@ -31,7 +31,7 @@ function AssistantMessage(): React.JSX.Element {
   )
 }
 
-function Thread(): React.JSX.Element {
+function Thread({ error }: { error?: Error }): React.JSX.Element {
   return (
     <ThreadPrimitive.Root className="thread">
       <ThreadPrimitive.Viewport className="thread-viewport">
@@ -42,6 +42,16 @@ function Thread(): React.JSX.Element {
           </div>
         </ThreadPrimitive.If>
         <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
+        {/* Conversation errors render as an honest sentence in the thread
+            (docs/04 §6); useChat carries the friendly text from main's error
+            part and clears it on the next send. assistant-ui 0.11.56 has no
+            primitive for it (no Thread error condition; the AI SDK bridge
+            keeps errors in message metadata, not status). */}
+        {error && (
+          <div className="thread-error" role="alert">
+            {error.message}
+          </div>
+        )}
       </ThreadPrimitive.Viewport>
       <ThreadPrimitive.ViewportFooter className="thread-footer">
         <ComposerPrimitive.Root className="composer">
@@ -92,7 +102,7 @@ function App(): React.JSX.Element {
         Settings
       </button>
       <AssistantRuntimeProvider runtime={runtime}>
-        <Thread />
+        <Thread error={chat.error} />
       </AssistantRuntimeProvider>
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </>

@@ -148,7 +148,10 @@ export function initSettings(userDataDir: string): void {
 
 // Decrypt on demand, only here. Session keys (this launch's setApiKey calls)
 // short-circuit the decrypt; restarts decrypt from secrets.bin when possible.
-function resolveKey(provider: string): string | undefined {
+// Exported for the chat pipeline (M1.2): the provider client in
+// src/main/ipc/chat.ts asks for the key here instead of re-reading files —
+// so a key saved mid-session applies to the very next message.
+export function resolveProviderKey(provider: string): string | undefined {
   const sessionKey = sessionKeys.get(provider)
   if (sessionKey !== undefined) return sessionKey
   const encrypted = encryptedKeys[provider]
@@ -162,7 +165,7 @@ function resolveKey(provider: string): string | undefined {
 }
 
 export function getSettings(): SettingsSnapshot {
-  const key = resolveKey(prefs.provider)
+  const key = resolveProviderKey(prefs.provider)
   // Only mask keys long enough that 4 chars reveal nothing meaningful.
   const keyLast4 = key !== undefined && key.length >= 8 ? key.slice(-4) : ''
   return {
