@@ -64,7 +64,18 @@ function Thread({ error }: { error?: Error }): React.JSX.Element {
             rows={1}
             autoFocus
           />
-          <ComposerPrimitive.Send className="composer-send">Send</ComposerPrimitive.Send>
+          {/* docs/04 §3.5: stop replaces send mid-run. The Cancel primitive is
+              gated by ThreadPrimitive.If because composer canCancel is a
+              capability flag (onCancel is wired), not a running flag — without
+              the gate the button would sit enabled while idle. isRunning covers
+              the reasoning lead-in (status submitted|streaming), so Stop is
+              visible before any text arrives. */}
+          <ThreadPrimitive.If running={false}>
+            <ComposerPrimitive.Send className="composer-send">Send</ComposerPrimitive.Send>
+          </ThreadPrimitive.If>
+          <ThreadPrimitive.If running>
+            <ComposerPrimitive.Cancel className="composer-cancel">Stop</ComposerPrimitive.Cancel>
+          </ThreadPrimitive.If>
         </ComposerPrimitive.Root>
       </ThreadPrimitive.ViewportFooter>
     </ThreadPrimitive.Root>
@@ -76,6 +87,7 @@ interface ChatViewProps {
   onSessionCreated: (session: SessionSummary) => void
   onSettled: () => void
   initialMessages: UIMessage[]
+  registerDispose: (dispose: (() => void) | null) => void
 }
 
 // One conversation view. Remounted (keyed by an epoch that advances only on
@@ -89,15 +101,40 @@ function ChatView({
   getSessionId,
   onSessionCreated,
   onSettled,
-  initialMessages
+  initialMessages,
+  registerDispose
 }: ChatViewProps): React.JSX.Element {
-  // Created once per mount: the transport is stateless, but useChat captured
-  // it at Chat construction, so a per-render identity would be a lie.
-  const [transport] = useState(() =>
+  // Created once per mount: the transport carries this view's run state
+  // (in-flight guard, active run's session id), so a per-render identity
+  // would be a lie.
+  const [ipc] = useState(() =>
     createIpcChatTransport({ getSessionId, onSessionCreated, onSettled })
   )
-  const chat = useChat({ transport, messages: initialMessages })
+  const chat = useChat({ transport: ipc.transport, messages: initialMessages })
   const runtime = useAISDKRuntime(chat)
+  // The view is unmounted ONLY by an explicit session switch / New chat, and
+  // App runs dispose there (before the remount) rather than in an effect
+  // cleanup: StrictMode's simulated mount-unmount cycle would otherwise
+  // permanently dispose the transport and reject every send.
+  useEffect(() => {
+    registerDispose(ipc.dispose)
+    return () => registerDispose(null)
+  }, [registerDispose, ipc])
+  // Esc stops the run (docs/04 §7). Settings owns Esc while open — it closes
+  // the dialog only. `stop` is an instance method of the stable Chat object
+  // (bound in the constructor), so the listener registers once per run.
+  const runActive = chat.status === 'submitted' || chat.status === 'streaming'
+  const stop = chat.stop
+  useEffect(() => {
+    if (!runActive) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      if (document.querySelector('.settings-overlay')) return
+      stop()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [runActive, stop])
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <Thread error={chat.error} />
@@ -115,6 +152,14 @@ function App(): React.JSX.Element {
   const [threadEpoch, setThreadEpoch] = useState(0)
   const [pendingMessages, setPendingMessages] = useState<UIMessage[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // The mounted ChatView's transport dispose. Session switches call it BEFORE
+  // remounting so an in-flight run is aborted and its part subscription
+  // dropped — no ghost listeners, and the run's partial reply is persisted
+  // main-side (M1.4). StrictMode-safe: never tied to an effect cleanup.
+  const chatDisposeRef = useRef<(() => void) | null>(null)
+  const registerDispose = useCallback((dispose: (() => void) | null) => {
+    chatDisposeRef.current = dispose
+  }, [])
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -148,6 +193,7 @@ function App(): React.JSX.Element {
 
   const openSession = useCallback(async (session: SessionSummary) => {
     if (session.id === activeSessionIdRef.current) return
+    chatDisposeRef.current?.()
     try {
       const messages = await window.agento.sessions.messages({ sessionId: session.id })
       activeSessionIdRef.current = session.id
@@ -160,6 +206,7 @@ function App(): React.JSX.Element {
   }, [])
 
   const startNewChat = useCallback(() => {
+    chatDisposeRef.current?.()
     activeSessionIdRef.current = null
     setActiveSessionId(null)
     setPendingMessages([])
@@ -203,6 +250,7 @@ function App(): React.JSX.Element {
         onSessionCreated={onSessionCreated}
         onSettled={onSettled}
         initialMessages={pendingMessages}
+        registerDispose={registerDispose}
       />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </>

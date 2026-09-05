@@ -5,6 +5,10 @@ export interface ChatSendPayload {
   messages: UIMessage[]
 }
 
+export interface ChatStopPayload {
+  sessionId: string
+}
+
 export interface ChatPartEvent {
   sessionId: string
   part: UIMessageChunk
@@ -28,6 +32,8 @@ export interface SessionMessagesPayload {
 export interface AgentoChat {
   /** Invoke 'chat:send' — main streams UIMessageChunks back via 'chat:part' (docs/02 §2.1). */
   send: (payload: ChatSendPayload) => Promise<void>
+  /** Invoke 'chat:stop' — aborts the session's active run; a no-op when idle (docs/02 §2.1). */
+  stop: (payload: ChatStopPayload) => Promise<void>
   /** Subscribe to 'chat:part' events; returns an unsubscribe function. */
   onPart: (listener: (event: ChatPartEvent) => void) => () => void
 }

@@ -1,4 +1,4 @@
-import { integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
 // Storage schema of record (docs/03-agent-core.md §8). M1.3 creates ONLY
 // sessions + messages; tool_calls/plan_steps/checkpoints/usage_events arrive
@@ -20,17 +20,24 @@ export const sessions = sqliteTable('sessions', {
   updatedAt: text('updated_at').notNull()
 })
 
-export const messages = sqliteTable('messages', {
-  id: text('id').primaryKey(),
-  sessionId: text('session_id')
-    .notNull()
-    .references(() => sessions.id),
-  seq: integer('seq').notNull(),
-  role: text('role').notNull(), // user|assistant|system_notice
-  // The full serialized UIMessage JSON (role/seq/order are the indexed
-  // columns; part fidelity lives here) — see the M1.3 Devlog note.
-  content: text('content').notNull(),
-  intent: text('intent'),
-  confidence: real('confidence'),
-  createdAt: text('created_at').notNull()
-})
+export const messages = sqliteTable(
+  'messages',
+  {
+    id: text('id').primaryKey(),
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => sessions.id),
+    seq: integer('seq').notNull(),
+    role: text('role').notNull(), // user|assistant|system_notice
+    // The full serialized UIMessage JSON (role/seq/order are the indexed
+    // columns; part fidelity lives here) — see the M1.3 Devlog note.
+    content: text('content').notNull(),
+    intent: text('intent'),
+    confidence: real('confidence'),
+    createdAt: text('created_at').notNull()
+  },
+  // UNIQUE(session_id, seq) (migration 0001, M1.4): seq is the per-session
+  // playback order, so the pair must be unique — it also makes the id upsert
+  // in appendMessage unambiguous when a stopped run re-persists a partial.
+  (table) => [uniqueIndex('messages_session_seq_unique').on(table.sessionId, table.seq)]
+)

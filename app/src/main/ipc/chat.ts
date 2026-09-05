@@ -13,6 +13,10 @@ interface ChatSendPayload {
   messages: UIMessage[]
 }
 
+interface ChatStopPayload {
+  sessionId: string
+}
+
 // Minimal system prompt, excerpted from docs/03 §9: persona + plain-language
 // + honesty rules only. The WORKFLOW section (ask_user, plans, tools) and the
 // workspace/no-terminal/frugal RULES lines reference machinery that arrives
@@ -39,6 +43,15 @@ const KEY_REJECTED_COPY =
 const RATE_LIMITED_COPY = "The model is rate-limiting us. I'll wait a moment and retry."
 const GENERIC_PROVIDER_COPY =
   'Something went wrong talking to the model provider. Check your connection and try again.'
+// M1.4: persistence failures are always loud (docs/02 §2.1 wire contract) —
+// the terminal part that would have closed the run is replaced by this error.
+const PERSIST_FAILED_COPY = 'The reply could not be saved to this conversation.'
+// M1.4: one stream per session, enforced main-side where the streams live.
+// The renderer has its own in-flight guard, but a send that slips past it
+// (useChat has no running guard of its own) must still never start a second
+// concurrent stream — main rejects the invoke instead.
+const SECOND_RUN_COPY =
+  'A reply is already streaming in this conversation. Stop it first or wait for it to finish.'
 
 function friendlyProviderError(error: unknown): string {
   // streamText retries transient failures and surfaces them as a RetryError
@@ -92,11 +105,28 @@ function resolveLanguageModel(provider: string, model: string, apiKey: string): 
 }
 
 // Real chat pipeline (docs/02 §2.1): settings → streamText → toUIMessageStream
-// forwarded verbatim over the 'chat:part' envelope, now carrying the real
-// session id. The user message is persisted before streaming starts; the
-// assistant reply is built by the accumulator and persisted only after the
-// stream completes normally. Abort plumbing (M1.4) and tools (M2.x) stay out.
+// forwarded verbatim over the 'chat:part' envelope, carrying the real session
+// id. The user message is persisted before streaming starts; the assistant
+// reply (full or, on a stopped run, partial — the accumulator snapshot is
+// valid mid-stream) is persisted BEFORE the terminal part goes out. Every run
+// ends with exactly one terminal part: 'finish' (natural), 'abort' (user
+// stop), or 'error' (provider failure or a persistence failure). Tools (M2.x)
+// stay out.
+
+// An AbortSignal cannot cross IPC: the renderer's 'chat:stop' invoke lands
+// here, where the current run's controller lives per session (created per
+// send, removed the moment its forwarding loop exits — so a stop landing
+// during the persist window is a no-op, and stopping when nothing is running
+// is a no-op too).
+const activeRuns = new Map<string, AbortController>()
+
 export function registerChatIpc(): void {
+  ipcMain.handle('chat:stop', (_event: IpcMainInvokeEvent, payload: ChatStopPayload) => {
+    const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId : ''
+    if (!sessionId) return
+    activeRuns.get(sessionId)?.abort()
+  })
+
   ipcMain.handle('chat:send', async (event: IpcMainInvokeEvent, payload: ChatSendPayload) => {
     const messages = Array.isArray(payload?.messages) ? payload.messages : []
     const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId : ''
@@ -107,8 +137,16 @@ export function registerChatIpc(): void {
     const session = getSession(sessionId)
     if (!session) throw new Error('The session for this conversation no longer exists.')
 
+    // One stream per session (M1.4): a second send while this session's run
+    // is active is rejected BEFORE anything is persisted. The map entry is
+    // removed the moment the run's forwarding loop exits, so this never
+    // blocks a legitimate follow-up send.
+    if (activeRuns.has(sessionId)) {
+      throw new Error(SECOND_RUN_COPY)
+    }
+
     // Persist the user's message before anything else — even a failed or
-    // rejected stream keeps what the user said. Idempotent by message id, so
+    // rejected stream keeps what the user said. Upserted by message id, so
     // history resends after a restart cannot duplicate rows.
     const last = messages[messages.length - 1]
     if (last && last.role === 'user') {
@@ -116,47 +154,110 @@ export function registerChatIpc(): void {
     }
 
     const { provider, model } = getSettings()
+    let apiKey: string | undefined
     try {
-      const apiKey = resolveProviderKey(provider)
-      if (apiKey === undefined) {
-        sendPart(event.sender, sessionId, {
-          type: 'error',
-          errorText: 'There is no API key for this provider yet. Add one in Settings → Providers.'
-        })
-        return
-      }
-      let languageModel: LanguageModel
-      try {
-        languageModel = resolveLanguageModel(provider, model, apiKey)
-      } catch {
-        sendPart(event.sender, sessionId, {
-          type: 'error',
-          errorText:
-            'Only Google and Groq are set up in this version of Agento. Check the provider in Settings → Providers.'
-        })
-        return
-      }
+      apiKey = resolveProviderKey(provider)
+    } catch {
+      sendPart(event.sender, sessionId, { type: 'error', errorText: GENERIC_PROVIDER_COPY })
+      return
+    }
+    if (apiKey === undefined) {
+      sendPart(event.sender, sessionId, {
+        type: 'error',
+        errorText: 'There is no API key for this provider yet. Add one in Settings → Providers.'
+      })
+      return
+    }
+    let languageModel: LanguageModel
+    try {
+      languageModel = resolveLanguageModel(provider, model, apiKey)
+    } catch {
+      sendPart(event.sender, sessionId, {
+        type: 'error',
+        errorText:
+          'Only Google and Groq are set up in this version of Agento. Check the provider in Settings → Providers.'
+      })
+      return
+    }
+
+    const controller = new AbortController()
+    activeRuns.set(sessionId, controller)
+    // The provider's own 'finish' part is HELD: it is forwarded only after
+    // persistence completes, so the wire never claims a complete run whose
+    // reply did not reach storage.
+    let heldFinish: UIMessageChunk | null = null
+    let aborted = false
+    let terminalSent = false
+    const accumulator = new AssistantMessageAccumulator()
+    try {
       const result = streamText({
         model: languageModel,
         system: SYSTEM_PROMPT,
-        messages: convertToModelMessages(replayable(messages))
+        messages: convertToModelMessages(replayable(messages)),
+        abortSignal: controller.signal,
+        onAbort: () => {
+          aborted = true
+        }
       })
-      const accumulator = new AssistantMessageAccumulator()
       for await (const part of result.toUIMessageStream({ onError: friendlyProviderError })) {
         accumulator.addChunk(part)
+        if (part.type === 'finish') {
+          heldFinish = part
+          continue
+        }
+        if (part.type === 'abort') {
+          aborted = true
+          continue
+        }
+        if (part.type === 'error' && controller.signal.aborted) {
+          // An error chunk arriving on an aborted signal is the abort
+          // signature (the onError transform has no context that we stopped
+          // this run) — never surface the generic provider copy for it.
+          aborted = true
+          continue
+        }
         sendPart(event.sender, sessionId, part)
-      }
-      // Stream finished normally: the reply is complete and goes to storage.
-      // A stream that ended in an error part persists nothing assistant-side
-      // (M1.3 Devlog); nothing is written mid-stream.
-      const assistantMessage = accumulator.toUIMessage()
-      if (assistantMessage) {
-        appendMessage(sessionId, assistantMessage)
       }
     } catch {
       // Never let the invoke reject: an error part keeps the wire honest and
-      // the renderer transport's stream closes normally.
-      sendPart(event.sender, sessionId, { type: 'error', errorText: GENERIC_PROVIDER_COPY })
+      // the renderer transport's stream closes normally — unless we stopped
+      // the run ourselves, which closes on the abort path below instead.
+      if (controller.signal.aborted) {
+        aborted = true
+      } else if (!accumulator.isFailed() && !terminalSent) {
+        sendPart(event.sender, sessionId, { type: 'error', errorText: GENERIC_PROVIDER_COPY })
+        terminalSent = true
+      }
+    } finally {
+      activeRuns.delete(sessionId)
+    }
+
+    // Exactly one terminal part per run, sent only after persistence:
+    //  - stopped run → native v5 { type: 'abort' } after the partial reply is
+    //    saved (toUIMessage() is null when nothing textual arrived — e.g. a
+    //    stop during the reasoning lead-in — and then nothing is persisted);
+    //  - natural run → the held 'finish' after the full reply is saved;
+    //  - either save failing swaps that terminal for an 'error' part, so a
+    //    persistence failure is visible in the thread, never swallowed.
+    //  A stream that already ended in an 'error' part sent its terminal then.
+    if (!terminalSent && !accumulator.isFailed()) {
+      if (aborted && heldFinish === null) {
+        try {
+          const partial = accumulator.toUIMessage()
+          if (partial) appendMessage(sessionId, partial)
+          sendPart(event.sender, sessionId, { type: 'abort' })
+        } catch {
+          sendPart(event.sender, sessionId, { type: 'error', errorText: PERSIST_FAILED_COPY })
+        }
+      } else {
+        try {
+          const assistantMessage = accumulator.toUIMessage()
+          if (assistantMessage) appendMessage(sessionId, assistantMessage)
+          sendPart(event.sender, sessionId, heldFinish ?? { type: 'finish' })
+        } catch {
+          sendPart(event.sender, sessionId, { type: 'error', errorText: PERSIST_FAILED_COPY })
+        }
+      }
     }
   })
 }

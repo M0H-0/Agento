@@ -229,6 +229,22 @@ body {
   cursor: default;
 }
 
+/* Stop (M1.4) replaces Send mid-run — same shape, different copy. */
+.composer-cancel {
+  padding: 0.35rem 0.9rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: var(--ev-c-gray-1);
+  color: var(--ev-c-text-1);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.composer-cancel:hover {
+  background: var(--ev-c-gray-2);
+}
+
 /* Sidecar status dot (M0.5) — fixed app chrome, top-right. Semantic green/red
    only for status (docs/04 visual language); gray = starting. */
 .status-dot {

@@ -71,10 +71,14 @@ export function getSessionMessages(sessionId: string): UIMessage[] {
   return parsed
 }
 
-// Idempotent by message id (ON CONFLICT DO NOTHING): a regenerate or a resend
-// of history after a restart must not duplicate rows. The session's
-// updated_at only moves when a row was actually inserted, which is what keeps
-// the sidebar's updated_at DESC ordering honest.
+// Upsert by message id (ON CONFLICT DO UPDATE, M1.4): a stopped run persists
+// the PARTIAL assistant reply from the accumulator snapshot, so a re-persist
+// of the same message id must REPLACE its earlier row (content/role/seq/
+// created_at), not be dropped by DO NOTHING. UNIQUE(session_id, seq) makes
+// the upsert unambiguous; the seq computed here is max+1 inside this
+// transaction, so a replace can only ever collide with the row it targets.
+// The session's updated_at moves on every write, which keeps the sidebar's
+// updated_at DESC ordering honest.
 export function appendMessage(sessionId: string, message: UIMessage): { seq: number } | undefined {
   const now = nowIso()
   return getDrizzle().transaction((tx) => {
@@ -84,8 +88,7 @@ export function appendMessage(sessionId: string, message: UIMessage): { seq: num
       .where(eq(messages.sessionId, sessionId))
       .get()
     const seq = next?.value ?? 1
-    const result = tx
-      .insert(messages)
+    tx.insert(messages)
       .values({
         id: message.id,
         sessionId,
@@ -94,9 +97,17 @@ export function appendMessage(sessionId: string, message: UIMessage): { seq: num
         content: JSON.stringify(message),
         createdAt: now
       })
-      .onConflictDoNothing()
+      .onConflictDoUpdate({
+        target: messages.id,
+        set: {
+          sessionId: sql`excluded.session_id`,
+          seq: sql`excluded.seq`,
+          role: sql`excluded.role`,
+          content: sql`excluded.content`,
+          createdAt: sql`excluded.created_at`
+        }
+      })
       .run()
-    if (result.changes === 0) return undefined
     tx.update(sessions).set({ updatedAt: now }).where(eq(sessions.id, sessionId)).run()
     return { seq }
   })

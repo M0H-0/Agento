@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `messages_session_seq_unique` ON `messages` (`session_id`,`seq`);

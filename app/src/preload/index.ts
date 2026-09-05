@@ -4,10 +4,15 @@ import type { UIMessage, UIMessageChunk } from 'ai'
 
 // Typed API exposed to the renderer — the ONLY bridge surface. The renderer
 // never touches ipcRenderer directly. Chat transport contract per docs/02 §2.1:
-// 'chat:send' invoke + 'chat:part' stream-part events, parts forwarded verbatim.
+// 'chat:send' + 'chat:stop' invokes + 'chat:part' stream-part events, parts
+// forwarded verbatim.
 export interface ChatSendPayload {
   sessionId: string
   messages: UIMessage[]
+}
+
+export interface ChatStopPayload {
+  sessionId: string
 }
 
 export interface ChatPartEvent {
@@ -73,6 +78,7 @@ export interface ClearApiKeyPayload {
 const agento = {
   chat: {
     send: (payload: ChatSendPayload): Promise<void> => ipcRenderer.invoke('chat:send', payload),
+    stop: (payload: ChatStopPayload): Promise<void> => ipcRenderer.invoke('chat:stop', payload),
     onPart: (listener: (event: ChatPartEvent) => void): (() => void) => {
       const handler = (_event: IpcRendererEvent, partEvent: ChatPartEvent): void =>
         listener(partEvent)
