@@ -32,11 +32,11 @@ The full, pinned list with licenses lives in **[STACK.md](STACK.md)** — that f
 |---|---|
 | [AGENTS.md](AGENTS.md) | **Start here if you're an agent.** Hard rules, layout, fallback ladder, definition of done |
 | [STACK.md](STACK.md) | The pinned stack: every package, role, license, "do not substitute" list |
-| [PROGRESS.md](PROGRESS.md) | Milestones M0–M6 broken into 49 half-day sub-phases (M0.1…M6.8) with acceptance criteria — the build tracker |
+| [PROGRESS.md](PROGRESS.md) | Milestones M0–M6 broken into 51 half-day sub-phases (M0.1…M6.8 incl. M1.6/M1.7) with acceptance criteria — the build tracker |
 | [docs/01-product-spec.md](docs/01-product-spec.md) | Vision, users, feature priorities, non-goals, success criteria |
 | [docs/02-architecture.md](docs/02-architecture.md) | Process model, the connection map (how every OSS part wires together), reuse ledger, degradation, packaging |
 | [docs/03-agent-core.md](docs/03-agent-core.md) | Agent loop, tool registry, tools + risk tiers, snapshots & undo, storage schema, system prompt |
-| [docs/04-ui-spec.md](docs/04-ui-spec.md) | assistant-ui-based UI: layout, cards with before/after excerpts, plan/approval/changes panels, theming |
+| [docs/04-ui-spec.md](docs/04-ui-spec.md) | assistant-ui-based UI: layout, cards with before/after excerpts, plan/approval/changes panels, design system (§8: tokens, scrollbars, markdown, motion) |
 | [docs/05-intelligence-service.md](docs/05-intelligence-service.md) | Python sidecar: endpoint contracts, LLM-prompted v1, rule table, Docling, eval harness & thesis metrics |
 | [docs/06-security-and-permissions.md](docs/06-security-and-permissions.md) | Risk model, approval flow, sandboxing, prompt-injection defenses, secrets, network egress |
 | [docs/07-testing-and-demo.md](docs/07-testing-and-demo.md) | Testing strategy, manual checklist, defense demo script |
