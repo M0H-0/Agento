@@ -22,11 +22,18 @@ export interface ChatPartEvent {
 
 // Sessions contract per docs/03 §4 + §8: plain invokes; the renderer holds the
 // active session id and passes it on every chat:send.
+export interface SessionUsage {
+  inputTokens: number
+  outputTokens: number
+}
+
 export interface SessionInfo {
   id: string
   title: string
   createdAt: string
   updatedAt: string
+  /** Token totals from usage_events; null until the first settled run. */
+  usage: SessionUsage | null
 }
 
 export interface CreateSessionPayload {
@@ -36,6 +43,23 @@ export interface CreateSessionPayload {
 export interface SessionMessagesPayload {
   sessionId: string
 }
+
+// Session-scoped agent events per docs/03 §4: main → renderer push on
+// 'agent:event', payload discriminated on `type`, Zod-validated both sides
+// (main builds/validates in src/main/ipc/agent-events.ts; the renderer
+// validates in src/renderer/src/chat/agent-events.ts). First member is
+// 'usage' (M1.5); plan/approval events (M3) join this union — one channel.
+export interface AgentUsageEvent {
+  type: 'usage'
+  sessionId: string
+  runId: string
+  ts: number
+  seq: number
+  inputTokens: number | null
+  outputTokens: number | null
+}
+
+export type AgentEvent = AgentUsageEvent
 
 // Sidecar status contract per docs/03 §4: app-level push + pull, deliberately
 // not a session-scoped 'agent:event' (no sessionId/runId exists for it).
@@ -96,6 +120,16 @@ const agento = {
       ipcRenderer.on('sidecar:status', handler)
       return () => {
         ipcRenderer.removeListener('sidecar:status', handler)
+      }
+    }
+  },
+  agent: {
+    onEvent: (listener: (event: AgentEvent) => void): (() => void) => {
+      const handler = (_event: IpcRendererEvent, agentEvent: AgentEvent): void =>
+        listener(agentEvent)
+      ipcRenderer.on('agent:event', handler)
+      return () => {
+        ipcRenderer.removeListener('agent:event', handler)
       }
     }
   },

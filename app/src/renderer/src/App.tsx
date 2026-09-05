@@ -10,6 +10,7 @@ import {
 import type { UIMessage } from 'ai'
 import { createIpcChatTransport } from './chat/transport'
 import type { SessionSummary } from './chat/transport'
+import { parseAgentEvent } from './chat/agent-events'
 import SettingsDialog from './components/SettingsDialog'
 import SessionsSidebar from './components/SessionsSidebar'
 import SidecarStatusDot from './components/SidecarStatusDot'
@@ -176,6 +177,37 @@ function App(): React.JSX.Element {
       .list()
       .then(setSessions)
       .catch((error) => console.error('session:list failed:', error))
+  }, [])
+
+  // M1.5: the first session-scoped agent:event (docs/03 §4) — 'usage' arrives
+  // at main's settle point and updates the matching sidebar row live. Every
+  // event is Zod-validated before it touches state (chat/agent-events.ts).
+  // Passive-listener pattern (SidecarStatusDot): unsubscribing in the effect
+  // cleanup is StrictMode-safe because resubscription is complete and
+  // non-destructive — the registerDispose ref pattern stays reserved for the
+  // transport's destructive dispose (M1.4 rule). Totals added here are
+  // provisional: the settle-triggered session:list refresh replaces them with
+  // the authoritative sums from usage_events (the usage event precedes the
+  // terminal part on the wire, so add-then-replace never double-counts).
+  useEffect(() => {
+    const unsubscribe = window.agento.agent.onEvent((raw) => {
+      const event = parseAgentEvent(raw)
+      if (!event || event.type !== 'usage') return
+      setSessions((prev) =>
+        prev.map((session) =>
+          session.id === event.sessionId
+            ? {
+                ...session,
+                usage: {
+                  inputTokens: (session.usage?.inputTokens ?? 0) + (event.inputTokens ?? 0),
+                  outputTokens: (session.usage?.outputTokens ?? 0) + (event.outputTokens ?? 0)
+                }
+              }
+            : session
+        )
+      )
+    })
+    return unsubscribe
   }, [])
 
   const getSessionId = useCallback(() => activeSessionIdRef.current, [])

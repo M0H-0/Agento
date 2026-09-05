@@ -23,6 +23,12 @@ function formatRelativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString()
 }
 
+// Per-session token totals (M1.5, docs/03 §4) — plain number formatting, no
+// library; only rendered once the session has recorded usage.
+function formatUsage(usage: { inputTokens: number; outputTokens: number }): string {
+  return `${usage.inputTokens.toLocaleString()} in · ${usage.outputTokens.toLocaleString()} out`
+}
+
 // Left rail (docs/04 §2/§4): new chat + chronological sessions, most recent
 // first. Minimal M1.3 cut — the Workspace section, delete/rename and the
 // plan/changes columns arrive in later phases.
@@ -51,6 +57,9 @@ function SessionsSidebar({
               title={session.title}
             >
               <span className="session-item-title">{session.title}</span>
+              {session.usage && (
+                <span className="session-item-usage">{formatUsage(session.usage)}</span>
+              )}
               <span className="session-item-time">{formatRelativeTime(session.updatedAt)}</span>
             </button>
           </li>

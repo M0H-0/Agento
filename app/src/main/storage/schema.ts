@@ -1,10 +1,10 @@
 import { integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
-// Storage schema of record (docs/03-agent-core.md §8). M1.3 creates ONLY
-// sessions + messages; tool_calls/plan_steps/checkpoints/usage_events arrive
-// with M1.5/M2.x as further drizzle-kit migrations. Plain Node — no Electron
-// imports (AGENTS.md rule 1); timestamps are ISO-8601 TEXT written by the
-// repositories, not SQLite defaults.
+// Storage schema of record (docs/03-agent-core.md §8). M1.3 created ONLY
+// sessions + messages; M1.5 adds usage_events. tool_calls/plan_steps/
+// checkpoints arrive with M2.x as further drizzle-kit migrations. Plain Node —
+// no Electron imports (AGENTS.md rule 1); timestamps are ISO-8601 TEXT written
+// by the repositories, not SQLite defaults.
 
 export const sessions = sqliteTable('sessions', {
   id: text('id').primaryKey(),
@@ -41,3 +41,16 @@ export const messages = sqliteTable(
   // in appendMessage unambiguous when a stopped run re-persists a partial.
   (table) => [uniqueIndex('messages_session_seq_unique').on(table.sessionId, table.seq)]
 )
+
+// Token usage per run (migration 0002, M1.5; docs/03 §8): written at the chat
+// settle point only when the run's usage resolved — input_tokens/output_tokens
+// stay nullable per docs/03 §8 because a provider may omit a field.
+export const usageEvents = sqliteTable('usage_events', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id')
+    .notNull()
+    .references(() => sessions.id),
+  inputTokens: integer('input_tokens'),
+  outputTokens: integer('output_tokens'),
+  createdAt: text('created_at').notNull()
+})

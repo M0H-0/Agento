@@ -1,11 +1,14 @@
 import { ipcMain } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { APICallError, convertToModelMessages, RetryError, streamText } from 'ai'
-import type { LanguageModel, UIMessage, UIMessageChunk } from 'ai'
+import type { LanguageModel, LanguageModelUsage, UIMessage, UIMessageChunk } from 'ai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { getSettings, resolveProviderKey } from '../settings'
 import { appendMessage, getSession } from '../storage/sessions'
+import { insertUsage } from '../storage/usage'
+import { emitUsageEvent } from './agent-events'
 import { AssistantMessageAccumulator } from './assistant-accumulator'
 
 interface ChatSendPayload {
@@ -182,6 +185,9 @@ export function registerChatIpc(): void {
 
     const controller = new AbortController()
     activeRuns.set(sessionId, controller)
+    // M1.5: per-send identifier for the agent:event envelope (docs/03 §4).
+    // Real run lifecycle (start/step/finish events) arrives in M2.
+    const runId = randomUUID()
     // The provider's own 'finish' part is HELD: it is forwarded only after
     // persistence completes, so the wire never claims a complete run whose
     // reply did not reach storage.
@@ -189,6 +195,15 @@ export function registerChatIpc(): void {
     let aborted = false
     let terminalSent = false
     const accumulator = new AssistantMessageAccumulator()
+    // Token usage for this run (M1.5), captured from the SDK's onFinish.
+    // Verified against the installed ai@5.0.250 dist: onFinish fires only
+    // when at least one step completed, and it always runs inside the
+    // stream's flush — before the forwarding loop below exits, so the value
+    // is settled by the time the settle point records it. On a mid-stream
+    // abort (the only abort shape without tools) onFinish never fires and
+    // result.totalUsage REJECTS with NoOutputGeneratedError — which is why
+    // usage is captured via the callback, never awaited.
+    let capturedUsage: LanguageModelUsage | undefined
     try {
       const result = streamText({
         model: languageModel,
@@ -197,6 +212,9 @@ export function registerChatIpc(): void {
         abortSignal: controller.signal,
         onAbort: () => {
           aborted = true
+        },
+        onFinish: (event) => {
+          capturedUsage = event.totalUsage
         }
       })
       for await (const part of result.toUIMessageStream({ onError: friendlyProviderError })) {
@@ -230,6 +248,31 @@ export function registerChatIpc(): void {
       }
     } finally {
       activeRuns.delete(sessionId)
+    }
+
+    // Token usage rides the settle point (docs/03 §2 token guard, §8
+    // usage_events): recorded only when the run's usage actually resolved.
+    // A stopped run resolves no usage with the pinned ai@5.0.250 (onFinish
+    // never fires on a mid-first-step abort; result.totalUsage rejects), so
+    // it records nothing — no row, no event — rather than a fabricated zero.
+    // The SDK also reports reasoningTokens/cachedInputTokens/totalTokens;
+    // the documented schema holds input/output only, so those are dropped.
+    // A bookkeeping failure must never break the run or replace the terminal
+    // (only reply-persistence failures are loud, docs/02 §2.1), so it is
+    // logged main-side and the run continues.
+    if (capturedUsage !== undefined) {
+      const inputTokens =
+        typeof capturedUsage.inputTokens === 'number' ? capturedUsage.inputTokens : null
+      const outputTokens =
+        typeof capturedUsage.outputTokens === 'number' ? capturedUsage.outputTokens : null
+      if (inputTokens !== null || outputTokens !== null) {
+        try {
+          insertUsage({ sessionId, inputTokens, outputTokens })
+          emitUsageEvent({ sessionId, runId, inputTokens, outputTokens })
+        } catch (error) {
+          console.error('[usage] recording token usage failed:', error)
+        }
+      }
     }
 
     // Exactly one terminal part per run, sent only after persistence:

@@ -7,6 +7,8 @@ export interface SessionSummary {
   title: string
   createdAt: string
   updatedAt: string
+  /** Token totals from usage_events; null until the first settled run. */
+  usage: { inputTokens: number; outputTokens: number } | null
 }
 
 // Sidebar titles come from the first user message, truncated to one line.

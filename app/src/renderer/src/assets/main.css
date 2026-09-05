@@ -92,6 +92,16 @@ body {
   text-overflow: ellipsis;
 }
 
+/* M1.5: per-session token totals (docs/03 §4) — minimal styling; the
+   design-system phases (M1.6/M1.7) restyle it onto tokens. */
+.session-item-usage {
+  font-size: 0.72rem;
+  color: var(--ev-c-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .session-item-time {
   font-size: 0.72rem;
   color: var(--ev-c-text-3);

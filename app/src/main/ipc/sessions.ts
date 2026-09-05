@@ -3,6 +3,7 @@ import type { IpcMainInvokeEvent } from 'electron'
 import { getSettings } from '../settings'
 import { createSession, getSessionMessages, listSessions } from '../storage/sessions'
 import type { SessionRow } from '../storage/sessions'
+import { getUsageTotalsBySession } from '../storage/usage'
 
 // Sessions contract (docs/03 §4 renderer→main; storage in docs/03 §8): plain
 // invokes over the preload bridge; the DB is touched only by the storage
@@ -18,6 +19,13 @@ export interface SessionMessagesPayload {
   sessionId: string
 }
 
+// M1.5: per-session token totals, aggregated from usage_events in one grouped
+// query — null until the session's first settled run records usage.
+export interface SessionUsage {
+  inputTokens: number
+  outputTokens: number
+}
+
 function requireString(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.trim() === '') {
     throw new Error(`${name} is required.`)
@@ -25,13 +33,23 @@ function requireString(value: unknown, name: string): string {
   return value
 }
 
-function toSessionInfo(row: SessionRow): {
+function toSessionInfo(
+  row: SessionRow,
+  usage: SessionUsage | undefined
+): {
   id: string
   title: string
   createdAt: string
   updatedAt: string
+  usage: SessionUsage | null
 } {
-  return { id: row.id, title: row.title, createdAt: row.createdAt, updatedAt: row.updatedAt }
+  return {
+    id: row.id,
+    title: row.title,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    usage: usage ?? null
+  }
 }
 
 export function registerSessionsIpc(): void {
@@ -42,9 +60,12 @@ export function registerSessionsIpc(): void {
     const { provider, model } = getSettings()
     const title =
       typeof payload?.title === 'string' && payload.title.trim() !== '' ? payload.title : undefined
-    return toSessionInfo(createSession({ title, provider, model }))
+    return toSessionInfo(createSession({ title, provider, model }), undefined)
   })
-  ipcMain.handle('session:list', () => listSessions().map(toSessionInfo))
+  ipcMain.handle('session:list', () => {
+    const totals = getUsageTotalsBySession()
+    return listSessions().map((row) => toSessionInfo(row, totals.get(row.id)))
+  })
   ipcMain.handle(
     'session:messages',
     (_event: IpcMainInvokeEvent, payload: SessionMessagesPayload) =>
