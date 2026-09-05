@@ -1,24 +1,137 @@
-@import './base.css';
+/* Agento design-system foundation (M1.6, docs/04 §7/§8.1/§8.2).
+   Single CSS-first Tailwind v4 entry: the old base.css scaffold tokens
+   (--ev-c-*) are retired; every surface renders from these shadcn token
+   variables. Dark is the default set (the .dark class ships on <html>);
+   the user-facing switcher lands with the Appearance section (M6.3).
+   One indigo accent (primary actions + focus); semantic green/amber/red
+   only where content is status/risk; hairline borders over shadows. */
 
-/* Sessions rail + thread shell (M1.3; the thread was the whole surface in M0.2). */
-html,
-body,
-#root {
-  height: 100%;
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  color-scheme: light;
+
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.511 0.262 276.966);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.627 0.194 149.214);
+  --success-foreground: oklch(0.985 0 0);
+  --warning: oklch(0.666 0.179 58.318);
+  --warning-foreground: oklch(0.985 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.511 0.262 276.966);
+  --radius: 0.625rem;
 }
 
-body {
-  overflow: hidden;
-  user-select: none;
+.dark {
+  color-scheme: dark;
+
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.269 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.585 0.233 277.117);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.205 0 0);
+  --success: oklch(0.723 0.219 149.579);
+  --success-foreground: oklch(0.205 0 0);
+  --warning: oklch(0.769 0.188 70.08);
+  --warning-foreground: oklch(0.205 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.673 0.182 276.935);
+}
+
+@theme inline {
+  --font-sans: 'Inter Variable', Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before {
+    border-color: var(--color-border);
+    outline-color: color-mix(in oklab, var(--color-ring) 50%, transparent);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    line-height: 1.6;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  #root {
+    display: flex;
+    flex-direction: row;
+  }
 }
 
 /* App shell (docs/04 §2): minimal M1.3 cut — a fixed left sessions rail plus
    the thread. The Workspace section and the plan/changes columns arrive later. */
-#root {
-  display: flex;
-  flex-direction: row;
-}
-
 .sessions-sidebar {
   display: flex;
   flex-direction: column;
@@ -28,26 +141,27 @@ body {
   height: 100%;
   padding: 0.9rem 0.75rem;
   box-sizing: border-box;
-  border-right: 1px solid var(--ev-c-gray-3);
-  background: var(--ev-c-black-soft);
+  border-right: 1px solid var(--border);
+  background: var(--card);
 }
 
+/* Primary action (docs/04 §7: one indigo accent). */
 .sessions-new-chat {
   padding: 0.45rem 0.6rem;
-  border: 1px solid var(--ev-c-gray-3);
+  border: 1px solid transparent;
   border-radius: 0.5rem;
-  background: transparent;
-  color: var(--ev-c-text-1);
+  background: var(--primary);
+  color: var(--primary-foreground);
   font: inherit;
   font-size: 0.875rem;
   font-weight: 600;
   text-align: left;
   cursor: pointer;
+  transition: background 150ms ease;
 }
 
 .sessions-new-chat:hover {
-  background: var(--ev-c-black-mute);
-  border-color: var(--ev-c-gray-2);
+  background: color-mix(in oklab, var(--primary) 90%, transparent);
 }
 
 .sessions-list {
@@ -70,19 +184,20 @@ body {
   border: 1px solid transparent;
   border-radius: 0.5rem;
   background: transparent;
-  color: var(--ev-c-text-1);
+  color: var(--foreground);
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background 150ms ease;
 }
 
 .session-item:hover {
-  background: var(--ev-c-black-mute);
+  background: var(--accent);
 }
 
 .session-item--active {
-  background: var(--ev-c-black-mute);
-  border-color: var(--ev-c-gray-3);
+  background: var(--accent);
+  border-color: var(--border);
 }
 
 .session-item-title {
@@ -92,11 +207,10 @@ body {
   text-overflow: ellipsis;
 }
 
-/* M1.5: per-session token totals (docs/03 §4) — minimal styling; the
-   design-system phases (M1.6/M1.7) restyle it onto tokens. */
+/* M1.5: per-session token totals (docs/03 §4), now on the token layer. */
 .session-item-usage {
   font-size: 0.72rem;
-  color: var(--ev-c-text-3);
+  color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -104,7 +218,7 @@ body {
 
 .session-item-time {
   font-size: 0.72rem;
-  color: var(--ev-c-text-3);
+  color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
 }
 
 .thread {
@@ -130,7 +244,7 @@ body {
 .thread-welcome {
   margin: auto;
   text-align: center;
-  color: var(--ev-c-text-1);
+  color: var(--foreground);
 }
 
 .thread-welcome h1 {
@@ -140,7 +254,7 @@ body {
 
 .thread-welcome p {
   margin-top: 0.4rem;
-  color: var(--ev-c-text-2);
+  color: var(--muted-foreground);
   font-size: 0.9rem;
 }
 
@@ -153,16 +267,16 @@ body {
 
 .message--user {
   align-self: flex-end;
-  background: var(--ev-c-gray-2);
-  color: var(--ev-c-text-1);
+  background: var(--secondary);
+  color: var(--secondary-foreground);
   border-bottom-right-radius: 0.2rem;
 }
 
 .message--assistant {
   align-self: flex-start;
-  background: var(--ev-c-black-soft);
-  border: 1px solid var(--ev-c-gray-3);
-  color: var(--ev-c-text-1);
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--card-foreground);
   border-bottom-left-radius: 0.2rem;
 }
 
@@ -177,10 +291,10 @@ body {
 .thread-error {
   align-self: stretch;
   padding: 0.55rem 0.85rem;
-  border: 1px solid rgba(239, 68, 68, 0.5);
+  border: 1px solid color-mix(in oklab, var(--destructive) 50%, transparent);
   border-radius: 0.75rem;
-  background: rgba(239, 68, 68, 0.08);
-  color: var(--ev-c-text-1);
+  background: color-mix(in oklab, var(--destructive) 8%, transparent);
+  color: var(--foreground);
   font-size: 0.9rem;
 }
 
@@ -193,13 +307,14 @@ body {
   align-items: flex-end;
   gap: 0.5rem;
   padding: 0.4rem 0.5rem;
-  background: var(--ev-c-black-soft);
-  border: 1px solid var(--ev-c-gray-3);
+  background: var(--card);
+  border: 1px solid var(--border);
   border-radius: 0.75rem;
+  transition: border-color 150ms ease;
 }
 
 .composer:focus-within {
-  border-color: var(--ev-c-gray-1);
+  border-color: var(--ring);
 }
 
 .composer-input {
@@ -210,28 +325,29 @@ body {
   outline: none;
   resize: none;
   background: transparent;
-  color: var(--ev-c-text-1);
+  color: var(--foreground);
   font: inherit;
   line-height: 1.5;
 }
 
 .composer-input::placeholder {
-  color: var(--ev-c-text-3);
+  color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
 }
 
 .composer-send {
   padding: 0.35rem 0.9rem;
   border: none;
   border-radius: 0.5rem;
-  background: var(--ev-c-gray-1);
-  color: var(--ev-c-text-1);
+  background: var(--primary);
+  color: var(--primary-foreground);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+  transition: background 150ms ease;
 }
 
 .composer-send:hover:not(:disabled) {
-  background: var(--ev-c-gray-2);
+  background: color-mix(in oklab, var(--primary) 90%, transparent);
 }
 
 .composer-send:disabled {
@@ -239,44 +355,44 @@ body {
   cursor: default;
 }
 
-/* Stop (M1.4) replaces Send mid-run — same shape, different copy. */
+/* Stop (M1.4) replaces Send mid-run — same shape, different copy. Neutral:
+   stop is not a promotion, the indigo accent stays on primary actions. */
 .composer-cancel {
   padding: 0.35rem 0.9rem;
   border: none;
   border-radius: 0.5rem;
-  background: var(--ev-c-gray-1);
-  color: var(--ev-c-text-1);
+  background: var(--secondary);
+  color: var(--secondary-foreground);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+  transition: background 150ms ease;
 }
 
 .composer-cancel:hover {
-  background: var(--ev-c-gray-2);
+  background: color-mix(in oklab, var(--foreground) 8%, var(--secondary));
 }
 
 /* Sidecar status dot (M0.5) — fixed app chrome, top-right. Semantic green/red
-   only for status (docs/04 visual language); gray = starting. */
+   only for status (docs/04 §7); neutral = starting. */
 .status-dot {
-  --status-dot-healthy: #22c55e;
-  --status-dot-unhealthy: #ef4444;
   position: fixed;
   top: 0.9rem;
   right: 1rem;
   width: 0.6rem;
   height: 0.6rem;
   border-radius: 9999px;
-  background: var(--ev-c-gray-3);
+  background: var(--muted-foreground);
   transition: background 160ms ease;
   z-index: 1000;
 }
 
 .status-dot--healthy {
-  background: var(--status-dot-healthy);
+  background: var(--success);
 }
 
 .status-dot--unhealthy {
-  background: var(--status-dot-unhealthy);
+  background: var(--destructive);
 }
 
 /* Settings (M1.1) — fixed chrome entry beside the status dot + modal dialog
@@ -289,16 +405,17 @@ body {
   border: none;
   border-radius: 0.4rem;
   background: transparent;
-  color: var(--ev-c-text-2);
+  color: var(--muted-foreground);
   font: inherit;
   font-size: 0.75rem;
   cursor: pointer;
+  transition: background 150ms ease;
   z-index: 1000;
 }
 
 .settings-button:hover {
-  color: var(--ev-c-text-1);
-  background: var(--ev-c-gray-3);
+  color: var(--accent-foreground);
+  background: var(--accent);
 }
 
 .settings-overlay {
@@ -307,19 +424,21 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
+  /* A scrim darkens in both themes — it is not a semantic surface. */
+  background: rgb(0 0 0 / 60%);
   z-index: 1100;
 }
 
+/* docs/04 §7: hairline borders over shadows — the dialog separates by its
+   border and the scrim, not a drop shadow. */
 .settings-dialog {
   width: min(26rem, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);
   overflow-y: auto;
   padding: 1.25rem;
-  background: var(--ev-c-black-soft);
-  border: 1px solid var(--ev-c-gray-3);
+  background: var(--card);
+  border: 1px solid var(--border);
   border-radius: 0.75rem;
-  box-shadow: 0 1rem 2.5rem rgba(0, 0, 0, 0.45);
   outline: none;
 }
 
@@ -340,7 +459,7 @@ body {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--ev-c-text-2);
+  color: var(--muted-foreground);
 }
 
 .settings-field {
@@ -351,16 +470,16 @@ body {
 
 .settings-label {
   font-size: 0.8rem;
-  color: var(--ev-c-text-2);
+  color: var(--muted-foreground);
 }
 
 .settings-select,
 .settings-input {
   padding: 0.4rem 0.55rem;
-  border: 1px solid var(--ev-c-gray-3);
+  border: 1px solid var(--input);
   border-radius: 0.5rem;
-  background: var(--ev-c-black);
-  color: var(--ev-c-text-1);
+  background: var(--background);
+  color: var(--foreground);
   font: inherit;
   font-size: 0.875rem;
   outline: none;
@@ -368,7 +487,7 @@ body {
 
 .settings-select:focus,
 .settings-input:focus {
-  border-color: var(--ev-c-gray-1);
+  border-color: var(--ring);
 }
 
 .settings-key-row {
@@ -384,9 +503,9 @@ body {
 .settings-key-display {
   flex: 1;
   padding: 0.4rem 0.55rem;
-  border: 1px dashed var(--ev-c-gray-3);
+  border: 1px dashed var(--input);
   border-radius: 0.5rem;
-  color: var(--ev-c-text-2);
+  color: var(--muted-foreground);
   font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
   letter-spacing: 0.05em;
   user-select: none;
@@ -397,17 +516,18 @@ body {
   padding: 0.4rem 0.9rem;
   border: none;
   border-radius: 0.5rem;
-  background: var(--ev-c-gray-1);
-  color: var(--ev-c-text-1);
+  background: var(--secondary);
+  color: var(--secondary-foreground);
   font: inherit;
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
+  transition: background 150ms ease;
 }
 
 .settings-save:hover:not(:disabled),
 .settings-remove:hover:not(:disabled) {
-  background: var(--ev-c-gray-2);
+  background: color-mix(in oklab, var(--foreground) 8%, var(--secondary));
 }
 
 .settings-save:disabled,
@@ -419,15 +539,70 @@ body {
 .settings-warning {
   font-size: 0.8rem;
   font-style: italic;
-  color: var(--ev-c-text-2);
+  color: var(--muted-foreground);
 }
 
 .settings-error {
   font-size: 0.8rem;
-  color: var(--ev-c-text-2);
+  color: var(--destructive);
 }
 
 .settings-note {
   font-size: 0.875rem;
-  color: var(--ev-c-text-2);
+  color: var(--muted-foreground);
+}
+
+/* docs/04 §8.2 — every scroll region styles its scrollbar; the native
+   Chromium default never shows. 8px fully-rounded thumb themed to the
+   border token, transparent track, brighter thumb on hover, horizontal
+   variant included, scrollbar-gutter stable so the scrollbar never shifts
+   layout. Applies to thread viewport, sessions list, settings body, and
+   composer textarea (and every later scrollable panel joins this list). */
+.thread-viewport,
+.sessions-list,
+.settings-dialog,
+.composer-input {
+  scrollbar-gutter: stable;
+}
+
+.thread-viewport::-webkit-scrollbar,
+.sessions-list::-webkit-scrollbar,
+.settings-dialog::-webkit-scrollbar,
+.composer-input::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.thread-viewport::-webkit-scrollbar-track,
+.sessions-list::-webkit-scrollbar-track,
+.settings-dialog::-webkit-scrollbar-track,
+.composer-input::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thread-viewport::-webkit-scrollbar-thumb,
+.sessions-list::-webkit-scrollbar-thumb,
+.settings-dialog::-webkit-scrollbar-thumb,
+.composer-input::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+}
+
+.thread-viewport::-webkit-scrollbar-thumb:hover,
+.sessions-list::-webkit-scrollbar-thumb:hover,
+.settings-dialog::-webkit-scrollbar-thumb:hover,
+.composer-input::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--muted-foreground) 45%, transparent);
+}
+
+/* Non-WebKit fallback line (docs/04 §8.2). Guarded: setting a non-initial
+   scrollbar-width in Chromium 121+ disables ::-webkit-scrollbar styling and
+   would surface the native scrollbar this phase exists to remove. */
+@supports not selector(::-webkit-scrollbar) {
+  .thread-viewport,
+  .sessions-list,
+  .settings-dialog,
+  .composer-input {
+    scrollbar-width: thin;
+  }
 }
