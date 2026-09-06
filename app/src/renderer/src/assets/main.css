@@ -3,8 +3,9 @@
    (--ev-c-*) are retired; every surface renders from these shadcn token
    variables. Dark is the default set (the .dark class ships on <html>);
    the user-facing switcher lands with the Appearance section (M6.3).
-   One indigo accent (primary actions + focus); semantic green/amber/red
-   only where content is status/risk; hairline borders over shadows. */
+   One neutral accent (primary actions + focus — user decision 2026-09-06,
+   was indigo); semantic green/amber/red only where content is status/risk;
+   hairline borders over shadows. */
 
 @import 'tailwindcss';
 @import '@fontsource-variable/inter';
@@ -20,7 +21,7 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.511 0.262 276.966);
+  --primary: oklch(0.42 0 0);
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
@@ -36,7 +37,8 @@
   --warning-foreground: oklch(0.985 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.511 0.262 276.966);
+  --ring: oklch(0.55 0 0);
+  --font-mono: ui-monospace, 'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
   --radius: 0.625rem;
 }
 
@@ -49,8 +51,8 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.269 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.585 0.233 277.117);
-  --primary-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.72 0 0);
+  --primary-foreground: oklch(0.205 0 0);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -65,7 +67,7 @@
   --warning-foreground: oklch(0.205 0 0);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.673 0.182 276.935);
+  --ring: oklch(0.708 0 0);
 }
 
 @theme inline {
@@ -222,6 +224,7 @@
 }
 
 .thread {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -284,6 +287,290 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
+}
+
+/* M1.7 (docs/04 §8.3): assistant replies render as markdown — model replies
+   only; user messages stay plain (.message-text). Presentation changes the
+   look, never what the model said (§5). Tailwind preflight zeroes margins,
+   so message-scale prose spacing lives here. */
+.message-markdown {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.message-markdown > :first-child:not(.code-header) {
+  margin-top: 0;
+}
+
+.message-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.message-markdown p {
+  margin: 0.5rem 0;
+}
+
+.message-markdown h1,
+.message-markdown h2,
+.message-markdown h3,
+.message-markdown h4,
+.message-markdown h5,
+.message-markdown h6 {
+  margin: 0.9rem 0 0.4rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.message-markdown h1 {
+  font-size: 1.25rem;
+}
+
+.message-markdown h2 {
+  font-size: 1.125rem;
+}
+
+.message-markdown h3 {
+  font-size: 1rem;
+}
+
+.message-markdown h4,
+.message-markdown h5,
+.message-markdown h6 {
+  font-size: 0.9375rem;
+}
+
+.message-markdown ul,
+.message-markdown ol {
+  margin: 0.5rem 0;
+  padding-left: 1.4rem;
+}
+
+.message-markdown ul {
+  list-style: disc;
+}
+
+.message-markdown ol {
+  list-style: decimal;
+}
+
+.message-markdown li {
+  margin: 0.2rem 0;
+}
+
+.message-markdown li > ul,
+.message-markdown li > ol {
+  margin: 0.2rem 0;
+}
+
+.message-markdown blockquote {
+  margin: 0.6rem 0;
+  padding: 0.1rem 0 0.1rem 0.8rem;
+  border-left: 2px solid var(--border);
+  color: var(--muted-foreground);
+}
+
+.message-markdown hr {
+  margin: 0.9rem 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+/* Links ride the accent — neutral gray since the 2026-09-06 accent decision. */
+.message-markdown a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.message-markdown a:hover {
+  text-decoration: underline;
+}
+
+.message-markdown table {
+  display: block;
+  margin: 0.6rem 0;
+  border-collapse: collapse;
+  overflow-x: auto;
+  font-size: 0.875rem;
+}
+
+.message-markdown th,
+.message-markdown td {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.message-markdown th {
+  font-weight: 600;
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+}
+
+.message-markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  white-space: pre-wrap;
+}
+
+/* Inline code only — block code resets inside the pre card below. */
+.message-markdown :not(pre) > code {
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.375rem;
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+}
+
+/* Fenced code blocks: the CodeHeader (MarkdownText.tsx) and the pre form one
+   hairline card — plain-language header above, code below. */
+.message-markdown .code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 0.5rem 0.5rem 0 0;
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.message-markdown > .code-header:first-child {
+  margin-top: 0;
+}
+
+.message-markdown .code-copy {
+  border: none;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.message-markdown .code-copy:hover {
+  color: var(--foreground);
+}
+
+.message-markdown pre {
+  margin: 0 0 0.6rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0 0 0.5rem 0.5rem;
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+  overflow-x: auto;
+}
+
+.message-markdown pre code {
+  display: block;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+/* docs/04 §8.4 — thinking affordance during the reasoning lead-in: shown
+   while the run is active but no assistant text has arrived (covers the
+   gpt-oss reasoning lead-in, M1.3). */
+.thinking-indicator {
+  display: flex;
+  align-items: center;
+  padding: 0.15rem 0;
+}
+
+/* docs/04 §8.4 — scroll-to-bottom: ThreadPrimitive.ScrollToBottom renders
+   disabled while isAtBottom, so visibility is styled off :disabled. */
+.scroll-to-bottom {
+  position: absolute;
+  right: 1.5rem;
+  bottom: 5.4rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: var(--card);
+  color: var(--card-foreground);
+  cursor: pointer;
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease,
+    background 150ms ease;
+}
+
+.scroll-to-bottom svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.scroll-to-bottom:disabled {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+}
+
+.scroll-to-bottom:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--foreground) 8%, var(--card));
+}
+
+/* Hover states on the message cards (docs/04 §8.4). */
+.message--user,
+.message--assistant {
+  transition: background 150ms ease;
+}
+
+.message--user:hover {
+  background: color-mix(in oklab, var(--foreground) 6%, var(--secondary));
+}
+
+.message--assistant:hover {
+  background: color-mix(in oklab, var(--foreground) 6%, var(--card));
+}
+
+/* docs/04 §8.4 — ~150ms message enter motion, plus the prompt-kit bounce-dots
+   keyframes the adopted Loader animates. prefers-reduced-motion: reduce
+   strips every animation/transition added this phase. */
+@keyframes message-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes bounce-dots {
+  0%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .message {
+    animation: message-in 150ms ease-out both;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message,
+  .thinking-indicator [class*='animate-'],
+  .scroll-to-bottom {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 /* Conversation error note (M1.2) — an honest sentence, never raw codes or
@@ -356,7 +643,7 @@
 }
 
 /* Stop (M1.4) replaces Send mid-run — same shape, different copy. Neutral:
-   stop is not a promotion, the indigo accent stays on primary actions. */
+   stop is not a promotion — the accent stays on primary actions. */
 .composer-cancel {
   padding: 0.35rem 0.9rem;
   border: none;
@@ -561,14 +848,18 @@
 .thread-viewport,
 .sessions-list,
 .settings-dialog,
-.composer-input {
+.composer-input,
+.message-markdown pre,
+.message-markdown table {
   scrollbar-gutter: stable;
 }
 
 .thread-viewport::-webkit-scrollbar,
 .sessions-list::-webkit-scrollbar,
 .settings-dialog::-webkit-scrollbar,
-.composer-input::-webkit-scrollbar {
+.composer-input::-webkit-scrollbar,
+.message-markdown pre::-webkit-scrollbar,
+.message-markdown table::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
@@ -576,14 +867,18 @@
 .thread-viewport::-webkit-scrollbar-track,
 .sessions-list::-webkit-scrollbar-track,
 .settings-dialog::-webkit-scrollbar-track,
-.composer-input::-webkit-scrollbar-track {
+.composer-input::-webkit-scrollbar-track,
+.message-markdown pre::-webkit-scrollbar-track,
+.message-markdown table::-webkit-scrollbar-track {
   background: transparent;
 }
 
 .thread-viewport::-webkit-scrollbar-thumb,
 .sessions-list::-webkit-scrollbar-thumb,
 .settings-dialog::-webkit-scrollbar-thumb,
-.composer-input::-webkit-scrollbar-thumb {
+.composer-input::-webkit-scrollbar-thumb,
+.message-markdown pre::-webkit-scrollbar-thumb,
+.message-markdown table::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 9999px;
 }
@@ -591,7 +886,9 @@
 .thread-viewport::-webkit-scrollbar-thumb:hover,
 .sessions-list::-webkit-scrollbar-thumb:hover,
 .settings-dialog::-webkit-scrollbar-thumb:hover,
-.composer-input::-webkit-scrollbar-thumb:hover {
+.composer-input::-webkit-scrollbar-thumb:hover,
+.message-markdown pre::-webkit-scrollbar-thumb:hover,
+.message-markdown table::-webkit-scrollbar-thumb:hover {
   background: color-mix(in oklab, var(--muted-foreground) 45%, transparent);
 }
 
@@ -602,7 +899,9 @@
   .thread-viewport,
   .sessions-list,
   .settings-dialog,
-  .composer-input {
+  .composer-input,
+  .message-markdown pre,
+  .message-markdown table {
     scrollbar-width: thin;
   }
 }

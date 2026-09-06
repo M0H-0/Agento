@@ -11,10 +11,15 @@ import type { UIMessage } from 'ai'
 import { createIpcChatTransport } from './chat/transport'
 import type { SessionSummary } from './chat/transport'
 import { parseAgentEvent } from './chat/agent-events'
+import MarkdownText from './components/MarkdownText'
+import ScrollToBottomButton from './components/ScrollToBottomButton'
 import SettingsDialog from './components/SettingsDialog'
 import SessionsSidebar from './components/SessionsSidebar'
 import SidecarStatusDot from './components/SidecarStatusDot'
+import ThinkingIndicator from './components/ThinkingIndicator'
 
+// User messages stay plain text (docs/04 §8.3 scopes markdown to model
+// replies); assistant text renders as streaming markdown.
 function MessageText({ text }: { text: string }): React.JSX.Element {
   return <div className="message-text">{text}</div>
 }
@@ -30,7 +35,8 @@ function UserMessage(): React.JSX.Element {
 function AssistantMessage(): React.JSX.Element {
   return (
     <MessagePrimitive.Root className="message message--assistant">
-      <MessagePrimitive.Parts components={{ Text: MessageText }} />
+      <ThinkingIndicator />
+      <MessagePrimitive.Parts components={{ Text: MarkdownText }} />
     </MessagePrimitive.Root>
   )
 }
@@ -56,6 +62,9 @@ function Thread({ error }: { error?: Error }): React.JSX.Element {
             {error.message}
           </div>
         )}
+        {/* docs/04 §8.4: floats above the composer via absolute positioning
+            (.thread is the containing block); visible only when scrolled up. */}
+        <ScrollToBottomButton />
       </ThreadPrimitive.Viewport>
       <ThreadPrimitive.ViewportFooter className="thread-footer">
         <ComposerPrimitive.Root className="composer">
