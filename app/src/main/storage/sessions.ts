@@ -7,12 +7,24 @@ import { messages, sessions } from './schema'
 // Session repository — the only code that touches the sessions/messages tables
 // (docs/02 §2.5, docs/03-agent-core.md §8). Plain Node, no Electron imports.
 
-export type SessionRow = typeof sessions.$inferSelect
+export interface SessionRow {
+  id: string
+  title: string
+  workspacePath: string
+  mode: string
+  status: string
+  provider: string | null
+  model: string | null
+  createdAt: string
+  updatedAt: string
+}
 
 const DEFAULT_TITLE = 'New task' // schema default, docs/03 §8
 
 // workspace_path is NOT NULL per docs/03 §8; until the workspace picker lands
-// (M2.2) every session stores the empty-string placeholder (M1.3 Devlog).
+// (M2.2) every session stores the empty-string placeholder (M1.3 Devlog). M2.2
+// stamps the picker's current workspace (or keeps the placeholder when the user
+// never picked one) on every new session.
 const WORKSPACE_PLACEHOLDER = ''
 
 // Timestamps are ISO-8601 TEXT written here, never SQLite defaults — they must
@@ -25,6 +37,7 @@ export function createSession(input: {
   title?: string
   provider?: string
   model?: string
+  workspacePath?: string
 }): SessionRow {
   const now = nowIso()
   return getDrizzle()
@@ -32,7 +45,7 @@ export function createSession(input: {
     .values({
       id: randomUUID(),
       title: input.title?.trim() ? input.title.trim() : DEFAULT_TITLE,
-      workspacePath: WORKSPACE_PLACEHOLDER,
+      workspacePath: input.workspacePath ?? WORKSPACE_PLACEHOLDER,
       provider: input.provider ?? null,
       model: input.model ?? null,
       createdAt: now,

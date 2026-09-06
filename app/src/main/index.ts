@@ -5,9 +5,11 @@ import { registerChatIpc } from './ipc/chat'
 import { registerSessionsIpc } from './ipc/sessions'
 import { registerSettingsIpc } from './ipc/settings'
 import { registerSidecarIpc } from './ipc/sidecar'
+import { registerWorkspacesIpc } from './ipc/workspaces'
 import { initSettings } from './settings'
 import { dbFilePath, openDatabase, runSmokeQuery } from './storage/db'
 import { generateSidecarToken, killSidecar, onSidecarStatusChange, startSidecar } from './sidecar'
+import { initWorkspaces } from './workspaces'
 
 function createWindow(): void {
   // Create the browser window.
@@ -81,12 +83,22 @@ app.whenReady().then(async () => {
   // IPC registers so every handler answers from initialized state.
   initSettings(app.getPath('userData'))
 
+  // Workspace selection + recents (docs/03 §4 workspace/*): plain-JSON state in
+  // <userData>/workspaces.json. Initialized before session:create so a new
+  // session always stamps the CURRENT workspace, not the placeholder.
+  initWorkspaces(app.getPath('userData'))
+
   // Chat transport contract (docs/02 §2.1): 'chat:send' invoke + 'chat:part' events.
   registerChatIpc()
 
   // Sessions contract (docs/03 §4): 'session:create' + 'session:list' +
   // 'session:messages' invokes — lazy session rows for the sidebar.
   registerSessionsIpc()
+
+  // Workspace contract (docs/03 §4 workspace/*): native folder pick + recents,
+  // owned by main — 'workspace:get' / 'workspace:pick' / 'workspace:set' /
+  // 'workspace:list'.
+  registerWorkspacesIpc()
 
   // Settings contract (docs/03 §4): 'settings:get' + 'settings:set-api-key' +
   // 'settings:set-model' + 'settings:clear-api-key' invokes.

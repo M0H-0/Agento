@@ -30,6 +30,8 @@ export interface SessionUsage {
 export interface SessionInfo {
   id: string
   title: string
+  /** The workspace this session was created under ('' — empty placeholder — until M2.2 picks one; docs/03 §8). */
+  workspacePath: string
   createdAt: string
   updatedAt: string
   /** Token totals from usage_events; null until the first settled run. */
@@ -42,6 +44,23 @@ export interface CreateSessionPayload {
 
 export interface SessionMessagesPayload {
   sessionId: string
+}
+
+// Workspace contract per docs/03 §4 (workspace/*): the native folder dialog
+// lives in main; the renderer only gets the resulting path back and may
+// re-apply paths this module produced (recents).
+export interface WorkspaceRecent {
+  path: string
+  lastOpenedAt: string
+}
+
+export interface WorkspaceSnapshotPayload {
+  current: string | null
+  recents: WorkspaceRecent[]
+}
+
+export interface WorkspaceSetPayload {
+  path: string
 }
 
 // Session-scoped agent events per docs/03 §4: main → renderer push on
@@ -139,6 +158,15 @@ const agento = {
     list: (): Promise<SessionInfo[]> => ipcRenderer.invoke('session:list'),
     messages: (payload: SessionMessagesPayload): Promise<UIMessage[]> =>
       ipcRenderer.invoke('session:messages', payload)
+  },
+  workspaces: {
+    get: (): Promise<WorkspaceSnapshotPayload> => ipcRenderer.invoke('workspace:get'),
+    list: (): Promise<WorkspaceRecent[]> => ipcRenderer.invoke('workspace:list'),
+    /** Native folder dialog in main; resolves null when the user cancels. */
+    pick: (): Promise<{ path: string } | null> => ipcRenderer.invoke('workspace:pick'),
+    /** Re-apply a path from our own recents list. */
+    set: (payload: WorkspaceSetPayload): Promise<{ path: string }> =>
+      ipcRenderer.invoke('workspace:set', payload)
   },
   settings: {
     get: (): Promise<SettingsSnapshot> => ipcRenderer.invoke('settings:get'),

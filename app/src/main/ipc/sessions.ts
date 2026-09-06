@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import { getSettings } from '../settings'
+import { getCurrentWorkspace } from '../workspaces'
 import { createSession, getSessionMessages, listSessions } from '../storage/sessions'
 import type { SessionRow } from '../storage/sessions'
 import { getUsageTotalsBySession } from '../storage/usage'
@@ -39,6 +40,7 @@ function toSessionInfo(
 ): {
   id: string
   title: string
+  workspacePath: string
   createdAt: string
   updatedAt: string
   usage: SessionUsage | null
@@ -46,6 +48,7 @@ function toSessionInfo(
   return {
     id: row.id,
     title: row.title,
+    workspacePath: row.workspacePath,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     usage: usage ?? null
@@ -56,11 +59,15 @@ export function registerSessionsIpc(): void {
   ipcMain.handle('session:create', (_event: IpcMainInvokeEvent, payload: CreateSessionPayload) => {
     // provider/model stamped from the same settings snapshot the chat
     // pipeline reads — nullable columns, useful from M1.5 (usage per
-    // session) onward.
+    // session) onward. M2.2: workspace_path stamps the picker's current
+    // workspace (still the '' placeholder when none was ever picked).
     const { provider, model } = getSettings()
     const title =
       typeof payload?.title === 'string' && payload.title.trim() !== '' ? payload.title : undefined
-    return toSessionInfo(createSession({ title, provider, model }), undefined)
+    return toSessionInfo(
+      createSession({ title, provider, model, workspacePath: getCurrentWorkspace() ?? undefined }),
+      undefined
+    )
   })
   ipcMain.handle('session:list', () => {
     const totals = getUsageTotalsBySession()

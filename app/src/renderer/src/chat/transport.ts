@@ -5,6 +5,8 @@ import type { ChatTransport, TextUIPart, UIMessage, UIMessageChunk } from 'ai'
 export interface SessionSummary {
   id: string
   title: string
+  /** Workspace the session was created under — '' placeholder until M2.2's picker stamps it. */
+  workspacePath: string
   createdAt: string
   updatedAt: string
   /** Token totals from usage_events; null until the first settled run. */

@@ -22,6 +22,8 @@ export interface SessionUsage {
 export interface SessionInfo {
   id: string
   title: string
+  /** Workspace the session was created under — '' placeholder until the picker (M2.2, docs/03 §8). */
+  workspacePath: string
   createdAt: string
   updatedAt: string
   /** Token totals from usage_events; null until the first settled run. */
@@ -34,6 +36,23 @@ export interface CreateSessionPayload {
 
 export interface SessionMessagesPayload {
   sessionId: string
+}
+
+// Workspace contract per docs/03 §4 (workspace/*): main owns the native
+// folder dialog; the renderer gets the picked path and may re-apply recents
+// this module produced.
+export interface WorkspaceRecent {
+  path: string
+  lastOpenedAt: string
+}
+
+export interface WorkspaceSnapshotPayload {
+  current: string | null
+  recents: WorkspaceRecent[]
+}
+
+export interface WorkspaceSetPayload {
+  path: string
 }
 
 // Session-scoped agent events per docs/03 §4 (M1.5: 'usage' is the first
@@ -66,6 +85,17 @@ export interface AgentoSessions {
   list: () => Promise<SessionInfo[]>
   /** Invoke 'session:messages' — the session's UIMessages in seq order. */
   messages: (payload: SessionMessagesPayload) => Promise<UIMessage[]>
+}
+
+export interface AgentoWorkspaces {
+  /** Invoke 'workspace:get' — current workspace + recents (docs/03 §4). */
+  get: () => Promise<WorkspaceSnapshotPayload>
+  /** Invoke 'workspace:list' — recents only. */
+  list: () => Promise<WorkspaceRecent[]>
+  /** Invoke 'workspace:pick' — the native folder dialog in main; resolves null when the user cancels. */
+  pick: () => Promise<{ path: string } | null>
+  /** Invoke 'workspace:set' — applies a path from our own recents. */
+  set: (payload: WorkspaceSetPayload) => Promise<{ path: string }>
 }
 
 export type SidecarStatus = 'starting' | 'healthy' | 'unhealthy'
@@ -135,6 +165,7 @@ export interface AgentoSettings {
 export interface AgentoAPI {
   chat: AgentoChat
   sessions: AgentoSessions
+  workspaces: AgentoWorkspaces
   sidecar: AgentoSidecar
   agent: AgentoAgent
   settings: AgentoSettings

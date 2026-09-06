@@ -1,4 +1,5 @@
 import type { SessionSummary } from '../chat/transport'
+import WorkspacePicker from './WorkspacePicker'
 
 interface SessionsSidebarProps {
   sessions: SessionSummary[]
@@ -40,6 +41,9 @@ function SessionsSidebar({
 }: SessionsSidebarProps): React.JSX.Element {
   return (
     <nav className="sessions-sidebar" aria-label="Sessions">
+      {/* M2.2: the workspace chip + recents live at the top of the rail — they
+          are app-level state, not per-session. */}
+      <WorkspacePicker />
       <button type="button" className="sessions-new-chat" onClick={onNewChat}>
         + New chat
       </button>
