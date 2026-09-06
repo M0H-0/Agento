@@ -89,13 +89,16 @@ export function createToolRegistry(): ToolRegistry {
     }
 
     // 2 — sandbox resolve: every path field becomes an absolute path inside the
-    // workspace; a refusal aborts BEFORE risk/approval/snapshot/execute.
+    // workspace; a refusal aborts BEFORE risk/approval/snapshot/execute. The
+    // tool's access mode drives the link policy (docs/06 §4.3): reads may
+    // follow an outside-pointing link, writes never may.
     const resolvedInput: Record<string, unknown> = { ...(parsed as Record<string, unknown>) }
     for (const field of tool.pathFields) {
       try {
         resolvedInput[String(field)] = resolveWorkspacePath(
           input.ctx.workspaceRoot,
-          (parsed as Record<string, unknown>)[String(field)]
+          (parsed as Record<string, unknown>)[String(field)],
+          tool.access
         )
       } catch (error) {
         if (error instanceof ToolRefusalError) {

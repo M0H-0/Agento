@@ -1,14 +1,26 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ToolRefusalError, resolveWorkspacePath } from './sandbox'
 
 // M2.1 sandbox string rules (docs/06 §4.1 floor): relative intent only,
-// absolute/drive/UNC/device paths and `..` escapes refused. The realpath
-// junction/symlink walk arrives with the M2.3 hardening pass.
+// absolute/drive/UNC/device paths and `..` escapes refused. Since M2.3 the
+// resolver also realpaths the root, so these tests run against a REAL temp
+// workspace; the full adversarial fixture suite lives in
+// sandbox.fixtures.test.ts.
+
+let root: string
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'agento-sbx-unit-'))
+})
+
+afterEach(() => {
+  rmSync(root, { recursive: true, force: true })
+})
 
 describe('resolveWorkspacePath (M2.1 string rules)', () => {
-  const root = join('D:', 'ws', 'project')
-
   it('resolves a plain relative path inside the workspace', () => {
     expect(resolveWorkspacePath(root, 'report.txt')).toBe(join(root, 'report.txt'))
   })
