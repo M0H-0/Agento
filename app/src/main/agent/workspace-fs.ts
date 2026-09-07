@@ -1,11 +1,13 @@
 import { dirname, join, relative } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readdirSync as nodeReaddirSync,
   readFileSync,
   renameSync,
+  rmdirSync,
   statSync,
   unlinkSync,
   writeFileSync
@@ -116,6 +118,94 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
       } catch (error) {
         throw new WorkspaceFsRefusalError(
           `I could not create the folder "${relative(workspaceRoot, path)}" — ${
+            error instanceof Error ? error.message : String(error)
+          }. Nothing was changed.`
+        )
+      }
+    },
+    movePath(from: string, to: string): void {
+      assertInsideWorkspace(workspaceRoot, from)
+      assertInsideWorkspace(workspaceRoot, to)
+      if (!existsSync(from)) {
+        throw new WorkspaceFsRefusalError(
+          `I couldn't find "${relative(workspaceRoot, from)}" — it may have been moved or renamed. Nothing was changed.`
+        )
+      }
+      // Missing dest parents are created (writeFileAtomic doctrine); an
+      // existing dest is replaced — the wrapper snapshots both sides first,
+      // so undo restores each (docs/03 §8).
+      mkdirSync(dirname(to), { recursive: true })
+      try {
+        if (existsSync(to)) {
+          if (statSync(to).isDirectory()) rmdirSync(to)
+          else unlinkSync(to)
+        }
+        renameSync(from, to)
+      } catch (error) {
+        throw new WorkspaceFsRefusalError(
+          `I could not move "${relative(workspaceRoot, from)}" — ${
+            error instanceof Error ? error.message : String(error)
+          }. Nothing was changed.`
+        )
+      }
+    },
+    copyPath(from: string, to: string): number {
+      assertInsideWorkspace(workspaceRoot, from)
+      assertInsideWorkspace(workspaceRoot, to)
+      if (!existsSync(from)) {
+        throw new WorkspaceFsRefusalError(
+          `I couldn't find "${relative(workspaceRoot, from)}" — it may have been moved or renamed. Nothing was changed.`
+        )
+      }
+      let size = 0
+      try {
+        size = statSync(from).size
+        if (statSync(from).isDirectory()) {
+          throw new WorkspaceFsRefusalError(
+            `I can only copy files, not folders ("${relative(workspaceRoot, from)}" is a folder). Nothing was changed.`
+          )
+        }
+      } catch (error) {
+        if (error instanceof WorkspaceFsRefusalError) throw error
+        throw new WorkspaceFsRefusalError(
+          `I could not read "${relative(workspaceRoot, from)}" — ${
+            error instanceof Error ? error.message : String(error)
+          }. Nothing was changed.`
+        )
+      }
+      mkdirSync(dirname(to), { recursive: true })
+      try {
+        // Byte-exact (not text) so non-text files survive the copy; the
+        // snapshot layer stays text-oriented by design (write_file doctrine).
+        copyFileSync(from, to)
+      } catch (error) {
+        throw new WorkspaceFsRefusalError(
+          `I could not copy "${relative(workspaceRoot, from)}" — ${
+            error instanceof Error ? error.message : String(error)
+          }. Nothing was changed.`
+        )
+      }
+      return size
+    },
+    deletePath(path: string): void {
+      assertInsideWorkspace(workspaceRoot, path)
+      if (!existsSync(path)) {
+        throw new WorkspaceFsRefusalError(
+          `I couldn't find "${relative(workspaceRoot, path)}" — it may already be gone. Nothing was changed.`
+        )
+      }
+      try {
+        if (statSync(path).isDirectory()) rmdirSync(path)
+        else unlinkSync(path)
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code
+        if (code === 'ENOTEMPTY' || code === 'EEXIST') {
+          throw new WorkspaceFsRefusalError(
+            `I won't delete the folder "${relative(workspaceRoot, path)}" because it still has files in it — move or delete those first. Nothing was changed.`
+          )
+        }
+        throw new WorkspaceFsRefusalError(
+          `I could not delete "${relative(workspaceRoot, path)}" — ${
             error instanceof Error ? error.message : String(error)
           }. Nothing was changed.`
         )

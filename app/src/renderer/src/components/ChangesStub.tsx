@@ -19,6 +19,12 @@ function titleForEntry(entry: ChangeEntry): string {
       return 'Edited file'
     case 'create_dir':
       return 'Created folder'
+    case 'move_path':
+      return 'Moved file'
+    case 'copy_path':
+      return 'Copied file'
+    case 'delete_path':
+      return 'Deleted file'
     default:
       return entry.tool
   }

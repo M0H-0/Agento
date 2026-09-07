@@ -37,6 +37,8 @@ export interface RunContextDeps {
   onSnapshot?: (entry: {
     toolCallId: string | null
     path: string
+    /** Move destination (M2.7) — lands in `checkpoints.dest_path`. */
+    destPath?: string | null
     existed: boolean
     content: string | null
     beforeExcerpt?: string | null
@@ -175,6 +177,7 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
         content: !isDir && fs.existsSync(path) ? fs.readFileSync(path) : null,
         existed: fs.existsSync(path),
         tool: meta?.tool ?? 'agent',
+        destPath: meta?.destPath ?? null,
         ts: Date.now()
       }
       snapshotStore.remember(entry)
@@ -187,6 +190,7 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
           deps.onSnapshot({
             toolCallId: meta?.toolCallId ?? null,
             path,
+            destPath: entry.destPath,
             existed: entry.existed,
             content: entry.content,
             beforeExcerpt:

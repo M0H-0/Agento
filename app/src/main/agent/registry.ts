@@ -238,14 +238,23 @@ export function createToolRegistry(): ToolRegistry {
 
     // 5 — mandatory snapshot: every risk ≥ 1 (or write-access) target is
     // snapshotted BEFORE execution (docs/03 §7). There is no way to skip this.
-    // The meta keys the durable checkpoint row (M2.5).
+    // The meta keys the durable checkpoint row (M2.5). A tool declaring
+    // `checkpointDestPath` (M2.7: move_path) stores its destination on the
+    // FIRST path field's row, so undo restores the original name (docs/03 §8).
+    // Every snapshot fires before execute — multi-path tools (move/copy take
+    // two) land one row per path in pathFields order.
     if (risk.level >= 1 || tool.access === 'write') {
-      for (const field of tool.pathFields) {
+      const destPath =
+        typeof tool.checkpointDestPath === 'function'
+          ? tool.checkpointDestPath(resolvedInput as never)
+          : null
+      tool.pathFields.forEach((field, index) => {
         input.ctx.snapshot(String(resolvedInput[String(field)]), {
           tool: tool.name,
-          toolCallId: input.toolCallId
+          toolCallId: input.toolCallId,
+          destPath: index === 0 ? (destPath ?? undefined) : undefined
         })
-      }
+      })
     }
 
     // 6 — execute. The tool body sees only pre-resolved, guarded paths and the

@@ -2,10 +2,13 @@ import { useEffect } from 'react'
 import { useAssistantApi } from '@assistant-ui/react'
 import type { ToolCallMessagePartComponent } from '@assistant-ui/react'
 import { AskUserCard } from './AskUserCard'
+import { CopyPathCard } from './CopyPathCard'
 import { CreateDirCard } from './CreateDirCard'
+import { DeletePathCard } from './DeletePathCard'
 import { EditFileCard } from './EditFileCard'
 import { GenericToolCard } from './GenericToolCard'
 import { ListDirCard } from './ListDirCard'
+import { MovePathCard } from './MovePathCard'
 import { ReadFileCard } from './ReadFileCard'
 import { SearchFilesCard } from './SearchFilesCard'
 import { WriteFileCard } from './WriteFileCard'
@@ -184,6 +187,35 @@ function asEditFile(value: unknown): {
   return { beforeExcerpt: value.beforeExcerpt, afterExcerpt: value.afterExcerpt }
 }
 
+function asMovePath(value: unknown): {
+  from: string
+  to: string
+  overwritten: boolean
+} | null {
+  if (!isRecord(value)) return null
+  if (typeof value.from !== 'string' || typeof value.to !== 'string') return null
+  if (typeof value.overwritten !== 'boolean') return null
+  return { from: value.from, to: value.to, overwritten: value.overwritten }
+}
+
+function asCopyPath(value: unknown): {
+  from: string
+  to: string
+  overwritten: boolean
+  size: number
+} | null {
+  if (!isRecord(value)) return null
+  if (typeof value.from !== 'string' || typeof value.to !== 'string') return null
+  if (typeof value.overwritten !== 'boolean' || typeof value.size !== 'number') return null
+  return { from: value.from, to: value.to, overwritten: value.overwritten, size: value.size }
+}
+
+function asDeletePath(value: unknown): { path: string } | null {
+  if (!isRecord(value)) return null
+  if (typeof value.path !== 'string') return null
+  return { path: value.path }
+}
+
 function renderListDirCard(part: AuiToolPart): React.JSX.Element | null {
   const entries = asListEntries(part.result)
   if (entries.length === 0 && !isRecord(part.result)) return null
@@ -286,6 +318,45 @@ function renderEditFileCard(part: AuiToolPart): React.JSX.Element | null {
   )
 }
 
+function renderMovePathCard(part: AuiToolPart): React.JSX.Element | null {
+  const result = asMovePath(part.result)
+  if (!result) return null
+  return (
+    <MovePathCard
+      title={titleFromToolName('move_path')}
+      status={statusFor(part.status)}
+      toolCallId={part.toolCallId}
+      {...result}
+    />
+  )
+}
+
+function renderCopyPathCard(part: AuiToolPart): React.JSX.Element | null {
+  const result = asCopyPath(part.result)
+  if (!result) return null
+  return (
+    <CopyPathCard
+      title={titleFromToolName('copy_path')}
+      status={statusFor(part.status)}
+      toolCallId={part.toolCallId}
+      {...result}
+    />
+  )
+}
+
+function renderDeletePathCard(part: AuiToolPart): React.JSX.Element | null {
+  const result = asDeletePath(part.result)
+  if (!result) return null
+  return (
+    <DeletePathCard
+      title={titleFromToolName('delete_path')}
+      status={statusFor(part.status)}
+      toolCallId={part.toolCallId}
+      {...result}
+    />
+  )
+}
+
 // Single renderer per tool: the assistant-ui runtime hands us the ToolCall
 // props; we project to a per-tool card (or the generic fallback).
 function renderToolCard(part: AuiToolPart): React.JSX.Element {
@@ -315,6 +386,18 @@ function renderToolCard(part: AuiToolPart): React.JSX.Element {
   }
   if (part.toolName === 'edit_file') {
     const card = renderEditFileCard(part)
+    if (card) return card
+  }
+  if (part.toolName === 'move_path') {
+    const card = renderMovePathCard(part)
+    if (card) return card
+  }
+  if (part.toolName === 'copy_path') {
+    const card = renderCopyPathCard(part)
+    if (card) return card
+  }
+  if (part.toolName === 'delete_path') {
+    const card = renderDeletePathCard(part)
     if (card) return card
   }
   return (
@@ -371,13 +454,13 @@ export function ToolUIRegistry(): null {
       'ask_user',
       'write_file',
       'create_dir',
-      'edit_file'
+      'edit_file',
+      'move_path',
+      'copy_path',
+      'delete_path'
     ]) {
       unsubscribers.push(tools.setToolUI(name, makeToolCardShim(name)))
     }
-    // M2.1 introduced write_file but had no card; M2.5/M2.6 will land
-    // their own custom cards. Until then, write_file falls through to the
-    // generic card so existing chat runs don't break.
     return () => {
       for (const unsub of unsubscribers) unsub()
     }

@@ -47,6 +47,16 @@ export interface WorkspaceFs {
   isDirectory(path: string): boolean
   /** Create a directory (recursive), inside the workspace only. */
   mkdir(path: string): void
+  /** Move/rename a file or folder inside the workspace (overwrites an
+   * existing destination — the wrapper snapshots both sides first).
+   * Refuses with plain language when the source is missing. */
+  movePath(from: string, to: string): void
+  /** Byte-exact copy of a single file inside the workspace (overwrites an
+   * existing destination). Refuses directories with plain language. */
+  copyPath(from: string, to: string): number
+  /** Delete a file or an empty folder inside the workspace. Refuses a
+   * non-empty folder with plain language (recursive delete is out of scope). */
+  deletePath(path: string): void
   /** Directory entries (top-level only) with a small type tag. Refuses outside the workspace. */
   readdir(path: string): { name: string; type: 'file' | 'directory' }[]
   /** Recursively list file paths under a directory, capped at `limit`. Excludes directories themselves. */
@@ -65,8 +75,11 @@ export interface ToolExecutionContext {
   exists(path: string): boolean
   /** Mandatory snapshot before a risk ≥ 1 mutation (docs/03 §7). The meta
    * carries the wrapper's per-call context (tool name + AI SDK toolCallId)
-   * so the durable write-through (M2.5) can key the checkpoints row. */
-  snapshot(path: string, meta?: { tool?: string; toolCallId?: string }): void
+   * so the durable write-through (M2.5) can key the checkpoints row.
+   * `destPath` carries a move's destination (M2.7): the wrapper sets it from
+   * the tool's `checkpointDestPath`, and the durable row stores it in
+   * `checkpoints.dest_path` so undo restores the original name. */
+  snapshot(path: string, meta?: { tool?: string; toolCallId?: string; destPath?: string }): void
   /** Blocks on the user's decision for risk ≥ 2 (docs/06 §3); the caller wires the dialog. */
   requestApproval(request: ApprovalRequest): Promise<ApprovalDecision>
   /**
@@ -124,6 +137,11 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   risk(input: TInput, ctx: ToolExecutionContext): RiskClassification
   describe(input: TInput): ToolDescriptor
   execute(input: TInput, ctx: ToolExecutionContext): Promise<ToolResult<TOutput>>
+  /** Optional move destination (M2.7): when defined, the wrapper stores the
+   * returned (already sandbox-resolved) path as `dest_path` on the FIRST
+   * path field's checkpoint row, so undo restores the original name
+   * (docs/03 §8). Only move_path defines this. */
+  checkpointDestPath?(input: TInput): string | null
 }
 
 // Snapshot store — the checkpoint durability question (SQLite checkpoints
@@ -135,6 +153,8 @@ export interface SnapshotEntry {
   existed: boolean
   tool: string
   ts: number
+  /** Move destination (M2.7) — mirrors `checkpoints.dest_path`. */
+  destPath?: string | null
 }
 
 export interface SnapshotStore {

@@ -16,12 +16,15 @@ import { getCurrentWorkspace } from '../workspaces'
 import {
   askUserTool,
   buildRunContext,
+  copyPathTool,
   createDirTool,
   createToolRegistry,
+  deletePathTool,
   editExcerpts,
   editFileTool,
   excerptOf,
   listDirTool,
+  movePathTool,
   newRunId,
   readFileTool,
   searchFilesTool,
@@ -137,7 +140,7 @@ const activeRuns = new Map<string, ActiveRun>()
 // Build the registry exactly once — tool definitions are immutable for the
 // app's lifetime, so re-defining per send would only allocate. The active
 // tools are the M2.4 set (read-only + ask_user + write_file from M2.1);
-// M2.5/M2.6 add their tools here.
+// M2.5/M2.6/M2.7 add their tools here.
 function buildGlobalRegistry(): ReturnType<typeof createToolRegistry> {
   const registry = createToolRegistry()
   registry.define(listDirTool)
@@ -147,6 +150,9 @@ function buildGlobalRegistry(): ReturnType<typeof createToolRegistry> {
   registry.define(writeFileTool)
   registry.define(createDirTool)
   registry.define(editFileTool)
+  registry.define(movePathTool)
+  registry.define(copyPathTool)
+  registry.define(deletePathTool)
   return registry
 }
 
@@ -252,6 +258,7 @@ export function registerChatIpc(): void {
           sessionId,
           toolCallId: entry.toolCallId,
           path: entry.path,
+          destPath: entry.destPath ?? null,
           existed: entry.existed,
           content: entry.content,
           size: entry.content !== null ? Buffer.byteLength(entry.content, 'utf8') : null,

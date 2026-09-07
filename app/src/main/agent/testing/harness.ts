@@ -67,7 +67,7 @@ export function createHandlerHarness(
       stages.riskProbes.push(path)
       return fs.existsSync(path)
     },
-    snapshot: (path) => {
+    snapshot: (path, meta) => {
       stages.order.push('snapshot')
       // A directory target has no file content to restore — the checkpoint
       // records existed + path only (undo deletes the created dir).
@@ -77,6 +77,7 @@ export function createHandlerHarness(
         content: !isDir && fs.existsSync(path) ? fs.readFileSync(path) : null,
         existed: fs.existsSync(path),
         tool: 'write_file',
+        destPath: meta?.destPath ?? null,
         ts: Date.now()
       }
       snapshots.push(entry)
