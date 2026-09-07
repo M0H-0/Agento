@@ -43,20 +43,41 @@ export interface WorkspaceFs {
   readFileSync(path: string): string
   /** Atomic temp+rename; returns the byte size written. */
   writeFileAtomic(path: string, content: string): number
+  /** True when the path is a directory (and inside the workspace). */
+  isDirectory(path: string): boolean
+  /** Directory entries (top-level only) with a small type tag. Refuses outside the workspace. */
+  readdir(path: string): { name: string; type: 'file' | 'directory' }[]
+  /** Recursively list file paths under a directory, capped at `limit`. Excludes directories themselves. */
+  walkFiles(root: string, limit: number): string[]
 }
 
 // Injected per run (docs/03 §5 "ctx"): workspace root, existence probe for the
-// risk stage, the mandatory snapshot hook, the approval hook, and the guarded
-// fs facade. Storage repos / intelligence client / event sender connect here
-// in M2.5/M3.
+// risk stage, the mandatory snapshot hook, the approval hook, the guarded
+// fs facade, and the ask_user pause. Storage repos / intelligence client /
+// event sender connect here in M2.5/M3.
 export interface ToolExecutionContext {
   workspaceRoot: string
+  /** AI SDK v5's toolCallId for the current call (used by ask_user; the registry thread sets it). */
+  activeToolCallId?: string
   /** Disk probe for risk classification (rule-table floor; docs/06 §2). */
   exists(path: string): boolean
   /** Mandatory snapshot before a risk ≥ 1 mutation (docs/03 §7). */
   snapshot(path: string): void
   /** Blocks on the user's decision for risk ≥ 2 (docs/06 §3); the caller wires the dialog. */
   requestApproval(request: ApprovalRequest): Promise<ApprovalDecision>
+  /**
+   * Blocks until the user replies to an ask_user question. The bridge is the
+   * synthetic `tool-output-available` chunk over `chat:part` carrying
+   * `{ __askUserAwait: true, toolCallId, question, options? }` (M2.4 design);
+   * the renderer calls `window.agento.toolAnswer({ toolCallId, answer })` and
+   * main resolves this promise with the answer. ask_user never gates on
+   * approval — it's risk 0 by docs/03 §5.
+   */
+  requestUserAnswer(input: {
+    toolCallId: string
+    question: string
+    options?: string[]
+  }): Promise<string>
   fs: WorkspaceFs
 }
 

@@ -18,6 +18,12 @@ export interface HarnessStages {
   riskProbes: string[]
   snapshots: SnapshotEntry[]
   approvals: { request: unknown; decision: 'approve' | 'skip' | 'cancel' }[]
+  /** Every ask_user request the tool made. */
+  askUserRequests: { toolCallId: string; question: string; options?: string[] }[]
+  /** Scriptable answer for the next ask_user call. Resolved answers are
+   *  removed; defaults are an empty string. */
+  pendingAnswer: () => string | undefined
+  setPendingAnswer: (answer: string | undefined) => void
   executions: string[]
   order: string[]
 }
@@ -34,6 +40,9 @@ export function createHandlerHarness(
     riskProbes: [],
     snapshots: [],
     approvals: [],
+    askUserRequests: [],
+    pendingAnswer: () => undefined,
+    setPendingAnswer: () => undefined,
     executions: [],
     order: []
   }
@@ -45,6 +54,11 @@ export function createHandlerHarness(
     ts: number
   }[] = []
   const fs = createWorkspaceFs(workspaceRoot)
+  let nextAnswer: string | undefined = undefined
+  stages.setPendingAnswer = (answer) => {
+    nextAnswer = answer
+  }
+  stages.pendingAnswer = () => nextAnswer
 
   const ctx: ToolExecutionContext = {
     workspaceRoot,
@@ -69,6 +83,16 @@ export function createHandlerHarness(
       stages.order.push('approval')
       stages.approvals.push({ request, decision })
       return decision
+    },
+    requestUserAnswer: async (request) => {
+      stages.askUserRequests.push({
+        toolCallId: request.toolCallId,
+        question: request.question,
+        options: request.options
+      })
+      const answer = nextAnswer ?? ''
+      nextAnswer = undefined
+      return answer
     },
     fs
   }

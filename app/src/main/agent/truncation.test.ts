@@ -33,6 +33,7 @@ describe('wrapper — result truncation', () => {
           exists: () => false,
           snapshot: () => undefined,
           requestApproval: async () => 'approve',
+          requestUserAnswer: async () => '',
           fs: createWorkspaceFs(ws.root)
         }
       })
@@ -67,6 +68,7 @@ describe('wrapper — result truncation', () => {
           exists: () => false,
           snapshot: () => undefined,
           requestApproval: async () => 'approve',
+          requestUserAnswer: async () => '',
           fs: createWorkspaceFs(ws.root)
         }
       })

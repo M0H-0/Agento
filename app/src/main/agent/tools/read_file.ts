@@ -1,0 +1,56 @@
+import { basename } from 'node:path'
+import { z } from 'zod'
+import type { ToolDefinition } from '../types'
+
+// P0 read-only tool (docs/03 §5): read a text file. Optional startLine/maxLines
+// for large files — without them the wrapper's 8 KB truncation (docs/03 §5
+// `MAX_TOOL_OUTPUT_BYTES`) would already cap the output, but a targeted
+// read keeps both the model prompt and the card body focused.
+export const readFileTool: ToolDefinition<
+  { path: string; startLine?: number; maxLines?: number },
+  {
+    path: string
+    content: string
+    startLine: number
+    endLine: number
+    totalLines: number
+    truncated: boolean
+  }
+> = {
+  name: 'read_file',
+  description:
+    "Read a text file from the user's workspace (path relative to the workspace root). Optional startLine/maxLines for large files.",
+  access: 'read',
+  inputSchema: z.object({
+    path: z.string().min(1),
+    startLine: z.number().int().min(0).optional(),
+    maxLines: z.number().int().min(1).max(2000).optional()
+  }),
+  pathFields: ['path'],
+  risk: () => ({ level: 0, reason: 'Read-only' }),
+  describe: (input) => ({ title: `Read ${basename(input.path)}`, group: 'files' }),
+  execute: async (input, ctx) => {
+    const full = ctx.fs.readFileSync(input.path)
+    // Split on line boundaries; `split` of `"a\nb\n"` returns ["a","b",""]
+    // — the trailing empty is the expected "no content after the last \n"
+    // marker. We strip it so totalLines is honest (3 lines, not 4).
+    const lines = full.split(/\r?\n/)
+    const lastIsEmpty = lines.length > 0 && lines[lines.length - 1] === ''
+    const meaningful = lastIsEmpty ? lines.slice(0, -1) : lines
+    const start = input.startLine ?? 0
+    const max = input.maxLines ?? 2000
+    const end = Math.min(meaningful.length, start + max)
+    const slice = meaningful.slice(start, end).join('\n')
+    return {
+      ok: true,
+      output: {
+        path: input.path,
+        content: slice,
+        startLine: start,
+        endLine: end,
+        totalLines: meaningful.length,
+        truncated: end < meaningful.length
+      }
+    }
+  }
+}

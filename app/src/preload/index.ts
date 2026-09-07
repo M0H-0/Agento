@@ -15,6 +15,16 @@ export interface ChatStopPayload {
   sessionId: string
 }
 
+// ask_user (docs/03 §5): the loop pauses on the user's reply in the thread.
+// The bridge is a synthetic `tool-output-available` chunk with an
+// `__agentoAskUser` payload; the renderer's card reads the question/options
+// and calls `tool:answer` to resume the loop. No new IPC channel — the
+// existing `chat:part` envelope is the only wire for tool activity.
+export interface ToolAnswerPayload {
+  toolCallId: string
+  answer: string
+}
+
 export interface ChatPartEvent {
   sessionId: string
   part: UIMessageChunk
@@ -130,6 +140,10 @@ const agento = {
         ipcRenderer.removeListener('chat:part', handler)
       }
     }
+  },
+  tool: {
+    answer: (payload: ToolAnswerPayload): Promise<{ ok: boolean; reason?: string }> =>
+      ipcRenderer.invoke('tool:answer', payload)
   },
   sidecar: {
     getStatus: (): Promise<SidecarStatusEvent> => ipcRenderer.invoke('sidecar:get-status'),

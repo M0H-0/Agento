@@ -1,3 +1,4 @@
+import { tool as aiTool, zodSchema } from 'ai'
 import { z } from 'zod'
 import type {
   RiskClassification,
@@ -28,7 +29,22 @@ export interface ToolRegistry {
   define<TInput, TOutput>(tool: ToolDefinition<TInput, TOutput>): void
   get(name: string): ToolDefinition | undefined
   /** The wrapper entry point — the loop (M2.4 slot) calls this per model tool call. */
-  run(input: { tool: string; args: unknown; ctx: ToolExecutionContext }): Promise<ToolCallOutcome>
+  run(input: {
+    tool: string
+    args: unknown
+    ctx: ToolExecutionContext
+    /** AI SDK v5's toolCallId for the current call (defaults to the tool name). */
+    toolCallId?: string
+  }): Promise<ToolCallOutcome>
+  /**
+   * Build the `tools` field of `streamText` from every defined tool. The loop
+   * calls this once per run with the per-run ctx. Each returned tool is
+   * `ai.tool({...})` whose `execute` goes through the registry wrapper, so
+   * the same validate → sandbox → risk → approval-hook → snapshot → execute
+   * → truncate order runs in the loop exactly as it does in the unit tests
+   * (docs/03 §5, AGENTS.md rule 2).
+   */
+  toAiSdkTools(ctx: ToolExecutionContext): Record<string, ReturnType<typeof aiTool>>
 }
 
 // Stage refusals are normal outcomes (a refused call is not a crash): the tool
@@ -71,6 +87,7 @@ export function createToolRegistry(): ToolRegistry {
     tool: string
     args: unknown
     ctx: ToolExecutionContext
+    toolCallId?: string
   }): Promise<ToolCallOutcome> {
     const tool = tools.get(input.tool)
     if (!tool)
@@ -149,8 +166,13 @@ export function createToolRegistry(): ToolRegistry {
     }
 
     // 6 — execute. The tool body sees only pre-resolved, guarded paths and the
-    // injected WorkspaceFs — it cannot bypass the sandbox.
-    const result = await tool.execute(resolvedInput as never, input.ctx)
+    // injected WorkspaceFs — it cannot bypass the sandbox. The active
+    // toolCallId is injected into the per-call context so ask_user can pass it
+    // through to the renderer pause protocol.
+    const callCtx: ToolExecutionContext = input.toolCallId
+      ? { ...input.ctx, activeToolCallId: input.toolCallId }
+      : input.ctx
+    const result = await tool.execute(resolvedInput as never, callCtx)
     if (!result.ok) {
       return {
         ok: false,
@@ -165,5 +187,60 @@ export function createToolRegistry(): ToolRegistry {
     return truncatedResult(tool.name, result)
   }
 
-  return { define, get: (name) => tools.get(name), run }
+  function toAiSdkTools(ctx: ToolExecutionContext): Record<string, ReturnType<typeof aiTool>> {
+    const out: Record<string, ReturnType<typeof aiTool>> = {}
+    for (const [name, tool] of tools) {
+      // The AI SDK's `tool()` helper is generic on INPUT/OUTPUT. Our registry
+      // stores the untyped ToolDefinition (the schema is Zod-typed and the
+      // runtime re-validates). We build the AI SDK tool with `unknown` shape
+      // — the wrapper handles validation, so the SDK just plumbs args through.
+      // The execute callback receives `(input, options)` where options carries
+      // the AI SDK's `toolCallId` and `messages`; we pass toolCallId through
+      // so ask_user can identify its pause request on the renderer side.
+      const wrapped = aiTool({
+        description: tool.description,
+        inputSchema: zodSchema(tool.inputSchema as unknown as z.ZodTypeAny) as never,
+        execute: async (input: unknown, options: { toolCallId: string }): Promise<unknown> => {
+          // One-line lifecycle log per tool call (main stdout → dev log).
+          // Permanent value, not gate scaffolding: until the M3 audit log
+          // lands, this is the only record of what the loop actually ran.
+          console.log(`[tools] call ${name} ${JSON.stringify(input)?.slice(0, 200)}`)
+          const outcome = await run({
+            tool: name,
+            args: input,
+            ctx,
+            toolCallId: options.toolCallId
+          })
+          console.log(`[tools] ${name} -> ${outcome.status} ok=${outcome.ok}`)
+          // The AI SDK consumes whatever the execute returns as the tool
+          // output (and renders it in the card body). Refusals/skips/
+          // cancellations become a plain-language message object so the
+          // card is honest about what happened.
+          if (outcome.status === 'refused') {
+            throw new Error(outcome.message)
+          }
+          if (outcome.status === 'skipped') {
+            return { __agentoOutcome: 'skipped', message: outcome.message }
+          }
+          if (outcome.status === 'cancelled') {
+            return { __agentoOutcome: 'cancelled', message: outcome.message }
+          }
+          if (outcome.ok === false) {
+            throw new Error(outcome.message)
+          }
+          // 'executed' (the success path) — `outcome.result` is the wrapper's
+          // shape (may be the `truncated` envelope); unwrap when present.
+          const result = outcome.result as { truncated?: boolean; hint?: string } | undefined
+          if (result && typeof result === 'object' && 'truncated' in result && result.truncated) {
+            return { truncated: true, hint: result.hint ?? 'Large result; see session log.' }
+          }
+          return result
+        }
+      }) as unknown as ReturnType<typeof aiTool>
+      out[name] = wrapped
+    }
+    return out
+  }
+
+  return { define, get: (name) => tools.get(name), run, toAiSdkTools }
 }

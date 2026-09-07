@@ -9,6 +9,11 @@ export interface ChatStopPayload {
   sessionId: string
 }
 
+export interface ToolAnswerPayload {
+  toolCallId: string
+  answer: string
+}
+
 export interface ChatPartEvent {
   sessionId: string
   part: UIMessageChunk
@@ -76,6 +81,11 @@ export interface AgentoChat {
   stop: (payload: ChatStopPayload) => Promise<void>
   /** Subscribe to 'chat:part' events; returns an unsubscribe function. */
   onPart: (listener: (event: ChatPartEvent) => void) => () => void
+}
+
+export interface AgentoTool {
+  /** Invoke 'tool:answer' — settles a paused ask_user (docs/03 §5 / M2.4). */
+  answer: (payload: ToolAnswerPayload) => Promise<{ ok: boolean; reason?: string }>
 }
 
 export interface AgentoSessions {
@@ -164,6 +174,7 @@ export interface AgentoSettings {
 
 export interface AgentoAPI {
   chat: AgentoChat
+  tool: AgentoTool
   sessions: AgentoSessions
   workspaces: AgentoWorkspaces
   sidecar: AgentoSidecar

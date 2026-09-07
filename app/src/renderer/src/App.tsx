@@ -17,6 +17,7 @@ import SettingsDialog from './components/SettingsDialog'
 import SessionsSidebar from './components/SessionsSidebar'
 import SidecarStatusDot from './components/SidecarStatusDot'
 import ThinkingIndicator from './components/ThinkingIndicator'
+import { ToolUIRegistry } from './components/cards/ToolUIRegistry'
 
 // User messages stay plain text (docs/04 §8.3 scopes markdown to model
 // replies); assistant text renders as streaming markdown.
@@ -147,6 +148,7 @@ function ChatView({
   }, [runActive, stop])
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      <ToolUIRegistry />
       <Thread error={chat.error} />
     </AssistantRuntimeProvider>
   )

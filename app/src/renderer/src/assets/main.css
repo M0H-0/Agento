@@ -1022,3 +1022,245 @@
     scrollbar-width: thin;
   }
 }
+
+/* Tool cards (M2.4, docs/04 §3.1): plain-language chrome, hairline border,
+   no diff component anywhere (docs/04 §5). The card lives in the
+   assistant-ui message part slot (via ToolUIRegistry's setToolUI). */
+.tool-card {
+  margin: 0.5rem 0;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--card);
+  color: var(--card-foreground);
+  overflow: hidden;
+}
+
+.tool-card__header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.tool-card__header:hover {
+  background: color-mix(in oklab, var(--muted) 60%, transparent);
+}
+
+.tool-card__header--warn {
+  color: var(--warning, oklch(0.78 0.16 75));
+}
+
+.tool-card__chevron {
+  display: inline-block;
+  width: 0.75rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.tool-card__title {
+  flex: 1;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.tool-card__status {
+  flex-shrink: 0;
+}
+
+.tool-card__meta {
+  padding: 0 0.75rem 0.5rem;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+}
+
+.tool-card__body {
+  padding: 0 0.75rem 0.75rem;
+  border-top: 1px solid var(--border);
+  background: color-mix(in oklab, var(--muted) 25%, transparent);
+}
+
+.tool-card__list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.tool-card__list-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+  font-size: 0.85rem;
+}
+
+.tool-card__list-item--search {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  border-bottom: 1px dashed color-mix(in oklab, var(--border) 60%, transparent);
+  padding: 0.3rem 0;
+}
+
+.tool-card__list-item--search:last-child {
+  border-bottom: 0;
+}
+
+.tool-card__list-type {
+  font-size: 0.85rem;
+  width: 1rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.tool-card__list-name {
+  font-family: var(--font-sans);
+}
+
+.tool-card__list-preview {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-card__empty {
+  color: var(--muted-foreground);
+  font-size: 0.85rem;
+  padding: 0.5rem 0;
+}
+
+.tool-card__pre {
+  margin: 0.5rem 0 0;
+  padding: 0.6rem 0.75rem;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--foreground);
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-card__details {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+}
+
+.tool-card__details summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.tool-card__form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem 0 0;
+}
+
+.tool-card__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.tool-card__chip {
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--foreground);
+  border-radius: 9999px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  font: inherit;
+}
+
+.tool-card__chip:hover:not(:disabled) {
+  background: var(--muted);
+}
+
+.tool-card__chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tool-card__textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: var(--background);
+  color: var(--foreground);
+  padding: 0.5rem 0.6rem;
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  resize: vertical;
+  min-height: 2.4rem;
+  max-height: 12rem;
+}
+
+.tool-card__textarea:focus {
+  outline: 2px solid var(--ring);
+  outline-offset: -1px;
+}
+
+.tool-card__form-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.tool-card__send {
+  border: 0;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-radius: 0.375rem;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  font: inherit;
+}
+
+.tool-card__send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tool-card__error {
+  color: var(--destructive, oklch(0.62 0.2 25));
+  font-size: 0.78rem;
+}
+
+.tool-card__answered {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.5rem 0 0;
+}
+
+.tool-card__answered-label {
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+}
+
+.tool-card__answered-value {
+  font-size: 0.9rem;
+}

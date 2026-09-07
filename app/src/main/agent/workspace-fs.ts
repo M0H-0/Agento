@@ -1,6 +1,15 @@
-import { dirname, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync as nodeReaddirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync
+} from 'node:fs'
 import type { WorkspaceFs } from './types'
 import { worksWithRoot } from './sandbox'
 
@@ -35,8 +44,20 @@ function assertInsideWorkspace(root: string, target: string): void {
   }
 }
 
+// Single shallow entry-type tag — keeps the card-meta line honest without
+// shelling out to `fs.stat` per child (we already need the stat for the
+// isDirectory distinction).
+function tagEntryType(name: string, parent: string): 'file' | 'directory' {
+  try {
+    return statSync(join(parent, name)).isDirectory() ? 'directory' : 'file'
+  } catch {
+    // Race against a vanished entry (rare; tool errors are caught above).
+    return 'file'
+  }
+}
+
 export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
-  return {
+  const facade: WorkspaceFs = {
     existsSync(path: string): boolean {
       assertInsideWorkspace(workspaceRoot, path)
       return existsSync(path)
@@ -79,6 +100,64 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
         )
       }
       return Buffer.byteLength(content, 'utf8')
+    },
+    isDirectory(path: string): boolean {
+      assertInsideWorkspace(workspaceRoot, path)
+      try {
+        return statSync(path).isDirectory()
+      } catch {
+        return false
+      }
+    },
+    readdir(path: string): { name: string; type: 'file' | 'directory' }[] {
+      assertInsideWorkspace(workspaceRoot, path)
+      let names: string[]
+      try {
+        names = nodeReaddirSync(path)
+      } catch (error) {
+        throw new WorkspaceFsReadError(
+          `I couldn't list "${relative(workspaceRoot, path)}" — ${
+            error instanceof Error ? error.message : String(error)
+          }.`
+        )
+      }
+      return names.map((name) => ({ name, type: tagEntryType(name, path) }))
+    },
+    walkFiles(root: string, limit: number): string[] {
+      assertInsideWorkspace(workspaceRoot, root)
+      // Iterative DFS, alphabetical, capped at `limit`. Skips directories
+      // entirely (the caller wants file paths to search) and never recurses
+      // into symlinks (a symlink cycle would not terminate, and the sandbox
+      // is the authoritative check on where the walk can go).
+      const out: string[] = []
+      const stack: string[] = [root]
+      while (stack.length > 0 && out.length < limit) {
+        const dir = stack.pop() as string
+        let names: string[]
+        try {
+          names = nodeReaddirSync(dir)
+        } catch {
+          continue
+        }
+        names.sort()
+        for (const name of names) {
+          if (out.length >= limit) break
+          const child = join(dir, name)
+          let isDir = false
+          try {
+            isDir = statSync(child).isDirectory()
+          } catch {
+            continue
+          }
+          if (isDir) {
+            stack.push(child)
+          } else {
+            out.push(child)
+          }
+        }
+      }
+      return out
     }
   }
+  return facade
 }
