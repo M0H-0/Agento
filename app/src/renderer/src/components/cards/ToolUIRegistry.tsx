@@ -3,6 +3,7 @@ import { useAssistantApi } from '@assistant-ui/react'
 import type { ToolCallMessagePartComponent } from '@assistant-ui/react'
 import { AskUserCard } from './AskUserCard'
 import { CreateDirCard } from './CreateDirCard'
+import { EditFileCard } from './EditFileCard'
 import { GenericToolCard } from './GenericToolCard'
 import { ListDirCard } from './ListDirCard'
 import { ReadFileCard } from './ReadFileCard'
@@ -172,6 +173,17 @@ function asCreateDir(value: unknown): { existed: boolean } | null {
   return { existed: value.existed }
 }
 
+function asEditFile(value: unknown): {
+  beforeExcerpt: string
+  afterExcerpt: string
+} | null {
+  if (!isRecord(value)) return null
+  if (typeof value.beforeExcerpt !== 'string' || typeof value.afterExcerpt !== 'string') {
+    return null
+  }
+  return { beforeExcerpt: value.beforeExcerpt, afterExcerpt: value.afterExcerpt }
+}
+
 function renderListDirCard(part: AuiToolPart): React.JSX.Element | null {
   const entries = asListEntries(part.result)
   if (entries.length === 0 && !isRecord(part.result)) return null
@@ -261,6 +273,19 @@ function renderCreateDirCard(part: AuiToolPart): React.JSX.Element | null {
   )
 }
 
+function renderEditFileCard(part: AuiToolPart): React.JSX.Element | null {
+  const result = asEditFile(part.result)
+  if (!result) return null
+  return (
+    <EditFileCard
+      title={titleFromToolName('edit_file')}
+      status={statusFor(part.status)}
+      toolCallId={part.toolCallId}
+      {...result}
+    />
+  )
+}
+
 // Single renderer per tool: the assistant-ui runtime hands us the ToolCall
 // props; we project to a per-tool card (or the generic fallback).
 function renderToolCard(part: AuiToolPart): React.JSX.Element {
@@ -286,6 +311,10 @@ function renderToolCard(part: AuiToolPart): React.JSX.Element {
   }
   if (part.toolName === 'create_dir') {
     const card = renderCreateDirCard(part)
+    if (card) return card
+  }
+  if (part.toolName === 'edit_file') {
+    const card = renderEditFileCard(part)
     if (card) return card
   }
   return (
@@ -341,7 +370,8 @@ export function ToolUIRegistry(): null {
       'search_files',
       'ask_user',
       'write_file',
-      'create_dir'
+      'create_dir',
+      'edit_file'
     ]) {
       unsubscribers.push(tools.setToolUI(name, makeToolCardShim(name)))
     }

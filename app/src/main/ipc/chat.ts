@@ -18,6 +18,8 @@ import {
   buildRunContext,
   createDirTool,
   createToolRegistry,
+  editExcerpts,
+  editFileTool,
   excerptOf,
   listDirTool,
   newRunId,
@@ -144,6 +146,7 @@ function buildGlobalRegistry(): ReturnType<typeof createToolRegistry> {
   registry.define(askUserTool)
   registry.define(writeFileTool)
   registry.define(createDirTool)
+  registry.define(editFileTool)
   return registry
 }
 
@@ -256,8 +259,12 @@ export function registerChatIpc(): void {
         })
         // The snapshot fires BEFORE execution, so the after-excerpt backfill
         // rides the outcome notification (below); keep the row id by the AI SDK
-        // toolCallId so the tool's own result can reach it.
+        // toolCallId so the tool's own result can reach it. The pre-mutation
+        // content is stashed alongside for the edit_file region backfill.
         if (entry.toolCallId) checkpointIdsByToolCall.set(entry.toolCallId, row.id)
+        if (entry.toolCallId && entry.content !== null) {
+          checkpointContentByToolCall.set(entry.toolCallId, entry.content)
+        }
       }
     })
 
@@ -268,6 +275,7 @@ export function registerChatIpc(): void {
     // SDK toolCallId and backfills it (docs/03 §5 — the durable row is the
     // source the card/Bridge read from).
     const checkpointIdsByToolCall = new Map<string, string>()
+    const checkpointContentByToolCall = new Map<string, string>()
     activeRuns.set(sessionId, { controller, run, runId })
 
     // The provider's own 'finish' part is HELD: it is forwarded only after
@@ -319,8 +327,11 @@ export function registerChatIpc(): void {
             // M2.5: backfill the after-excerpt onto the checkpoint row written at
             // snapshot time (the snapshot fires pre-execution; write_file computes
             // the excerpt caps itself — reuse its own excerptOf so the durable copy
-            // matches the card). Bookkeeping failures are logged and never break
-            // the run.
+            // matches the card). M2.6: edit_file's region excerpts come from its
+            // own editExcerpts over the input anchors (the checkpoint's
+            // before-excerpt is the whole-file head; the card reads the tool
+            // result — both flow from the same caps). Bookkeeping failures are
+            // logged and never break the run.
             if (
               entry.status === 'executed' &&
               entry.ok &&
@@ -332,6 +343,34 @@ export function registerChatIpc(): void {
               if (cpId && typeof content === 'string') {
                 try {
                   setCheckpointAfterExcerpts(cpId, { afterExcerpt: excerptOf(content) })
+                } catch (error) {
+                  console.error('[checkpoints] after-excerpt backfill failed:', error)
+                }
+              }
+            }
+            if (
+              entry.status === 'executed' &&
+              entry.ok &&
+              entry.tool === 'edit_file' &&
+              entry.toolCallId
+            ) {
+              const cpId = checkpointIdsByToolCall.get(entry.toolCallId)
+              const input = (entry.input as { old_text?: unknown; new_text?: unknown } | null) ?? {}
+              if (
+                cpId &&
+                typeof input.old_text === 'string' &&
+                typeof input.new_text === 'string'
+              ) {
+                try {
+                  // The pre-mutation content rode the snapshot sink (stashed by
+                  // toolCallId above); the region window recomputes from the
+                  // anchors. Anchors that no longer locate degrade to the
+                  // new-text head rather than breaking the run.
+                  const before = checkpointContentByToolCall.get(entry.toolCallId) ?? ''
+                  const { afterExcerpt } = before.includes(input.old_text)
+                    ? editExcerpts(before, input.old_text, input.new_text)
+                    : { afterExcerpt: excerptOf(input.new_text) }
+                  setCheckpointAfterExcerpts(cpId, { afterExcerpt })
                 } catch (error) {
                   console.error('[checkpoints] after-excerpt backfill failed:', error)
                 }

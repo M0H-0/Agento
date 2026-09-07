@@ -15,6 +15,8 @@ function titleForEntry(entry: ChangeEntry): string {
   switch (entry.tool) {
     case 'write_file':
       return entry.existed ? 'Overwrote file' : 'Wrote file'
+    case 'edit_file':
+      return 'Edited file'
     case 'create_dir':
       return 'Created folder'
     default:
