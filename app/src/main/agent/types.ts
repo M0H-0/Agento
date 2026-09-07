@@ -45,6 +45,8 @@ export interface WorkspaceFs {
   writeFileAtomic(path: string, content: string): number
   /** True when the path is a directory (and inside the workspace). */
   isDirectory(path: string): boolean
+  /** Create a directory (recursive), inside the workspace only. */
+  mkdir(path: string): void
   /** Directory entries (top-level only) with a small type tag. Refuses outside the workspace. */
   readdir(path: string): { name: string; type: 'file' | 'directory' }[]
   /** Recursively list file paths under a directory, capped at `limit`. Excludes directories themselves. */
@@ -61,8 +63,10 @@ export interface ToolExecutionContext {
   activeToolCallId?: string
   /** Disk probe for risk classification (rule-table floor; docs/06 §2). */
   exists(path: string): boolean
-  /** Mandatory snapshot before a risk ≥ 1 mutation (docs/03 §7). */
-  snapshot(path: string): void
+  /** Mandatory snapshot before a risk ≥ 1 mutation (docs/03 §7). The meta
+   * carries the wrapper's per-call context (tool name + AI SDK toolCallId)
+   * so the durable write-through (M2.5) can key the checkpoints row. */
+  snapshot(path: string, meta?: { tool?: string; toolCallId?: string }): void
   /** Blocks on the user's decision for risk ≥ 2 (docs/06 §3); the caller wires the dialog. */
   requestApproval(request: ApprovalRequest): Promise<ApprovalDecision>
   /**

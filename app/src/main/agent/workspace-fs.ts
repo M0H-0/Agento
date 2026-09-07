@@ -109,6 +109,18 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
         return false
       }
     },
+    mkdir(path: string): void {
+      assertInsideWorkspace(workspaceRoot, path)
+      try {
+        mkdirSync(path, { recursive: true })
+      } catch (error) {
+        throw new WorkspaceFsRefusalError(
+          `I could not create the folder "${relative(workspaceRoot, path)}" — ${
+            error instanceof Error ? error.message : String(error)
+          }. Nothing was changed.`
+        )
+      }
+    },
     readdir(path: string): { name: string; type: 'file' | 'directory' }[] {
       assertInsideWorkspace(workspaceRoot, path)
       let names: string[]

@@ -2,10 +2,12 @@ import { useEffect } from 'react'
 import { useAssistantApi } from '@assistant-ui/react'
 import type { ToolCallMessagePartComponent } from '@assistant-ui/react'
 import { AskUserCard } from './AskUserCard'
+import { CreateDirCard } from './CreateDirCard'
 import { GenericToolCard } from './GenericToolCard'
 import { ListDirCard } from './ListDirCard'
 import { ReadFileCard } from './ReadFileCard'
 import { SearchFilesCard } from './SearchFilesCard'
+import { WriteFileCard } from './WriteFileCard'
 import type { ToolCardStatus } from './BaseToolCard'
 
 // Tool card registry: mounts every per-tool card via the assistant-ui
@@ -153,6 +155,23 @@ function asSearchResults(value: unknown): {
   return { query: value.query, matches, truncated: value.truncated }
 }
 
+function asWriteFile(value: unknown): {
+  size: number
+  beforeExcerpt: string | null
+  afterExcerpt: string
+} | null {
+  if (!isRecord(value)) return null
+  if (typeof value.afterExcerpt !== 'string' || typeof value.size !== 'number') return null
+  const before = typeof value.beforeExcerpt === 'string' ? value.beforeExcerpt : null
+  return { size: value.size, beforeExcerpt: before, afterExcerpt: value.afterExcerpt }
+}
+
+function asCreateDir(value: unknown): { existed: boolean } | null {
+  if (!isRecord(value)) return null
+  if (typeof value.existed !== 'boolean') return null
+  return { existed: value.existed }
+}
+
 function renderListDirCard(part: AuiToolPart): React.JSX.Element | null {
   const entries = asListEntries(part.result)
   if (entries.length === 0 && !isRecord(part.result)) return null
@@ -216,6 +235,32 @@ function renderAskUserCard(part: AuiToolPart): React.JSX.Element | null {
   )
 }
 
+function renderWriteFileCard(part: AuiToolPart): React.JSX.Element | null {
+  const result = asWriteFile(part.result)
+  if (!result) return null
+  return (
+    <WriteFileCard
+      title={titleFromToolName('write_file')}
+      status={statusFor(part.status)}
+      toolCallId={part.toolCallId}
+      {...result}
+    />
+  )
+}
+
+function renderCreateDirCard(part: AuiToolPart): React.JSX.Element | null {
+  const result = asCreateDir(part.result)
+  if (!result) return null
+  return (
+    <CreateDirCard
+      title={titleFromToolName('create_dir')}
+      status={statusFor(part.status)}
+      toolCallId={part.toolCallId}
+      {...result}
+    />
+  )
+}
+
 // Single renderer per tool: the assistant-ui runtime hands us the ToolCall
 // props; we project to a per-tool card (or the generic fallback).
 function renderToolCard(part: AuiToolPart): React.JSX.Element {
@@ -233,6 +278,14 @@ function renderToolCard(part: AuiToolPart): React.JSX.Element {
   }
   if (part.toolName === 'ask_user') {
     const card = renderAskUserCard(part)
+    if (card) return card
+  }
+  if (part.toolName === 'write_file') {
+    const card = renderWriteFileCard(part)
+    if (card) return card
+  }
+  if (part.toolName === 'create_dir') {
+    const card = renderCreateDirCard(part)
     if (card) return card
   }
   return (
@@ -282,7 +335,14 @@ export function ToolUIRegistry(): null {
     // API — not the API itself.
     const tools = api.tools()
     const unsubscribers: Array<() => void> = []
-    for (const name of ['list_dir', 'read_file', 'search_files', 'ask_user', 'write_file']) {
+    for (const name of [
+      'list_dir',
+      'read_file',
+      'search_files',
+      'ask_user',
+      'write_file',
+      'create_dir'
+    ]) {
       unsubscribers.push(tools.setToolUI(name, makeToolCardShim(name)))
     }
     // M2.1 introduced write_file but had no card; M2.5/M2.6 will land

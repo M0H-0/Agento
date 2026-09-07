@@ -69,9 +69,12 @@ export function createHandlerHarness(
     },
     snapshot: (path) => {
       stages.order.push('snapshot')
+      // A directory target has no file content to restore — the checkpoint
+      // records existed + path only (undo deletes the created dir).
+      const isDir = fs.isDirectory(path)
       const entry = {
         path,
-        content: fs.existsSync(path) ? fs.readFileSync(path) : null,
+        content: !isDir && fs.existsSync(path) ? fs.readFileSync(path) : null,
         existed: fs.existsSync(path),
         tool: 'write_file',
         ts: Date.now()

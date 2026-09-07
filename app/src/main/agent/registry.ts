@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type {
   RiskClassification,
   ToolCallOutcome,
+  ToolCallStatus,
   ToolDefinition,
   ToolExecutionContext,
   ToolResult
@@ -35,6 +36,19 @@ export interface ToolRegistry {
     ctx: ToolExecutionContext
     /** AI SDK v5's toolCallId for the current call (defaults to the tool name). */
     toolCallId?: string
+    /** M2.5 audit observer — notified once per wrapper run with the outcome
+     * (every status: executed/refused/skipped/cancelled). Storage lives in
+     * the IPC layer; the agent tree stays storage-free. */
+    onOutcome?: (entry: {
+      tool: string
+      toolCallId: string | null
+      input: unknown
+      ok: boolean
+      status: ToolCallStatus
+      message: string
+      riskLevel: number
+      durationMs: number
+    }) => void
   }): Promise<ToolCallOutcome>
   /**
    * Build the `tools` field of `streamText` from every defined tool. The loop
@@ -44,7 +58,22 @@ export interface ToolRegistry {
    * → truncate order runs in the loop exactly as it does in the unit tests
    * (docs/03 §5, AGENTS.md rule 2).
    */
-  toAiSdkTools(ctx: ToolExecutionContext): Record<string, ReturnType<typeof aiTool>>
+  toAiSdkTools(
+    ctx: ToolExecutionContext,
+    hooks?: {
+      /** M2.5 audit sink — one notification per wrapper run (every status). */
+      onOutcome?: (entry: {
+        tool: string
+        toolCallId: string | null
+        input: unknown
+        ok: boolean
+        status: ToolCallStatus
+        message: string
+        riskLevel: number
+        durationMs: number
+      }) => void
+    }
+  ): Record<string, ReturnType<typeof aiTool>>
 }
 
 // Stage refusals are normal outcomes (a refused call is not a crash): the tool
@@ -88,7 +117,56 @@ export function createToolRegistry(): ToolRegistry {
     args: unknown
     ctx: ToolExecutionContext
     toolCallId?: string
+    onOutcome?: (entry: {
+      tool: string
+      toolCallId: string | null
+      input: unknown
+      ok: boolean
+      status: ToolCallStatus
+      message: string
+      riskLevel: number
+      durationMs: number
+    }) => void
   }): Promise<ToolCallOutcome> {
+    const startedAt = Date.now()
+    // runInner records the classified level here (its own stage-3 result —
+    // never a second classification, which would double-run ctx.exists and
+    // pollute the harness stage log).
+    const audit: { riskLevel: number } = { riskLevel: 0 }
+    const notify = (ok: boolean, status: ToolCallStatus, message: string): void => {
+      input.onOutcome?.({
+        tool: status === 'refused' ? input.tool : (tools.get(input.tool)?.name ?? input.tool),
+        toolCallId: input.toolCallId ?? null,
+        input: input.args,
+        ok,
+        status,
+        message,
+        riskLevel: audit.riskLevel,
+        durationMs: Date.now() - startedAt
+      })
+    }
+    let outcome: ToolCallOutcome
+    try {
+      outcome = await runInner(input, audit)
+    } catch (error) {
+      // A wrapper crash (never expected — stages catch their own) still
+      // notifies the audit trail with ok=false.
+      notify(false, 'refused', error instanceof Error ? error.message : String(error))
+      throw error
+    }
+    notify(outcome.ok, outcome.status, outcome.message)
+    return outcome
+  }
+
+  async function runInner(
+    input: {
+      tool: string
+      args: unknown
+      ctx: ToolExecutionContext
+      toolCallId?: string
+    },
+    audit: { riskLevel: number }
+  ): Promise<ToolCallOutcome> {
     const tool = tools.get(input.tool)
     if (!tool)
       return refusal(`I don't have a tool called "${input.tool}".`, { reason: 'unknown tool' })
@@ -128,6 +206,7 @@ export function createToolRegistry(): ToolRegistry {
     // 3 — risk classification (rule-table floor; the sidecar may raise, never
     // lower, from M4 — docs/06 §2).
     const risk: RiskClassification = tool.risk(resolvedInput as never, input.ctx)
+    audit.riskLevel = risk.level
 
     // 4 — approval hook: risk ≥ 2 blocks. 'skip'/'cancel' are honest
     // non-executions — no snapshot, no mutation, run semantics left to the loop.
@@ -159,9 +238,13 @@ export function createToolRegistry(): ToolRegistry {
 
     // 5 — mandatory snapshot: every risk ≥ 1 (or write-access) target is
     // snapshotted BEFORE execution (docs/03 §7). There is no way to skip this.
+    // The meta keys the durable checkpoint row (M2.5).
     if (risk.level >= 1 || tool.access === 'write') {
       for (const field of tool.pathFields) {
-        input.ctx.snapshot(String(resolvedInput[String(field)]))
+        input.ctx.snapshot(String(resolvedInput[String(field)]), {
+          tool: tool.name,
+          toolCallId: input.toolCallId
+        })
       }
     }
 
@@ -187,7 +270,13 @@ export function createToolRegistry(): ToolRegistry {
     return truncatedResult(tool.name, result)
   }
 
-  function toAiSdkTools(ctx: ToolExecutionContext): Record<string, ReturnType<typeof aiTool>> {
+  function toAiSdkTools(
+    ctx: ToolExecutionContext,
+    hooks?: {
+      /** M2.5 audit sink — one notification per wrapper run (every status). */
+      onOutcome?: Parameters<ToolRegistry['run']>[0]['onOutcome']
+    }
+  ): Record<string, ReturnType<typeof aiTool>> {
     const out: Record<string, ReturnType<typeof aiTool>> = {}
     for (const [name, tool] of tools) {
       // The AI SDK's `tool()` helper is generic on INPUT/OUTPUT. Our registry
@@ -209,7 +298,8 @@ export function createToolRegistry(): ToolRegistry {
             tool: name,
             args: input,
             ctx,
-            toolCallId: options.toolCallId
+            toolCallId: options.toolCallId,
+            onOutcome: hooks?.onOutcome
           })
           console.log(`[tools] ${name} -> ${outcome.status} ok=${outcome.ok}`)
           // The AI SDK consumes whatever the execute returns as the tool

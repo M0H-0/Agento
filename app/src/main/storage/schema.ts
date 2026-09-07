@@ -54,3 +54,54 @@ export const usageEvents = sqliteTable('usage_events', {
   outputTokens: integer('output_tokens'),
   createdAt: text('created_at').notNull()
 })
+
+// Tool-call audit trail (migration 0003, M2.5; docs/03 §8): one row per tool
+// execution through the wrapper. Append-only; output_json carries the
+// (already-truncated) wrapper output.
+export const toolCalls = sqliteTable('tool_calls', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id')
+    .notNull()
+    .references(() => sessions.id),
+  // AI SDK v5 toolCallId when available (ask_user threading); null for
+  // harness runs that pass none.
+  toolCallId: text('tool_call_id'),
+  tool: text('tool').notNull(),
+  inputJson: text('input_json').notNull(),
+  outputJson: text('output_json'),
+  ok: integer('ok'),
+  error: text('error'),
+  riskLevel: integer('risk_level'),
+  riskSource: text('risk_source'), // rule_table (M2.5) | llm_fallback | ts_fallback (M4)
+  durationMs: integer('duration_ms'),
+  createdAt: text('created_at').notNull()
+})
+
+// Append-only checkpoint log (migration 0003, M2.5; docs/03 §7-8): every
+// risk >= 1 mutation lands a row BEFORE the tool executes — a mutation
+// without a checkpoint is unrepresentable. Undo (M3) writes new rows;
+// `revertedAt` marks undone entries. The full pre-mutation content lives in
+// the `content` BLOB (capped by the repository per docs/03 §7 — 10 MB/file,
+// 200 MB/session with evict-oldest).
+export const checkpoints = sqliteTable('checkpoints', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id')
+    .notNull()
+    .references(() => sessions.id),
+  toolCallId: text('tool_call_id'),
+  path: text('path').notNull(),
+  // set by move_path (M2.7): undo restores the original name.
+  destPath: text('dest_path'),
+  // 0 = created by agent (undo deletes); 1 = existed (undo restores content).
+  existed: integer('existed').notNull(),
+  // Full pre-mutation content (SQLite TEXT; docs/03 §8 declares BLOB — the
+  // column stores utf-8 text either way and drizzle's text mode round-trips
+  // strings cleanly).
+  content: text('content'),
+  size: integer('size'),
+  sha256: text('sha256'),
+  beforeExcerpt: text('before_excerpt'),
+  afterExcerpt: text('after_excerpt'),
+  revertedAt: text('reverted_at'),
+  createdAt: text('created_at').notNull()
+})

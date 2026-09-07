@@ -5,7 +5,9 @@ import { registerChatIpc } from './ipc/chat'
 import { registerSessionsIpc } from './ipc/sessions'
 import { registerSettingsIpc } from './ipc/settings'
 import { registerSidecarIpc } from './ipc/sidecar'
+import { registerChangesIpc } from './ipc/changes'
 import { registerWorkspacesIpc } from './ipc/workspaces'
+import { getCurrentWorkspace } from './workspaces'
 import { initSettings } from './settings'
 import { dbFilePath, openDatabase, runSmokeQuery } from './storage/db'
 import { generateSidecarToken, killSidecar, onSidecarStatusChange, startSidecar } from './sidecar'
@@ -107,6 +109,9 @@ app.whenReady().then(async () => {
   // Sidecar status contract (docs/03 §4): 'sidecar:get-status' invoke +
   // 'sidecar:status' push. Subscribe before spawning so no transition is missed.
   registerSidecarIpc()
+  // Changes contract (M2.5 stub; docs/03 §4): 'changes:list' — a session's
+  // checkpoints for the Changes stub (full panel in M3).
+  registerChangesIpc(() => getCurrentWorkspace())
   onSidecarStatusChange((event) => {
     // Push to every window — the focused window alone goes stale when blurred.
     for (const win of BrowserWindow.getAllWindows()) {

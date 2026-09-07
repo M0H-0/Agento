@@ -25,6 +25,26 @@ export interface ToolAnswerPayload {
   answer: string
 }
 
+// Changes (M2.5 stub; docs/03 §4 + §7): a session's checkpoints newest-first.
+// The renderer shows relative paths only — the absolute workspace root never
+// crosses the bridge.
+export interface ChangeEntry {
+  id: string
+  tool: string
+  relativePath: string
+  existed: boolean
+  size: number | null
+  beforeExcerpt: string | null
+  afterExcerpt: string | null
+  revertedAt: string | null
+  createdAt: string
+}
+
+export interface ChangesListResult {
+  entries: ChangeEntry[]
+  activeCount: number
+}
+
 export interface ChatPartEvent {
   sessionId: string
   part: UIMessageChunk
@@ -144,6 +164,10 @@ const agento = {
   tool: {
     answer: (payload: ToolAnswerPayload): Promise<{ ok: boolean; reason?: string }> =>
       ipcRenderer.invoke('tool:answer', payload)
+  },
+  changes: {
+    list: (payload: { sessionId: string }): Promise<ChangesListResult> =>
+      ipcRenderer.invoke('changes:list', payload)
   },
   sidecar: {
     getStatus: (): Promise<SidecarStatusEvent> => ipcRenderer.invoke('sidecar:get-status'),

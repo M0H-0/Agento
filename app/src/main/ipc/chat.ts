@@ -7,11 +7,18 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { getSettings, resolveProviderKey } from '../settings'
 import { appendMessage, getSession } from '../storage/sessions'
 import { insertUsage } from '../storage/usage'
+import {
+  recordCheckpoint,
+  recordToolCall,
+  setCheckpointAfterExcerpts
+} from '../storage/checkpoints'
 import { getCurrentWorkspace } from '../workspaces'
 import {
   askUserTool,
   buildRunContext,
+  createDirTool,
   createToolRegistry,
+  excerptOf,
   listDirTool,
   newRunId,
   readFileTool,
@@ -136,6 +143,7 @@ function buildGlobalRegistry(): ReturnType<typeof createToolRegistry> {
   registry.define(searchFilesTool)
   registry.define(askUserTool)
   registry.define(writeFileTool)
+  registry.define(createDirTool)
   return registry
 }
 
@@ -223,7 +231,9 @@ export function registerChatIpc(): void {
     // Build the per-run ctx now (so the workspaceRoot reflects the current
     // pick). The Sender wraps webContents.send — `src/main/agent/` is
     // Electron-free by contract (AGENTS.md rule 1), so the wrapping happens
-    // here in the main side.
+    // here in the main side. The durable sinks (M2.5) write the checkpoints
+    // + tool_calls rows through the storage repos; bookkeeping failures are
+    // logged and never break the run (same doctrine as usage recording).
     const runId = newRunId()
     const run = buildRunContext({
       sender: {
@@ -233,10 +243,31 @@ export function registerChatIpc(): void {
       },
       sessionId,
       runId,
-      workspaceRoot: getCurrentWorkspace() ?? ''
+      workspaceRoot: getCurrentWorkspace() ?? '',
+      onSnapshot: (entry) => {
+        const row = recordCheckpoint({
+          sessionId,
+          toolCallId: entry.toolCallId,
+          path: entry.path,
+          existed: entry.existed,
+          content: entry.content,
+          size: entry.content !== null ? Buffer.byteLength(entry.content, 'utf8') : null,
+          beforeExcerpt: entry.beforeExcerpt ?? null
+        })
+        // The snapshot fires BEFORE execution, so the after-excerpt backfill
+        // rides the outcome notification (below); keep the row id by the AI SDK
+        // toolCallId so the tool's own result can reach it.
+        if (entry.toolCallId) checkpointIdsByToolCall.set(entry.toolCallId, row.id)
+      }
     })
 
     const controller = new AbortController()
+    // M2.5 checkpoint-after backfill index: the snapshot hook (pre-execution)
+    // creates the checkpoint row; a mutating tool's own result carries the
+    // after excerpt, so the outcome notification looks the row up by the AI
+    // SDK toolCallId and backfills it (docs/03 §5 — the durable row is the
+    // source the card/Bridge read from).
+    const checkpointIdsByToolCall = new Map<string, string>()
     activeRuns.set(sessionId, { controller, run, runId })
 
     // The provider's own 'finish' part is HELD: it is forwarded only after
@@ -262,7 +293,52 @@ export function registerChatIpc(): void {
         model: languageModel,
         system: FULL_SYSTEM_PROMPT,
         messages: convertToModelMessagesSafe(replayable(messages)),
-        tools: globalRegistry.toAiSdkTools(run.ctx),
+        tools: globalRegistry.toAiSdkTools(run.ctx, {
+          onOutcome: (entry) => {
+            try {
+              recordToolCall({
+                sessionId,
+                toolCallId: entry.toolCallId,
+                tool: entry.tool,
+                input: entry.input,
+                output:
+                  entry.status === 'executed' && entry.ok ? { message: entry.message } : undefined,
+                ok: entry.ok,
+                error: entry.ok
+                  ? undefined
+                  : entry.status === 'refused'
+                    ? entry.message
+                    : entry.message,
+                riskLevel: entry.riskLevel,
+                riskSource: 'rule_table',
+                durationMs: entry.durationMs
+              })
+            } catch (error) {
+              console.error('[tool_calls] audit write failed:', error)
+            }
+            // M2.5: backfill the after-excerpt onto the checkpoint row written at
+            // snapshot time (the snapshot fires pre-execution; write_file computes
+            // the excerpt caps itself — reuse its own excerptOf so the durable copy
+            // matches the card). Bookkeeping failures are logged and never break
+            // the run.
+            if (
+              entry.status === 'executed' &&
+              entry.ok &&
+              entry.tool === 'write_file' &&
+              entry.toolCallId
+            ) {
+              const cpId = checkpointIdsByToolCall.get(entry.toolCallId)
+              const content = (entry.input as { content?: unknown } | null)?.content
+              if (cpId && typeof content === 'string') {
+                try {
+                  setCheckpointAfterExcerpts(cpId, { afterExcerpt: excerptOf(content) })
+                } catch (error) {
+                  console.error('[checkpoints] after-excerpt backfill failed:', error)
+                }
+              }
+            }
+          }
+        }),
         abortSignal: controller.signal,
         stopWhen: stepCountIs(25),
         // Every step's provider request is scrubbed of reasoning parts (see
@@ -298,6 +374,18 @@ export function registerChatIpc(): void {
           aborted = true
           continue
         }
+        // M2.5 hard-won carve-out (gate finding): Groq streams tool-input
+        // deltas in one JSON key order and then sends the final arguments with a
+        // different key order. @assistant-ui/react's useToolInvocations enforces
+        // an append-only argsText invariant across renders, and the reorder throws
+        // "Tool call argsText can only be appended, not updated" — a React
+        // render error that unmounts the entire ChatView (blank tree — the gate
+        // driver found "composer input not found" right after turn 2). Our
+        // cards render only from the tool RESULT (never the streaming args), so
+        // the tool-input-* deltas are dropped; the final 'tool-input-available'
+        // then creates the part fresh and the append guard is never engaged.
+
+        if (part.type === 'tool-input-start' || part.type === 'tool-input-delta') continue
         sendPart(event.sender, sessionId, part)
       }
       // The step guard's effect: the SDK stops calling tools after the cap,

@@ -88,6 +88,31 @@ export interface AgentoTool {
   answer: (payload: ToolAnswerPayload) => Promise<{ ok: boolean; reason?: string }>
 }
 
+// Changes (M2.5 stub; docs/03 §4 + §7): a session's checkpoints newest-first.
+// The renderer shows relative paths only — the absolute workspace root never
+// crosses the bridge.
+export interface ChangeEntry {
+  id: string
+  tool: string
+  relativePath: string
+  existed: boolean
+  size: number | null
+  beforeExcerpt: string | null
+  afterExcerpt: string | null
+  revertedAt: string | null
+  createdAt: string
+}
+
+export interface ChangesListResult {
+  entries: ChangeEntry[]
+  activeCount: number
+}
+
+export interface AgentoChanges {
+  /** Invoke 'changes:list' — a session's checkpoints (M2.5 stub; full panel in M3). */
+  list: (payload: { sessionId: string }) => Promise<ChangesListResult>
+}
+
 export interface AgentoSessions {
   /** Invoke 'session:create' — lazily creates the session row (docs/03 §8). */
   create: (payload: CreateSessionPayload) => Promise<SessionInfo>
@@ -175,6 +200,7 @@ export interface AgentoSettings {
 export interface AgentoAPI {
   chat: AgentoChat
   tool: AgentoTool
+  changes: AgentoChanges
   sessions: AgentoSessions
   workspaces: AgentoWorkspaces
   sidecar: AgentoSidecar

@@ -17,6 +17,7 @@ import SettingsDialog from './components/SettingsDialog'
 import SessionsSidebar from './components/SessionsSidebar'
 import SidecarStatusDot from './components/SidecarStatusDot'
 import ThinkingIndicator from './components/ThinkingIndicator'
+import { ChangesStub } from './components/ChangesStub'
 import { ToolUIRegistry } from './components/cards/ToolUIRegistry'
 
 // User messages stay plain text (docs/04 §8.3 scopes markdown to model
@@ -224,7 +225,13 @@ function App(): React.JSX.Element {
     [refreshSessions]
   )
 
-  const onSettled = useCallback(() => refreshSessions(), [refreshSessions])
+  // M2.5: the Changes stub re-reads its checkpoint feed when a run settles
+  // (same trigger as the sidebar refresh — durability rows land at settle).
+  const [changesRefreshKey, setChangesRefreshKey] = useState(0)
+  const onSettled = useCallback(() => {
+    refreshSessions()
+    setChangesRefreshKey((key) => key + 1)
+  }, [refreshSessions])
 
   const openSession = useCallback(async (session: SessionSummary) => {
     if (session.id === activeSessionIdRef.current) return
@@ -279,6 +286,7 @@ function App(): React.JSX.Element {
       >
         Settings
       </button>
+      <ChangesStub sessionId={activeSessionId} refreshKey={changesRefreshKey} />
       <ChatView
         key={threadEpoch}
         getSessionId={getSessionId}
