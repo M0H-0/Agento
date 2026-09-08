@@ -13,8 +13,5 @@ __pycache__/
 .zcode/
 
 # Local-only project files — never pushed to GitHub (history preserved on backup/full-history)
-docs/
-AGENTS.md
-STACK.md
 PROGRESS.md
 phase-reports/
