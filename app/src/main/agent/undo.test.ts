@@ -290,4 +290,34 @@ describe('undo matrix', () => {
     expect(ws.read('good.md')).toBe('good-orig')
     expect(store.getCheckpoint(goodId)?.revertedAt).not.toBeNull()
   })
+
+  it('undo of a copy never touches the source — a later source edit survives', () => {
+    // Copy snapshots only its DESTINATION (copy_path snapshotFields → ['to'],
+    // M2.8 review fix). Before the fix the source row let undo rewrite the
+    // source to its pre-copy state, destroying an unrelated later edit.
+    ws.write('report.md', 'original')
+    const destId = snap(store, { path: abs('backup.md'), existed: false })
+    ws.write('report.md', 'original + user edit') // unrelated edit AFTER the copy
+    const result = undoCheckpoint(store, fs, destId)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('expected success')
+    expect(fs.existsSync(abs('backup.md'))).toBe(false)
+    expect(ws.read('report.md')).toBe('original + user edit')
+  })
+
+  it('undo of a copy onto an existing destination restores the old destination', () => {
+    ws.write('report.md', 'new content')
+    ws.write('backup.md', 'old dest content')
+    const destId = snap(store, {
+      path: abs('backup.md'),
+      existed: true,
+      content: 'old dest content',
+      sha256: sha('old dest content')
+    })
+    const result = undoCheckpoint(store, fs, destId)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('expected success')
+    expect(ws.read('backup.md')).toBe('old dest content')
+    expect(ws.read('report.md')).toBe('new content')
+  })
 })

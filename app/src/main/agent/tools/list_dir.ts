@@ -1,3 +1,4 @@
+import { basename } from 'node:path'
 import { z } from 'zod'
 import type { ToolDefinition } from '../types'
 
@@ -16,7 +17,13 @@ export const listDirTool: ToolDefinition<
   inputSchema: z.object({ path: z.string().min(1) }),
   pathFields: ['path'],
   risk: () => ({ level: 0, reason: 'Read-only' }),
-  describe: (input) => ({ title: `List ${input.path || 'workspace'}`, group: 'files' }),
+  describe: (input) => ({
+    // The wrapper hands describe the PRE-RESOLVED (absolute) path — render
+    // the folder name only, never the absolute path (docs/04 §3.1 card-title
+    // rule; M2.8 review fix).
+    title: `List ${basename(input.path) || 'workspace'}`,
+    group: 'files'
+  }),
   execute: async (input, ctx) => {
     const entries = ctx.fs.readdir(input.path)
     // The list_dir output is what the model sees; cap defensively even though

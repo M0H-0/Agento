@@ -6,7 +6,10 @@ import { WorkspaceFsRefusalError } from '../workspace-fs'
 // P0 mutating tool (M2.7, docs/03 §5 inventory): byte-exact copy of one file.
 // Mirrors write_file's risk shape — risk 1 onto a new path, risk 2 when the
 // destination exists (the old content is replaced). Folders are refused with
-// plain language (recursive copy is out of scope); both sides snapshotted.
+// plain language (recursive copy is out of scope). Only the DESTINATION is
+// snapshotted (snapshotFields → ['to']): copy never mutates its source, so a
+// source snapshot would let undo rewrite it to the pre-copy state — reverting
+// any unrelated edit made to it after the copy (M2.8 review fix).
 export const copyPathTool: ToolDefinition<
   { from: string; to: string },
   { from: string; to: string; size: number; overwritten: boolean }
@@ -17,6 +20,9 @@ export const copyPathTool: ToolDefinition<
   access: 'write',
   inputSchema: z.object({ from: z.string().min(1), to: z.string().min(1) }),
   pathFields: ['from', 'to'],
+  // Only the destination is snapshotted — the source is read-only input and
+  // must never be written back by undo (M2.8 review fix; docs/03 §5).
+  snapshotFields: () => ['to'],
   risk: (input, ctx) =>
     ctx.exists(input.to)
       ? { level: 2, reason: 'Replaces the file at the destination' }

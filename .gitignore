@@ -14,3 +14,4 @@ __pycache__/
 
 # Local-only project files — never pushed to GitHub (history preserved on backup/full-history)
 phase-reports/
+SESSION-*.md

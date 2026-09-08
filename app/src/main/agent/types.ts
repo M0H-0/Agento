@@ -133,6 +133,13 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   /** Single source of truth for the LLM-facing JSON schema (docs/03 §5). */
   inputSchema: z.ZodType<TInput>
   pathFields: (keyof TInput)[]
+  /** Optional snapshot-subset override (M2.8 review fix): by default the
+   *  wrapper snapshots every pathField before execute. A tool whose pathField
+   *  is NOT actually mutated (copy_path's `from` — the source is only read)
+   *  declares ONLY the fields it does mutate, so undo of its checkpoint can
+   *  never rewrite a path the mutation never touched. Returned fields are
+   *  snapshotted in the returned order (the first lands any checkpointDestPath). */
+  snapshotFields?(input: TInput): (keyof TInput)[]
   /** Rule-table classification; may be sync per the docs/03 §5 sketch. */
   risk(input: TInput, ctx: ToolExecutionContext): RiskClassification
   describe(input: TInput): ToolDescriptor

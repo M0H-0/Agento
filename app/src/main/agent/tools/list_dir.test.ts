@@ -63,4 +63,11 @@ describe('list_dir — read-only', () => {
     expect(outcome.status).toBe('refused')
     expect(harness.stages.order).toEqual([])
   })
+
+  it('describes with the folder name only, never the absolute path', () => {
+    // The wrapper hands describe the PRE-RESOLVED (absolute) path — the card
+    // title must reduce it to the folder name (docs/04 §3.1; M2.8 review fix).
+    expect(listDirTool.describe({ path: 'D:\\workspace\\docs' }).title).toBe('List docs')
+    expect(listDirTool.describe({ path: '/workspace' }).title).toBe('List workspace')
+  })
 })

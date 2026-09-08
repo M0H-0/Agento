@@ -248,7 +248,15 @@ export function createToolRegistry(): ToolRegistry {
         typeof tool.checkpointDestPath === 'function'
           ? tool.checkpointDestPath(resolvedInput as never)
           : null
-      tool.pathFields.forEach((field, index) => {
+      // The snapshot set defaults to every pathField; a tool that does not
+      // mutate one of its pathFields (copy_path's `from`) narrows the set via
+      // `snapshotFields` so undo can never rewrite an untouched path (M2.8
+      // review fix — docs/03 §5).
+      const snapFields =
+        typeof tool.snapshotFields === 'function'
+          ? tool.snapshotFields(resolvedInput as never)
+          : tool.pathFields
+      snapFields.forEach((field, index) => {
         input.ctx.snapshot(String(resolvedInput[String(field)]), {
           tool: tool.name,
           toolCallId: input.toolCallId,

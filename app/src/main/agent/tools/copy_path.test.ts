@@ -3,8 +3,9 @@ import { copyPathTool } from './copy_path'
 import { createHandlerHarness, createTempWorkspace } from '../testing/harness'
 import type { TempWorkspace } from '../testing/harness'
 
-// copy_path (M2.7): write_file's risk shape (1 new / 2 onto existing), two
-// snapshots before execute, byte-exact copy. Folders are refused.
+// copy_path (M2.7): write_file's risk shape (1 new / 2 onto existing), one
+// snapshot of the DESTINATION before execute (the source is only read — M2.8
+// review fix, snapshotFields), byte-exact copy. Folders are refused.
 
 describe('copy_path — file copy through the wrapper', () => {
   let ws: TempWorkspace
@@ -20,7 +21,7 @@ describe('copy_path — file copy through the wrapper', () => {
     ws.cleanup()
   })
 
-  it('copies to a new path (risk 1: one probe, two snapshots, no approval)', async () => {
+  it('copies to a new path (risk 1: one probe, one snapshot, no approval)', async () => {
     ws.write('report.md', '# report\nbody\n')
     const outcome = await harness.registry.run({
       tool: 'copy_path',
@@ -29,8 +30,13 @@ describe('copy_path — file copy through the wrapper', () => {
     })
     expect(outcome.ok).toBe(true)
     expect(outcome.status).toBe('executed')
-    expect(harness.stages.order).toEqual(['risk', 'snapshot', 'snapshot'])
+    expect(harness.stages.order).toEqual(['risk', 'snapshot'])
     expect(harness.stages.approvals).toHaveLength(0)
+    // Only the DESTINATION is snapshotted — copy never mutates its source, so
+    // undo must never hold a row that could rewrite it (docs/03 §5 snapshotFields).
+    expect(harness.stages.snapshots).toHaveLength(1)
+    expect(harness.stages.snapshots[0]?.path).toBe(harness.ctx.workspaceRoot + '\\backup.md')
+    expect(harness.stages.snapshots[0]?.existed).toBe(false)
     // source untouched, destination byte-identical
     expect(ws.read('report.md')).toBe('# report\nbody\n')
     expect(ws.read('backup.md')).toBe('# report\nbody\n')
@@ -49,9 +55,10 @@ describe('copy_path — file copy through the wrapper', () => {
     expect(outcome.ok).toBe(true)
     expect(harness.stages.approvals).toHaveLength(1)
     expect(ws.read('b.txt')).toBe('fresh')
-    const [, toSnap] = harness.stages.snapshots
+    const [toSnap] = harness.stages.snapshots
     expect(toSnap.existed).toBe(true)
     expect(toSnap.content).toBe('stale')
+    expect(toSnap.path).toBe(harness.ctx.workspaceRoot + '\\b.txt')
     if (!outcome.result) throw new Error('expected result')
     expect(outcome.result).toMatchObject({ overwritten: true })
   })

@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync as nodeReaddirSync,
   readFileSync,
@@ -228,9 +229,11 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
     walkFiles(root: string, limit: number): string[] {
       assertInsideWorkspace(workspaceRoot, root)
       // Iterative DFS, alphabetical, capped at `limit`. Skips directories
-      // entirely (the caller wants file paths to search) and never recurses
-      // into symlinks (a symlink cycle would not terminate, and the sandbox
-      // is the authoritative check on where the walk can go).
+      // entirely (the caller wants file paths to search) and skips ALL
+      // symbolic links / junctions — a link's target may sit outside the
+      // workspace or be a cycle, and the realpath containment check is the
+      // sandbox resolver's authoritative job, not the walk's (M2.8 review
+      // fix: the walk previously FOLLOWED links into their targets).
       const out: string[] = []
       const stack: string[] = [root]
       while (stack.length > 0 && out.length < limit) {
@@ -247,7 +250,12 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
           const child = join(dir, name)
           let isDir = false
           try {
-            isDir = statSync(child).isDirectory()
+            // lstatSync reports the LINK itself (a junction is a symlink in
+            // Node): links are skipped outright — they may point outside the
+            // workspace or into a cycle.
+            const lst = lstatSync(child)
+            if (lst.isSymbolicLink()) continue
+            isDir = lst.isDirectory()
           } catch {
             continue
           }

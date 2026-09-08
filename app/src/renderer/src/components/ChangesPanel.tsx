@@ -234,7 +234,11 @@ export function ChangesPanel({
         <ul className="changes-panel__list">
           {groups.map((group) => {
             const reverted = group.rows.every((row) => row.revertedAt !== null)
-            const busy = busyKey === group.key || busyKey === '__all'
+            // Any undo in flight (this group's or another's) disables EVERY
+            // row's buttons — a concurrent restore must not interleave its
+            // pre-undo state captures with this one (M2.8 review fix; the
+            // main side serializes too, but the UI should say so).
+            const busy = busyKey !== null
             return (
               <li
                 key={group.key}

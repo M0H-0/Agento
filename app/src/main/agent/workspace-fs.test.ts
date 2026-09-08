@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, symlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { createWorkspaceFs, WorkspaceFsRefusalError } from './workspace-fs'
 import { createTempWorkspace } from './testing/harness'
@@ -103,6 +103,34 @@ describe('createWorkspaceFs — containment backstop', () => {
       expect(capped.length).toBe(2)
     } finally {
       ws.cleanup()
+    }
+  })
+
+  it('walkFiles never recurses through a junction (or symlink) directory', () => {
+    const ws = createTempWorkspace()
+    const outside = createTempWorkspace() // the junction target
+    try {
+      try {
+        // Junctions need no privileges on Windows (sandbox fixtures precedent).
+        symlinkSync(outside.root, join(ws.root, 'linked'), 'junction')
+      } catch {
+        return // no junction support on this box — skip silently
+      }
+      ws.write('plain.txt', 'x')
+      outside.write('secret.txt', 'x')
+      const fs = createWorkspaceFs(ws.root)
+      const all = fs.walkFiles(ws.root, 100).map((p) =>
+        p
+          .replace(ws.root, '')
+          .replace(/^[\\/]/, '')
+          .replace(/\\/g, '/')
+      )
+      // The linked dir's files must NOT appear — the walk never follows links
+      // (their targets may sit outside the workspace or be a cycle; M2.8 fix).
+      expect(all).toEqual(['plain.txt'])
+    } finally {
+      ws.cleanup()
+      outside.cleanup()
     }
   })
 })

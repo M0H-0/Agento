@@ -131,6 +131,21 @@ function toItem(checkpointId: string, result: UndoResult): ChangesUndoItem {
 const MID_RUN_COPY =
   'A reply is still running in this conversation — wait until it finishes before undoing, so the restore cannot race the agent. Nothing was changed.'
 
+// Undo is serialized main-side (M2.8 review fix): two concurrent
+// `changes:undo`/`changes:undo-all` invokes would otherwise interleave their
+// pre-undo state captures and restores — the engine is not transactional.
+// The chain queues them so one restore finishes before the next begins. A
+// failed restore surfaces to its own caller; it never poisons the chain.
+let undoChain: Promise<void> = Promise.resolve()
+function enqueueUndo<T>(work: () => Promise<T>): Promise<T> {
+  const run = undoChain.then(work)
+  undoChain = run.then(
+    () => undefined,
+    () => undefined
+  )
+  return run
+}
+
 export function registerChangesIpc(
   getCurrentWorkspace: () => string | null,
   isSessionRunActive: (sessionId: string) => boolean
@@ -166,7 +181,7 @@ export function registerChangesIpc(
 
   ipcMain.handle(
     'changes:undo',
-    (_event: IpcMainInvokeEvent, payload: ChangesUndoPayload): ChangesUndoResult => {
+    async (_event: IpcMainInvokeEvent, payload: ChangesUndoPayload): Promise<ChangesUndoResult> => {
       const checkpointId = typeof payload?.checkpointId === 'string' ? payload.checkpointId : ''
       if (!checkpointId.trim()) throw new Error('Checkpoint id is required.')
       const row = store.getCheckpoint(checkpointId)
@@ -185,22 +200,29 @@ export function registerChangesIpc(
       if (isSessionRunActive(row.sessionId)) {
         return { results: [{ checkpointId, ok: false, error: MID_RUN_COPY }] }
       }
-      return { results: [toItem(checkpointId, undoCheckpoint(store, fsFor(), checkpointId))] }
+      // Serialized behind any undo already in flight (no interleaved restores).
+      return enqueueUndo(async () => ({
+        results: [toItem(checkpointId, undoCheckpoint(store, fsFor(), checkpointId))]
+      }))
     }
   )
 
   ipcMain.handle(
     'changes:undo-all',
-    (_event: IpcMainInvokeEvent, payload: ChangesUndoAllPayload): ChangesUndoResult => {
+    async (
+      _event: IpcMainInvokeEvent,
+      payload: ChangesUndoAllPayload
+    ): Promise<ChangesUndoResult> => {
       const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId : ''
       if (!sessionId.trim()) throw new Error('Session id is required.')
       if (isSessionRunActive(sessionId)) {
         return { results: [{ checkpointId: '', ok: false, error: MID_RUN_COPY }] }
       }
-      const results = undoAllCheckpoints(store, fsFor(), sessionId)
-      return {
-        results: results.map((result) => toItem(result.checkpointId, result))
-      }
+      // Serialized behind any undo already in flight (no interleaved restores).
+      return enqueueUndo(async () => {
+        const results = undoAllCheckpoints(store, fsFor(), sessionId)
+        return { results: results.map((result) => toItem(result.checkpointId, result)) }
+      })
     }
   )
 }
