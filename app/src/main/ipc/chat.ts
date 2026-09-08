@@ -158,6 +158,11 @@ function buildGlobalRegistry(): ReturnType<typeof createToolRegistry> {
 
 const globalRegistry = buildGlobalRegistry()
 
+/** Undo is blocked mid-run (docs/03 §8) — the Changes IPC asks, chat owns the map. */
+export function isSessionRunActive(sessionId: string): boolean {
+  return activeRuns.has(sessionId)
+}
+
 export function registerChatIpc(): void {
   ipcMain.handle('chat:stop', (_event: IpcMainInvokeEvent, payload: ChatStopPayload) => {
     const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId : ''
@@ -260,6 +265,7 @@ export function registerChatIpc(): void {
           path: entry.path,
           destPath: entry.destPath ?? null,
           existed: entry.existed,
+          isDir: entry.isDir,
           content: entry.content,
           size: entry.content !== null ? Buffer.byteLength(entry.content, 'utf8') : null,
           beforeExcerpt: entry.beforeExcerpt ?? null

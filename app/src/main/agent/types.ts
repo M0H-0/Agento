@@ -155,6 +155,8 @@ export interface SnapshotEntry {
   ts: number
   /** Move destination (M2.7) — mirrors `checkpoints.dest_path`. */
   destPath?: string | null
+  /** True when the snapshotted path was a directory (M2.8). */
+  isDir?: boolean
 }
 
 export interface SnapshotStore {

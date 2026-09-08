@@ -88,14 +88,19 @@ export interface AgentoTool {
   answer: (payload: ToolAnswerPayload) => Promise<{ ok: boolean; reason?: string }>
 }
 
-// Changes (M2.5 stub; docs/03 §4 + §7): a session's checkpoints newest-first.
-// The renderer shows relative paths only — the absolute workspace root never
-// crosses the bridge.
+// Changes (M2.8 panel; docs/03 §4 + §7-8): a session's checkpoints
+// newest-first with per-item undo and Undo all. The renderer shows relative
+// paths only — the absolute workspace root never crosses the bridge.
 export interface ChangeEntry {
   id: string
   tool: string
+  /** Groups a multi-row mutation into one panel item (M2.7 move rows share it). */
+  groupKey: string | null
   relativePath: string
+  /** Move destination, relative for display. */
+  relativeDestPath: string | null
   existed: boolean
+  isDir: boolean
   size: number | null
   beforeExcerpt: string | null
   afterExcerpt: string | null
@@ -108,9 +113,24 @@ export interface ChangesListResult {
   activeCount: number
 }
 
+export interface ChangesUndoItem {
+  checkpointId: string
+  ok: boolean
+  action?: string
+  error?: string
+}
+
+export interface ChangesUndoResult {
+  results: ChangesUndoItem[]
+}
+
 export interface AgentoChanges {
-  /** Invoke 'changes:list' — a session's checkpoints (M2.5 stub; full panel in M3). */
+  /** Invoke 'changes:list' — a session's checkpoints (M2.8 panel). */
   list: (payload: { sessionId: string }) => Promise<ChangesListResult>
+  /** Invoke 'changes:undo' — restore one checkpoint (blocked mid-run). */
+  undo: (payload: { checkpointId: string }) => Promise<ChangesUndoResult>
+  /** Invoke 'changes:undo-all' — replay the session newest-first (blocked mid-run). */
+  undoAll: (payload: { sessionId: string }) => Promise<ChangesUndoResult>
 }
 
 export interface AgentoSessions {

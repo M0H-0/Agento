@@ -960,12 +960,14 @@
    Chromium default never shows. 8px fully-rounded thumb themed to the
    border token, transparent track, brighter thumb on hover, horizontal
    variant included, scrollbar-gutter stable so the scrollbar never shifts
-   layout. Applies to thread viewport, sessions list, settings body, and
-   composer textarea (and every later scrollable panel joins this list). */
+   layout. Applies to thread viewport, sessions list, settings body,
+   composer textarea, changes panel list (M2.8 joins this list), and every
+   later scrollable panel joins this list. */
 .thread-viewport,
 .sessions-list,
 .settings-dialog,
 .composer-input,
+.changes-panel__list,
 .message-markdown pre,
 .message-markdown table {
   scrollbar-gutter: stable;
@@ -975,6 +977,7 @@
 .sessions-list::-webkit-scrollbar,
 .settings-dialog::-webkit-scrollbar,
 .composer-input::-webkit-scrollbar,
+.changes-panel__list::-webkit-scrollbar,
 .message-markdown pre::-webkit-scrollbar,
 .message-markdown table::-webkit-scrollbar {
   width: 8px;
@@ -985,6 +988,7 @@
 .sessions-list::-webkit-scrollbar-track,
 .settings-dialog::-webkit-scrollbar-track,
 .composer-input::-webkit-scrollbar-track,
+.changes-panel__list::-webkit-scrollbar-track,
 .message-markdown pre::-webkit-scrollbar-track,
 .message-markdown table::-webkit-scrollbar-track {
   background: transparent;
@@ -994,6 +998,7 @@
 .sessions-list::-webkit-scrollbar-thumb,
 .settings-dialog::-webkit-scrollbar-thumb,
 .composer-input::-webkit-scrollbar-thumb,
+.changes-panel__list::-webkit-scrollbar-thumb,
 .message-markdown pre::-webkit-scrollbar-thumb,
 .message-markdown table::-webkit-scrollbar-thumb {
   background: var(--border);
@@ -1004,6 +1009,7 @@
 .sessions-list::-webkit-scrollbar-thumb:hover,
 .settings-dialog::-webkit-scrollbar-thumb:hover,
 .composer-input::-webkit-scrollbar-thumb:hover,
+.changes-panel__list::-webkit-scrollbar-thumb:hover,
 .message-markdown pre::-webkit-scrollbar-thumb:hover,
 .message-markdown table::-webkit-scrollbar-thumb:hover {
   background: color-mix(in oklab, var(--muted-foreground) 45%, transparent);
@@ -1017,6 +1023,7 @@
   .sessions-list,
   .settings-dialog,
   .composer-input,
+  .changes-panel__list,
   .message-markdown pre,
   .message-markdown table {
     scrollbar-width: thin;
@@ -1281,7 +1288,9 @@
 
 /* M2.5: Changes stub (full panel is M3) — a right-rail list of the
    session's checkpoints. */
-.changes-stub {
+/* Changes panel (M2.8, docs/04 §3.4): session checkpoints with per-item undo
+   and Undo all. Replaces the M2.5 ChangesStub styles. */
+.changes-panel {
   position: fixed;
   top: 3.2rem;
   right: 0.75rem;
@@ -1299,13 +1308,13 @@
   font-size: 0.82rem;
 }
 
-.changes-stub__title {
+.changes-panel__title {
   margin: 0;
   font-size: 0.85rem;
   font-weight: 600;
 }
 
-.changes-stub__count {
+.changes-panel__count {
   display: inline-block;
   margin-left: 0.35rem;
   padding: 0 0.4rem;
@@ -1315,7 +1324,11 @@
   font-size: 0.72rem;
 }
 
-.changes-stub__list {
+.changes-panel__actions {
+  font-size: 0.78rem;
+}
+
+.changes-panel__list {
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1325,33 +1338,52 @@
   gap: 0.5rem;
 }
 
-.changes-stub__item {
+.changes-panel__item {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
 }
 
-.changes-stub__item-title {
+.changes-panel__item--reverted {
+  opacity: 0.55;
+}
+
+.changes-panel__item-title {
   font-weight: 500;
 }
 
-.changes-stub__item-path {
+.changes-panel__restored {
+  color: var(--success);
+  font-weight: 400;
+  font-size: 0.75rem;
+}
+
+.changes-panel__item-path {
   color: var(--muted-foreground);
   font-size: 0.78rem;
   word-break: break-all;
 }
 
-.changes-stub__item-meta {
+.changes-panel__item-meta {
   color: var(--muted-foreground);
   font-size: 0.72rem;
 }
 
-.changes-stub__empty {
+.changes-panel__item-actions,
+.changes-panel__confirm {
+  font-size: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.changes-panel__empty {
   color: var(--muted-foreground);
   font-size: 0.8rem;
 }
 
-.changes-stub__error {
+.changes-panel__error {
   color: var(--destructive);
   font-size: 0.78rem;
 }

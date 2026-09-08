@@ -40,6 +40,8 @@ export interface RunContextDeps {
     /** Move destination (M2.7) — lands in `checkpoints.dest_path`. */
     destPath?: string | null
     existed: boolean
+    /** True when the snapshotted path was a directory (M2.8). */
+    isDir: boolean
     content: string | null
     beforeExcerpt?: string | null
   }) => void
@@ -176,6 +178,7 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
         path,
         content: !isDir && fs.existsSync(path) ? fs.readFileSync(path) : null,
         existed: fs.existsSync(path),
+        isDir,
         tool: meta?.tool ?? 'agent',
         destPath: meta?.destPath ?? null,
         ts: Date.now()
@@ -192,6 +195,7 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
             path,
             destPath: entry.destPath,
             existed: entry.existed,
+            isDir: entry.isDir,
             content: entry.content,
             beforeExcerpt:
               entry.existed && entry.content !== null ? excerptHead(entry.content) : null

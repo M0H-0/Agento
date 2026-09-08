@@ -79,7 +79,7 @@ export const toolCalls = sqliteTable('tool_calls', {
 
 // Append-only checkpoint log (migration 0003, M2.5; docs/03 §7-8): every
 // risk >= 1 mutation lands a row BEFORE the tool executes — a mutation
-// without a checkpoint is unrepresentable. Undo (M3) writes new rows;
+// without a checkpoint is unrepresentable. Undo (M2.8) writes new rows;
 // `revertedAt` marks undone entries. The full pre-mutation content lives in
 // the `content` BLOB (capped by the repository per docs/03 §7 — 10 MB/file,
 // 200 MB/session with evict-oldest).
@@ -94,6 +94,12 @@ export const checkpoints = sqliteTable('checkpoints', {
   destPath: text('dest_path'),
   // 0 = created by agent (undo deletes); 1 = existed (undo restores content).
   existed: integer('existed').notNull(),
+  // 1 = the snapshotted path was a directory (M2.8): directory rows carry no
+  // content (nothing to restore byte-wise — undo re-creates or removes the
+  // dir), and this flag is what distinguishes them from evicted file rows
+  // (undo of an evicted file refuses honestly instead of mkdir-ing a folder
+  // where a file was). Survives eviction (evict-oldest never touches it).
+  isDir: integer('is_dir').notNull().default(0),
   // Full pre-mutation content (SQLite TEXT; docs/03 §8 declares BLOB — the
   // column stores utf-8 text either way and drizzle's text mode round-trips
   // strings cleanly).

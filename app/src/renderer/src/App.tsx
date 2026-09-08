@@ -17,7 +17,7 @@ import SettingsDialog from './components/SettingsDialog'
 import SessionsSidebar from './components/SessionsSidebar'
 import SidecarStatusDot from './components/SidecarStatusDot'
 import ThinkingIndicator from './components/ThinkingIndicator'
-import { ChangesStub } from './components/ChangesStub'
+import { ChangesPanel } from './components/ChangesPanel'
 import { ToolUIRegistry } from './components/cards/ToolUIRegistry'
 
 // User messages stay plain text (docs/04 §8.3 scopes markdown to model
@@ -286,7 +286,7 @@ function App(): React.JSX.Element {
       >
         Settings
       </button>
-      <ChangesStub sessionId={activeSessionId} refreshKey={changesRefreshKey} />
+      <ChangesPanel sessionId={activeSessionId} refreshKey={changesRefreshKey} />
       <ChatView
         key={threadEpoch}
         getSessionId={getSessionId}

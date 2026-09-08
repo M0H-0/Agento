@@ -1,7 +1,7 @@
 import { app, dialog, shell, BrowserWindow } from 'electron'
 import { join, resolve } from 'path'
 import icon from '../../resources/icon.png?asset'
-import { registerChatIpc } from './ipc/chat'
+import { isSessionRunActive, registerChatIpc } from './ipc/chat'
 import { registerSessionsIpc } from './ipc/sessions'
 import { registerSettingsIpc } from './ipc/settings'
 import { registerSidecarIpc } from './ipc/sidecar'
@@ -109,9 +109,13 @@ app.whenReady().then(async () => {
   // Sidecar status contract (docs/03 §4): 'sidecar:get-status' invoke +
   // 'sidecar:status' push. Subscribe before spawning so no transition is missed.
   registerSidecarIpc()
-  // Changes contract (M2.5 stub; docs/03 §4): 'changes:list' — a session's
-  // checkpoints for the Changes stub (full panel in M3).
-  registerChangesIpc(() => getCurrentWorkspace())
+  // Changes contract (M2.8 panel; docs/03 §4 + §7-8): 'changes:list' +
+  // 'changes:undo' + 'changes:undo-all' — a session's checkpoints with
+  // per-item undo and Undo all. Undo is blocked mid-run via chat's map.
+  registerChangesIpc(
+    () => getCurrentWorkspace(),
+    (sessionId) => isSessionRunActive(sessionId)
+  )
   onSidecarStatusChange((event) => {
     // Push to every window — the focused window alone goes stale when blurred.
     for (const win of BrowserWindow.getAllWindows()) {

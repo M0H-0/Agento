@@ -1,0 +1,1 @@
+ALTER TABLE `checkpoints` ADD `is_dir` integer DEFAULT 0 NOT NULL;

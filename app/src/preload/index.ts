@@ -25,14 +25,19 @@ export interface ToolAnswerPayload {
   answer: string
 }
 
-// Changes (M2.5 stub; docs/03 §4 + §7): a session's checkpoints newest-first.
-// The renderer shows relative paths only — the absolute workspace root never
-// crosses the bridge.
+// Changes (M2.8 panel; docs/03 §4 + §7-8): a session's checkpoints
+// newest-first with per-item undo and Undo all. The renderer shows relative
+// paths only — the absolute workspace root never crosses the bridge.
 export interface ChangeEntry {
   id: string
   tool: string
+  /** Groups a multi-row mutation into one panel item (M2.7 move rows share it). */
+  groupKey: string | null
   relativePath: string
+  /** Move destination, relative for display. */
+  relativeDestPath: string | null
   existed: boolean
+  isDir: boolean
   size: number | null
   beforeExcerpt: string | null
   afterExcerpt: string | null
@@ -43,6 +48,17 @@ export interface ChangeEntry {
 export interface ChangesListResult {
   entries: ChangeEntry[]
   activeCount: number
+}
+
+export interface ChangesUndoItem {
+  checkpointId: string
+  ok: boolean
+  action?: string
+  error?: string
+}
+
+export interface ChangesUndoResult {
+  results: ChangesUndoItem[]
 }
 
 export interface ChatPartEvent {
@@ -167,7 +183,11 @@ const agento = {
   },
   changes: {
     list: (payload: { sessionId: string }): Promise<ChangesListResult> =>
-      ipcRenderer.invoke('changes:list', payload)
+      ipcRenderer.invoke('changes:list', payload),
+    undo: (payload: { checkpointId: string }): Promise<ChangesUndoResult> =>
+      ipcRenderer.invoke('changes:undo', payload),
+    undoAll: (payload: { sessionId: string }): Promise<ChangesUndoResult> =>
+      ipcRenderer.invoke('changes:undo-all', payload)
   },
   sidecar: {
     getStatus: (): Promise<SidecarStatusEvent> => ipcRenderer.invoke('sidecar:get-status'),

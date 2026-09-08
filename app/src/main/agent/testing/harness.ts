@@ -76,6 +76,7 @@ export function createHandlerHarness(
         path,
         content: !isDir && fs.existsSync(path) ? fs.readFileSync(path) : null,
         existed: fs.existsSync(path),
+        isDir,
         tool: 'write_file',
         destPath: meta?.destPath ?? null,
         ts: Date.now()

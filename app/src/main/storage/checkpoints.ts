@@ -66,6 +66,8 @@ export interface RecordCheckpointInput {
   /** set by move_path (M2.7). */
   destPath?: string | null
   existed: boolean
+  /** True when the snapshotted path was a directory (M2.8). */
+  isDir?: boolean
   /** Full pre-mutation content; null when the file did not exist or exceeded the per-file cap. */
   content: string | null
   size: number | null
@@ -128,6 +130,7 @@ export function recordCheckpoint(input: RecordCheckpointInput): CheckpointRow {
       path: input.path,
       destPath: input.destPath ?? null,
       existed: input.existed ? 1 : 0,
+      isDir: input.isDir ? 1 : 0,
       content: storedContent,
       size:
         input.content !== null ? Buffer.byteLength(input.content, 'utf8') : (input.size ?? null),
@@ -156,7 +159,11 @@ export function setCheckpointAfterExcerpts(
 }
 
 // The Changes view's feed (docs/04): a session's checkpoints, newest-first,
-// non-reverted first. Excerpt fields power the card bodies.
+// non-reverted first. Excerpt fields power the card bodies. Ordered by the
+// checkpoints rowid (strict insertion order, table-qualified — the tool_calls
+// join makes a bare `rowid` ambiguous) — M2.8: a move lands two rows in the
+// same millisecond, and undo-all must replay them newest-first
+// deterministically, which created_at ties cannot guarantee.
 export function listCheckpoints(sessionId: string): (CheckpointRow & { tool: string })[] {
   const rows = getDrizzle()
     .select({
@@ -166,7 +173,7 @@ export function listCheckpoints(sessionId: string): (CheckpointRow & { tool: str
     .from(checkpoints)
     .leftJoin(toolCalls, eq(checkpoints.toolCallId, toolCalls.toolCallId))
     .where(eq(checkpoints.sessionId, sessionId))
-    .orderBy(desc(checkpoints.createdAt))
+    .orderBy(sql`"checkpoints"."rowid" DESC`)
     .all()
   return rows.map((r) => ({ ...r.checkpoint, tool: r.tool ?? 'agent' }))
 }
@@ -179,4 +186,48 @@ export function countActiveCheckpoints(sessionId: string): number {
     .where(and(eq(checkpoints.sessionId, sessionId), isNull(checkpoints.revertedAt)))
     .get()
   return Number(row?.n ?? 0)
+}
+
+// Undo support (M2.8; docs/03 §7-8). The restore engine itself
+// (`src/main/agent/undo.ts`) is storage-free and unit-tested in vitest; these
+// three functions are its durable adapter — the only code besides the
+// snapshot writer that touches the checkpoints table.
+export function getCheckpoint(id: string): CheckpointRow | undefined {
+  return getDrizzle().select().from(checkpoints).where(eq(checkpoints.id, id)).get()
+}
+
+export function markCheckpointReverted(id: string, at: string): void {
+  getDrizzle().update(checkpoints).set({ revertedAt: at }).where(eq(checkpoints.id, id)).run()
+}
+
+export interface AppendUndoRowInput {
+  sessionId: string
+  path: string
+  existed: boolean
+  isDir: boolean
+  content: string | null
+}
+
+/** Capture the pre-undo state as a new row (undo is itself undoable). */
+export function appendUndoRow(input: AppendUndoRowInput): CheckpointRow {
+  const stored = input.existed && !input.isDir && input.content !== null ? input.content : null
+  return getDrizzle()
+    .insert(checkpoints)
+    .values({
+      id: randomUUID(),
+      sessionId: input.sessionId,
+      toolCallId: null,
+      path: input.path,
+      destPath: null,
+      existed: input.existed ? 1 : 0,
+      isDir: input.isDir ? 1 : 0,
+      content: stored,
+      size: input.content !== null ? Buffer.byteLength(input.content, 'utf8') : null,
+      sha256: stored !== null ? sha256Hex(stored) : null,
+      beforeExcerpt: null,
+      afterExcerpt: null,
+      createdAt: nowIso()
+    })
+    .returning()
+    .get()
 }
