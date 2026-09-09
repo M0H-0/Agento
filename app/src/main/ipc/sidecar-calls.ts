@@ -46,3 +46,18 @@ export function warmEmbeddingModel(): Promise<unknown> {
     console.error('[semantic] embedding model warmup failed:', error)
   })
 }
+
+/** POST /intent/classify {message} → {intent, confidence} (MVP step 6).
+ * Informational only — the loop never blocks on it. */
+export function classifyIntent(message: string): Promise<{ intent: string; confidence: string }> {
+  return postJson('/intent/classify', { message }, 5_000)
+}
+
+/** POST /safety/classify {tool, args} → {risk, reason} (MVP step 6). Audit
+ * cross-check only — the registry's rule table stays the approval floor. */
+export function classifySafety(
+  tool: string,
+  args: unknown
+): Promise<{ risk: number; reason: string }> {
+  return postJson('/safety/classify', { tool, args }, 5_000)
+}

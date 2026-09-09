@@ -41,3 +41,22 @@ class EmbedRequest(BaseModel):
 
 class EmbedResponse(BaseModel):
     vectors: list[list[float]]
+
+
+class IntentClassifyRequest(BaseModel):
+    message: str
+
+
+class IntentClassifyResponse(BaseModel):
+    intent: str
+    confidence: Literal["heuristic"] = "heuristic"
+
+
+class SafetyClassifyRequest(BaseModel):
+    tool: str
+    args: dict = {}
+
+
+class SafetyClassifyResponse(BaseModel):
+    risk: int
+    reason: str

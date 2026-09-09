@@ -49,7 +49,7 @@ import {
   emitVerificationFinished
 } from './agent-events'
 import { FULL_SYSTEM_PROMPT } from './system-prompt'
-import { embedTexts, extractDocument } from './sidecar-calls'
+import { classifyIntent, classifySafety, embedTexts, extractDocument } from './sidecar-calls'
 
 // M3.1: the run loop itself (streamText calls, stream forwarding, provider
 // error classification, step guard) lives in src/main/agent/plan-run.ts —
@@ -125,6 +125,20 @@ function createToolCallAuditSink(
     } catch (error) {
       console.error('[tool_calls] audit write failed:', error)
     }
+    // MVP audit-only safety cross-check (MVP_PLAN.md step 6): the sidecar's
+    // independent heuristic view is logged when it disagrees with the rule
+    // table — it never gates anything. Any failure is silent (sidecar-down
+    // degraded doctrine, docs/05 §6).
+    void classifySafety(entry.tool, entry.input).then(
+      (result) => {
+        if (result.risk !== entry.riskLevel) {
+          console.log(
+            `[safety] ${entry.tool}: rule table ${entry.riskLevel} vs sidecar heuristic ${result.risk} — ${result.reason}`
+          )
+        }
+      },
+      () => {}
+    )
     // M2.5: backfill the after-excerpt onto the checkpoint row written at
     // snapshot time (the snapshot fires pre-execution; write_file computes
     // the excerpt caps itself — reuse its own excerptOf so the durable copy
@@ -404,6 +418,23 @@ export function registerChatIpc(): void {
           'Only Google and Groq are set up in this version of Agento. Check the provider in Settings → Providers.'
       })
       return
+    }
+
+    // MVP audit-only intent classification (MVP_PLAN.md step 6): one
+    // heuristic sidecar call per instruction, logged and never consumed by
+    // the loop — any failure is silent (degraded doctrine, docs/05 §6).
+    const lastUserText =
+      last && last.role === 'user'
+        ? last.parts
+            .map((part) => (part.type === 'text' ? part.text : ''))
+            .join(' ')
+            .trim()
+        : ''
+    if (lastUserText) {
+      void classifyIntent(lastUserText).then(
+        (result) => console.log(`[intent] ${result.intent} (${result.confidence})`),
+        () => {}
+      )
     }
 
     // Build the per-run ctx now (so the workspaceRoot reflects the current

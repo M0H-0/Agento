@@ -20,6 +20,7 @@ from fastapi import FastAPI, HTTPException
 from agento_intelligence.auth import TokenAuthMiddleware
 from agento_intelligence.embed import EmbeddingError, embed_texts
 from agento_intelligence.extract import ExtractionError, extract_text
+from agento_intelligence.heuristics import classify_intent, classify_safety
 from agento_intelligence.schemas import (
     Capabilities,
     EmbedRequest,
@@ -27,6 +28,10 @@ from agento_intelligence.schemas import (
     ExtractRequest,
     ExtractResponse,
     HealthResponse,
+    IntentClassifyRequest,
+    IntentClassifyResponse,
+    SafetyClassifyRequest,
+    SafetyClassifyResponse,
 )
 
 _logger = logging.getLogger("agento_intelligence")
@@ -77,3 +82,17 @@ async def embed(request: EmbedRequest) -> EmbedResponse:
     except EmbeddingError as error:
         raise HTTPException(status_code=error.status_code, detail=str(error)) from error
     return EmbedResponse(vectors=vectors)
+
+
+@app.post("/intent/classify", response_model=IntentClassifyResponse)
+async def intent_classify(request: IntentClassifyRequest) -> IntentClassifyResponse:
+    # Heuristic-only in the MVP (MVP_PLAN.md): the confidence literal is
+    # honest provenance — an LLM fallback would return "llm" and never crashes
+    # the pipeline into a lower confidence than the heuristic's best guess.
+    return IntentClassifyResponse(intent=classify_intent(request.message))
+
+
+@app.post("/safety/classify", response_model=SafetyClassifyResponse)
+async def safety_classify(request: SafetyClassifyRequest) -> SafetyClassifyResponse:
+    risk, reason = classify_safety(request.tool, request.args)
+    return SafetyClassifyResponse(risk=risk, reason=reason)
