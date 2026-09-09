@@ -32,6 +32,22 @@ export interface VerifyDeps {
   timeoutMs?: number
 }
 
+// Tools whose successful outcome implies a filesystem postcondition worth
+// verifying (the sidecar's heuristic re-reads those targets). Read-only-only
+// steps are skipped honestly — a badge is never faked in either direction.
+const MUTATING_TOOLS = new Set([
+  'create_dir',
+  'write_file',
+  'edit_file',
+  'move_path',
+  'copy_path',
+  'delete_path'
+])
+
+export function hasMutatingActions(actions: { tool: string }[]): boolean {
+  return actions.some((action) => MUTATING_TOOLS.has(action.tool))
+}
+
 export async function verifyStep(deps: VerifyDeps, input: VerifyStepInput): Promise<VerifyVerdict> {
   if (deps.sidecarHealth() !== 'healthy') return { verdict: 'skipped' }
   const body = {

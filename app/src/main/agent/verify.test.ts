@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { verifyStep } from './verify'
+import { hasMutatingActions, verifyStep } from './verify'
 
 // M3.5 client: fake-fetch proofs (the real endpoint lands in M4.3).
 describe('verifyStep (M3.5)', () => {
@@ -77,5 +77,28 @@ describe('verifyStep (M3.5)', () => {
       input
     )
     expect(verdict).toEqual({ verdict: 'skipped' })
+  })
+})
+
+// MVP step 7: the chat.ts verifier adapter only calls the sidecar when the
+// run actually mutated something — read-only-only runs skip honestly.
+describe('hasMutatingActions (MVP step 7)', () => {
+  it('recognizes every mutating tool', () => {
+    for (const tool of [
+      'create_dir',
+      'write_file',
+      'edit_file',
+      'move_path',
+      'copy_path',
+      'delete_path'
+    ]) {
+      expect(hasMutatingActions([{ tool }])).toBe(true)
+    }
+  })
+
+  it('rejects read-only-only action sets', () => {
+    expect(hasMutatingActions([])).toBe(false)
+    expect(hasMutatingActions([{ tool: 'read_file' }, { tool: 'search_files' }])).toBe(false)
+    expect(hasMutatingActions([{ tool: 'semantic_search' }, { tool: 'read_document' }])).toBe(false)
   })
 })

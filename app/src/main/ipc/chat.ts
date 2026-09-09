@@ -15,6 +15,7 @@ import {
   setCheckpointAfterExcerpts
 } from '../storage/checkpoints'
 import { getCurrentWorkspace } from '../workspaces'
+import { getSidecarStatus, sidecarFetch } from '../sidecar'
 import {
   askUserTool,
   buildRunContext,
@@ -28,6 +29,7 @@ import {
   editFileTool,
   emitPlanTool,
   excerptOf,
+  hasMutatingActions,
   listDirTool,
   movePathTool,
   newRunId,
@@ -38,6 +40,7 @@ import {
   semanticSearch,
   semanticSearchTool,
   summarizeDocumentTool,
+  verifyStep,
   webFetchTool,
   writeFileTool
 } from '../agent'
@@ -92,6 +95,9 @@ const PERSIST_FAILED_COPY = 'The reply could not be saved to this conversation.'
 // concurrent stream — main rejects the invoke instead.
 const SECOND_RUN_COPY =
   'A reply is already streaming in this conversation. Stop it first or wait for it to finish.'
+// MVP step 7: /completion/verify budget — verifyStep has its own race with
+// this timeout; a slow or absent sidecar degrades to an honest skip.
+const VERIFY_TIMEOUT_MS = 8_000
 // docs/03 §2 step guard: the default is 25, surfaced as a friendly note when
 // the loop runs out of steps (the SDK emits a finish part with reason
 // 'tool-calls' or 'length'; we don't inspect the reason — the step guard is
@@ -102,11 +108,13 @@ const STEP_LIMIT_COPY =
 // M2.5 audit sink, built per run: every registry tool wrapper outcome lands a
 // tool_calls row; mutating tools get their checkpoint after-excerpt backfilled
 // (write_file's whole-file excerpt / edit_file's region recomputation).
+// Executed outcomes also feed the run's verification action list (MVP step 7).
 // Bookkeeping failures are logged and never break the run.
 function createToolCallAuditSink(
   sessionId: string,
   checkpointIdsByToolCall: Map<string, string>,
-  checkpointContentByToolCall: Map<string, string>
+  checkpointContentByToolCall: Map<string, string>,
+  verifyActions: { tool: string; input: unknown; result: unknown }[]
 ): ToolOutcomeEntry {
   return (entry) => {
     try {
@@ -139,6 +147,13 @@ function createToolCallAuditSink(
       },
       () => {}
     )
+    // MVP step 7: executed outcomes feed the run's verification action list
+    // (the sidecar's postcondition heuristic re-reads those targets). The
+    // message stands in for the raw result — the sidecar checks paths, not
+    // payloads.
+    if (entry.status === 'executed' && entry.ok) {
+      verifyActions.push({ tool: entry.tool, input: entry.input, result: entry.message })
+    }
     // M2.5: backfill the after-excerpt onto the checkpoint row written at
     // snapshot time (the snapshot fires pre-execution; write_file computes
     // the excerpt caps itself — reuse its own excerptOf so the durable copy
@@ -515,6 +530,9 @@ export function registerChatIpc(): void {
     // source the card/Bridge read from).
     const checkpointIdsByToolCall = new Map<string, string>()
     const checkpointContentByToolCall = new Map<string, string>()
+    // MVP step 7: the run's executed actions, fed by the audit sink and
+    // consumed by the verify dep below (verify.ts is the contract client).
+    const verifyActions: { tool: string; input: unknown; result: unknown }[] = []
     activeRuns.set(sessionId, { controller, run, runId })
 
     // M3.1 plan persistence + event: the loop calls this exactly once per
@@ -555,14 +573,40 @@ export function registerChatIpc(): void {
       onOutcome: createToolCallAuditSink(
         sessionId,
         checkpointIdsByToolCall,
-        checkpointContentByToolCall
+        checkpointContentByToolCall,
+        verifyActions
       ),
       onPlanCreated,
       signal: controller.signal,
-      // M3.5 degraded default: no sidecar judge in the 1-hour slice — the
-      // injected verifier reports skipped so every mutating step shows the
-      // honest "not verified" badge (M4.3 swaps in the real HTTP client).
-      verify: async () => ({ verdict: 'skipped' }) as const,
+      // MVP step 7: the real sidecar verifier replaces M3.5's degraded stub.
+      // The audit sink accumulates every executed action; verification
+      // re-checks the FULL set on both the first call and the one retry (no
+      // drain — the retry must see the same targets). Read-only-only runs
+      // skip honestly (badges are never faked in either direction), and any
+      // sidecar failure degrades to skipped inside verifyStep.
+      verify: (input: { instructionSegment: string; stepDescription: string }) => {
+        if (!hasMutatingActions(verifyActions)) {
+          return Promise.resolve({ verdict: 'skipped' } as const)
+        }
+        return verifyStep(
+          {
+            sidecarHealth: () => getSidecarStatus().status,
+            fetchVerify: (body: unknown) =>
+              sidecarFetch('/completion/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+                signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS)
+              })
+          },
+          {
+            instructionSegment: input.instructionSegment,
+            stepDescription: input.stepDescription,
+            actions: verifyActions,
+            beforeAfter: { before: null, after: null }
+          }
+        )
+      },
       onVerification: (result) => {
         try {
           emitVerificationFinished({

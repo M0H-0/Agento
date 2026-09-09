@@ -23,6 +23,8 @@ from agento_intelligence.extract import ExtractionError, extract_text
 from agento_intelligence.heuristics import classify_intent, classify_safety
 from agento_intelligence.schemas import (
     Capabilities,
+    CompletionVerifyRequest,
+    CompletionVerifyResponse,
     EmbedRequest,
     EmbedResponse,
     ExtractRequest,
@@ -33,6 +35,7 @@ from agento_intelligence.schemas import (
     SafetyClassifyRequest,
     SafetyClassifyResponse,
 )
+from agento_intelligence.verify import verify_step
 
 _logger = logging.getLogger("agento_intelligence")
 
@@ -96,3 +99,16 @@ async def intent_classify(request: IntentClassifyRequest) -> IntentClassifyRespo
 async def safety_classify(request: SafetyClassifyRequest) -> SafetyClassifyResponse:
     risk, reason = classify_safety(request.tool, request.args)
     return SafetyClassifyResponse(risk=risk, reason=reason)
+
+
+@app.post("/completion/verify", response_model=CompletionVerifyResponse)
+async def completion_verify(request: CompletionVerifyRequest) -> CompletionVerifyResponse:
+    # The flattened request shape matches the SHIPPED TS client
+    # (app/src/main/agent/verify.ts) — docs/05's nested example is reconciled
+    # to it in the same commit (AGENTS.md rule 6, MVP cut section).
+    score, is_complete, missed = verify_step(
+        request.instruction, request.step_description, request.actions, request.before_after
+    )
+    return CompletionVerifyResponse(
+        completion_score=score, is_complete=is_complete, missed_segments=missed
+    )

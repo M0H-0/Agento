@@ -60,3 +60,22 @@ class SafetyClassifyRequest(BaseModel):
 class SafetyClassifyResponse(BaseModel):
     risk: int
     reason: str
+
+
+class VerifyAction(BaseModel):
+    tool: str
+    input: dict = {}
+    result: object = None
+
+
+class CompletionVerifyRequest(BaseModel):
+    instruction: str = ""
+    step_description: str = ""
+    actions: list[VerifyAction] = []
+    before_after: dict = {}
+
+
+class CompletionVerifyResponse(BaseModel):
+    completion_score: float
+    is_complete: bool
+    missed_segments: list[str] = []
