@@ -62,7 +62,8 @@
 | **fastapi** + **uvicorn** | HTTP service on `127.0.0.1:7891` | MIT / BSD-3 |
 | **pydantic** v2 | Request/response contracts | MIT |
 | **docling** | PDF/DOCX/PPTX/XLSX/CSV/HTML parsing to structured markdown | MIT |
-| **python-docx** | `.docx` edit round-trips (text-level) | MIT |
+| **pypdf** | `.pdf` text extraction (MVP cut — see PROGRESS.md Devlog; Docling stays the M4.7 choice for structured parsing) | BSD-3 |
+| **python-docx** | `.docx` text extraction (MVP cut) + edit round-trips (text-level) | MIT |
 | pytest | Tests + eval harness | MIT |
 
 ## Model providers (user supplies keys; all optional)

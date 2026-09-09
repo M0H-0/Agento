@@ -19,3 +19,17 @@ class HealthResponse(BaseModel):
     status: Literal["ok"]
     version: str
     capabilities: Capabilities
+
+
+# MVP cut (MVP_PLAN.md, 2026-09-10) — document + embed + heuristic endpoints.
+# The M4 frozen contracts in docs/05 remain the full-build target; docs/05
+# carries a dated "MVP cut" section for these shapes.
+
+
+class ExtractRequest(BaseModel):
+    path: str
+
+
+class ExtractResponse(BaseModel):
+    text: str
+    truncated: bool = False

@@ -15,10 +15,16 @@ import os
 import tomllib
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from agento_intelligence.auth import TokenAuthMiddleware
-from agento_intelligence.schemas import Capabilities, HealthResponse
+from agento_intelligence.extract import ExtractionError, extract_text
+from agento_intelligence.schemas import (
+    Capabilities,
+    ExtractRequest,
+    ExtractResponse,
+    HealthResponse,
+)
 
 _logger = logging.getLogger("agento_intelligence")
 
@@ -50,3 +56,12 @@ async def health() -> HealthResponse:
         version=APP_VERSION,
         capabilities=Capabilities(),
     )
+
+
+@app.post("/document/extract", response_model=ExtractResponse)
+async def document_extract(request: ExtractRequest) -> ExtractResponse:
+    try:
+        text, truncated = extract_text(request.path)
+    except ExtractionError as error:
+        raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+    return ExtractResponse(text=text, truncated=truncated)
