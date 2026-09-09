@@ -28,6 +28,7 @@ import {
   movePathTool,
   newRunId,
   readFileTool,
+  readDocumentTool,
   runPlanFirstTurn,
   searchFilesTool,
   writeFileTool
@@ -40,6 +41,7 @@ import {
   emitVerificationFinished
 } from './agent-events'
 import { FULL_SYSTEM_PROMPT } from './system-prompt'
+import { extractDocument } from './sidecar-calls'
 
 // M3.1: the run loop itself (streamText calls, stream forwarding, provider
 // error classification, step guard) lives in src/main/agent/plan-run.ts —
@@ -204,6 +206,7 @@ function buildGlobalRegistry(): ReturnType<typeof createToolRegistry> {
   const registry = createToolRegistry()
   registry.define(listDirTool)
   registry.define(readFileTool)
+  registry.define(readDocumentTool)
   registry.define(searchFilesTool)
   registry.define(askUserTool)
   registry.define(writeFileTool)
@@ -371,6 +374,9 @@ export function registerChatIpc(): void {
       sessionId,
       runId,
       workspaceRoot: getCurrentWorkspace() ?? '',
+      // MVP (MVP_PLAN.md step 2): .pdf/.docx extraction rides the sidecar.
+      // Failures throw plain-language errors the tool answers honestly.
+      documents: { extract: extractDocument },
       onSnapshot: (entry) => {
         const row = recordCheckpoint({
           sessionId,

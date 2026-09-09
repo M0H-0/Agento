@@ -32,6 +32,16 @@ export interface ApprovalRequest {
   paths: string[]
 }
 
+// MVP read-only capability injections (MVP_PLAN.md). All optional — absent in
+// tests and degraded mode; tools then fall back to direct text reads and
+// answer honestly when a capability is missing (docs/05 §6 degraded doctrine).
+export interface DocumentCapabilities {
+  /** Extract plain text from a document (absolute, sandbox-resolved path).
+   * Throws a plain-language Error on failure — tool bodies catch and answer
+   * with ok:false (the wrapper never catches execute exceptions). */
+  extract(path: string): Promise<{ text: string; truncated: boolean }>
+}
+
 // The ONLY way a tool reaches the disk. Tools never import node:fs — the
 // registry wraps every mutation behind this facade, which itself refuses any
 // path outside the workspace root (defense in depth on top of the sandbox's
@@ -104,6 +114,8 @@ export interface ToolExecutionContext {
     options?: string[]
   }): Promise<string>
   fs: WorkspaceFs
+  /** MVP: sidecar-backed extraction for .pdf/.docx (injected by the IPC layer). */
+  documents?: DocumentCapabilities
 }
 
 export interface ToolResult<TOutput = unknown> {

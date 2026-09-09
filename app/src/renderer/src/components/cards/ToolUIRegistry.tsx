@@ -9,6 +9,7 @@ import { EditFileCard } from './EditFileCard'
 import { GenericToolCard } from './GenericToolCard'
 import { ListDirCard } from './ListDirCard'
 import { MovePathCard } from './MovePathCard'
+import { ReadDocumentCard } from './ReadDocumentCard'
 import { ReadFileCard } from './ReadFileCard'
 import { SearchFilesCard } from './SearchFilesCard'
 import { WriteFileCard } from './WriteFileCard'
@@ -77,6 +78,8 @@ function titleFromToolName(toolName: string): string {
       return 'List folder'
     case 'read_file':
       return 'Read file'
+    case 'read_document':
+      return 'Read document'
     case 'search_files':
       return 'Search files'
     case 'ask_user':
@@ -138,6 +141,15 @@ function asReadFile(value: unknown): {
     totalLines: value.totalLines,
     truncated: value.truncated
   }
+}
+
+function asReadDocument(value: unknown): {
+  text: string
+  truncated: boolean
+} | null {
+  if (!isRecord(value)) return null
+  if (typeof value.text !== 'string' || typeof value.truncated !== 'boolean') return null
+  return { text: value.text, truncated: value.truncated }
 }
 
 function asSearchResults(value: unknown): {
@@ -235,6 +247,19 @@ function renderReadFileCard(part: AuiToolPart): React.JSX.Element | null {
   return (
     <ReadFileCard
       title={titleFromToolName('read_file')}
+      status={statusFor(part.status)}
+      toolCallId={part.toolCallId}
+      {...result}
+    />
+  )
+}
+
+function renderReadDocumentCard(part: AuiToolPart): React.JSX.Element | null {
+  const result = asReadDocument(part.result)
+  if (!result) return null
+  return (
+    <ReadDocumentCard
+      title={titleFromToolName('read_document')}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -368,6 +393,10 @@ function renderToolCard(part: AuiToolPart): React.JSX.Element {
     const card = renderReadFileCard(part)
     if (card) return card
   }
+  if (part.toolName === 'read_document') {
+    const card = renderReadDocumentCard(part)
+    if (card) return card
+  }
   if (part.toolName === 'search_files') {
     const card = renderSearchFilesCard(part)
     if (card) return card
@@ -450,6 +479,7 @@ export function ToolUIRegistry(): null {
     for (const name of [
       'list_dir',
       'read_file',
+      'read_document',
       'search_files',
       'ask_user',
       'write_file',

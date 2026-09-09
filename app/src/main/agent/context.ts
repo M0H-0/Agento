@@ -5,6 +5,7 @@ import { createInMemorySnapshotStore } from './snapshots'
 import type {
   ApprovalRequest,
   ApprovalDecision,
+  DocumentCapabilities,
   SnapshotStore,
   ToolExecutionContext
 } from './types'
@@ -57,6 +58,10 @@ export interface RunContextDeps {
     riskSource: 'rule_table' | 'llm_fallback' | 'ts_fallback'
     durationMs: number
   }) => void
+  /** MVP (MVP_PLAN.md step 2): sidecar-backed document extraction for
+   * .pdf/.docx. Injected by the IPC layer; absent in tests/degraded mode —
+   * tools then answer honestly for binary formats (docs/05 §6). */
+  documents?: DocumentCapabilities
 }
 
 export interface PlanStepRef {
@@ -424,7 +429,8 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
     },
     requestApproval,
     requestUserAnswer,
-    fs
+    fs,
+    documents: deps.documents
   }
 
   return {
