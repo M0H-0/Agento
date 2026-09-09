@@ -119,6 +119,8 @@ First run: welcome (+ privacy statement) → pick workspace → add key ("or use
 - EditFileCard — per-tool card body on the `setToolUI` slot showing the changed region's before/after excerpts (±3 context lines) — no diff component anywhere per §3.1 (M2.6).
 - MovePathCard / CopyPathCard / DeletePathCard — per-tool card bodies on the `setToolUI` slots showing source → destination (move/copy, with replaced-existing note) and the deleted name (delete, noting the checkpoint keeps the content for undo); absolute result paths reduced to file names — assistant-ui ships the slots but no file-tool bodies (M2.7).
 - ChangesPanel — session checkpoint list replacing ChangesStub: rows sharing a toolCallId render as one item (a move is one "Moved A → B" row), friendly action + relative time, per-item `undo ↩` behind an inline confirm, Undo all behind a confirm, reverted rows dim + "restored ✓", eviction refusals surface as honest errors — assistant-ui has no changes/history surface (M2.8).
+- ReadDocumentCard / SummarizeDocumentCard / WebFetchCard — per-tool card bodies on the `setToolUI` slots for the MVP read-only tools: extracted text preview (with truncation meta), plain-language summary, fetched page text with the page `<title>` in the meta — assistant-ui ships the slots but no document/web bodies; built fresh per §3.1 (no code aesthetics) (MVP 2026-09-10).
+- SemanticSearchCard — ranked results (workspace-relative path, score %, snippet) each rendered as a button that opens the file with the OS default app via `system:open-path`; empty state points at search_files for exact-text matching — no assistant-ui or registry equivalent exists; built fresh per §3.1 (MVP 2026-09-10).
 
 ## 5. Copy rules
 

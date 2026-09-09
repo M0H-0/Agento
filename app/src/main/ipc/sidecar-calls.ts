@@ -31,3 +31,18 @@ async function postJson<T>(path: string, payload: unknown, timeoutMs: number): P
 export function extractDocument(path: string): Promise<{ text: string; truncated: boolean }> {
   return postJson('/document/extract', { path }, 15_000)
 }
+
+/** POST /embed/embed {texts} → {vectors} (MVP step 5). The generous timeout
+ * covers the first-call ~90 MB model download plus a full-workspace batch. */
+export function embedTexts(texts: string[]): Promise<number[][]> {
+  return postJson('/embed/embed', { texts }, 300_000)
+}
+
+/** MVP step 5: pull the embedding model into the local cache at app boot
+ * (once the sidecar is healthy) so the first semantic search never waits on
+ * a download. Best-effort — failures are swallowed by design. */
+export function warmEmbeddingModel(): Promise<unknown> {
+  return postJson('/embed/embed', { texts: ['warmup'] }, 300_000).catch((error: unknown) => {
+    console.error('[semantic] embedding model warmup failed:', error)
+  })
+}

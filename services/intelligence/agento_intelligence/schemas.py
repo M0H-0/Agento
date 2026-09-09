@@ -33,3 +33,11 @@ class ExtractRequest(BaseModel):
 class ExtractResponse(BaseModel):
     text: str
     truncated: bool = False
+
+
+class EmbedRequest(BaseModel):
+    texts: list[str]
+
+
+class EmbedResponse(BaseModel):
+    vectors: list[list[float]]

@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import { app } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import type { LanguageModel, UIMessage, UIMessageChunk } from 'ai'
 import { generateText } from 'ai'
@@ -17,9 +18,11 @@ import { getCurrentWorkspace } from '../workspaces'
 import {
   askUserTool,
   buildRunContext,
+  cachePathForWorkspace,
   copyPathTool,
   createDirTool,
   createToolRegistry,
+  createWorkspaceFs,
   deletePathTool,
   editExcerpts,
   editFileTool,
@@ -32,6 +35,8 @@ import {
   readDocumentTool,
   runPlanFirstTurn,
   searchFilesTool,
+  semanticSearch,
+  semanticSearchTool,
   summarizeDocumentTool,
   webFetchTool,
   writeFileTool
@@ -44,7 +49,7 @@ import {
   emitVerificationFinished
 } from './agent-events'
 import { FULL_SYSTEM_PROMPT } from './system-prompt'
-import { extractDocument } from './sidecar-calls'
+import { embedTexts, extractDocument } from './sidecar-calls'
 
 // M3.1: the run loop itself (streamText calls, stream forwarding, provider
 // error classification, step guard) lives in src/main/agent/plan-run.ts —
@@ -249,6 +254,7 @@ function buildGlobalRegistry(): ReturnType<typeof createToolRegistry> {
   registry.define(readDocumentTool)
   registry.define(summarizeDocumentTool)
   registry.define(webFetchTool)
+  registry.define(semanticSearchTool)
   registry.define(searchFilesTool)
   registry.define(askUserTool)
   registry.define(writeFileTool)
@@ -407,6 +413,27 @@ export function registerChatIpc(): void {
     // + tool_calls rows through the storage repos; bookkeeping failures are
     // logged and never break the run (same doctrine as usage recording).
     const runId = newRunId()
+    const workspaceRoot = getCurrentWorkspace() ?? ''
+    // MVP (MVP_PLAN.md step 5): the semantic index cache lives in the app's
+    // own userData — never inside the user's workspace (a risk-0 tool must
+    // not write there; it would bypass the snapshot pipeline). Undefined
+    // without a workspace: the tool answers honestly.
+    const semantic = workspaceRoot
+      ? {
+          search: (query: string, topK?: number) =>
+            semanticSearch(
+              {
+                fs: createWorkspaceFs(workspaceRoot),
+                embedTexts,
+                extractDocument,
+                cachePath: cachePathForWorkspace(app.getPath('userData'), workspaceRoot)
+              },
+              workspaceRoot,
+              query,
+              topK
+            )
+        }
+      : undefined
     const run = buildRunContext({
       sender: {
         emit: (channel, value) => {
@@ -415,7 +442,7 @@ export function registerChatIpc(): void {
       },
       sessionId,
       runId,
-      workspaceRoot: getCurrentWorkspace() ?? '',
+      workspaceRoot,
       // MVP (MVP_PLAN.md step 2): .pdf/.docx extraction rides the sidecar.
       // Failures throw plain-language errors the tool answers honestly.
       documents: { extract: extractDocument },
@@ -423,6 +450,9 @@ export function registerChatIpc(): void {
       llm: { complete: llmCompleter(languageModel) },
       // MVP (MVP_PLAN.md step 4): web_fetch's plain HTTP GET.
       web: { fetch: webFetch },
+      // MVP (MVP_PLAN.md step 5): on-device semantic search (undefined
+      // without a workspace pick).
+      semantic,
       onSnapshot: (entry) => {
         const row = recordCheckpoint({
           sessionId,

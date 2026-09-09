@@ -12,6 +12,7 @@ import { MovePathCard } from './MovePathCard'
 import { ReadDocumentCard } from './ReadDocumentCard'
 import { ReadFileCard } from './ReadFileCard'
 import { SearchFilesCard } from './SearchFilesCard'
+import { SemanticSearchCard } from './SemanticSearchCard'
 import { SummarizeDocumentCard } from './SummarizeDocumentCard'
 import { WebFetchCard } from './WebFetchCard'
 import { WriteFileCard } from './WriteFileCard'
@@ -88,6 +89,8 @@ function titleFromToolName(toolName: string): string {
       return 'Open web page'
     case 'search_files':
       return 'Search files'
+    case 'semantic_search':
+      return 'Search by meaning'
     case 'ask_user':
       return 'Ask you something'
     case 'write_file':
@@ -176,6 +179,26 @@ function asWebFetch(value: unknown): {
   if (typeof value.text !== 'string' || typeof value.truncated !== 'boolean') return null
   const pageTitle = typeof value.title === 'string' ? value.title : undefined
   return { pageTitle, text: value.text, truncated: value.truncated }
+}
+
+function asSemanticResults(value: unknown): {
+  query: string
+  results: { path: string; snippet: string; score: number }[]
+} | null {
+  if (!isRecord(value)) return null
+  if (typeof value.query !== 'string' || !Array.isArray(value.results)) return null
+  const results = value.results.flatMap((entry) => {
+    if (!isRecord(entry)) return []
+    if (
+      typeof entry.path !== 'string' ||
+      typeof entry.snippet !== 'string' ||
+      typeof entry.score !== 'number'
+    ) {
+      return []
+    }
+    return [{ path: entry.path, snippet: entry.snippet, score: entry.score }]
+  })
+  return { query: value.query, results }
 }
 
 function asSearchResults(value: unknown): {
@@ -312,6 +335,19 @@ function renderWebFetchCard(part: AuiToolPart): React.JSX.Element | null {
   return (
     <WebFetchCard
       title={titleFromToolName('web_fetch')}
+      status={statusFor(part.status)}
+      toolCallId={part.toolCallId}
+      {...result}
+    />
+  )
+}
+
+function renderSemanticSearchCard(part: AuiToolPart): React.JSX.Element | null {
+  const result = asSemanticResults(part.result)
+  if (!result) return null
+  return (
+    <SemanticSearchCard
+      title={titleFromToolName('semantic_search')}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -457,6 +493,10 @@ function renderToolCard(part: AuiToolPart): React.JSX.Element {
     const card = renderWebFetchCard(part)
     if (card) return card
   }
+  if (part.toolName === 'semantic_search') {
+    const card = renderSemanticSearchCard(part)
+    if (card) return card
+  }
   if (part.toolName === 'search_files') {
     const card = renderSearchFilesCard(part)
     if (card) return card
@@ -541,6 +581,7 @@ export function ToolUIRegistry(): null {
       'read_file',
       'read_document',
       'summarize_document',
+      'semantic_search',
       'web_fetch',
       'search_files',
       'ask_user',

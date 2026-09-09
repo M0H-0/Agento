@@ -6,11 +6,13 @@ import { registerSessionsIpc } from './ipc/sessions'
 import { registerSettingsIpc } from './ipc/settings'
 import { registerSidecarIpc } from './ipc/sidecar'
 import { registerChangesIpc } from './ipc/changes'
+import { registerSystemIpc } from './ipc/system'
 import { registerWorkspacesIpc } from './ipc/workspaces'
 import { getCurrentWorkspace } from './workspaces'
 import { initSettings } from './settings'
 import { dbFilePath, openDatabase, runSmokeQuery } from './storage/db'
 import { generateSidecarToken, killSidecar, onSidecarStatusChange, startSidecar } from './sidecar'
+import { warmEmbeddingModel } from './ipc/sidecar-calls'
 import { initWorkspaces } from './workspaces'
 
 function createWindow(): void {
@@ -116,11 +118,23 @@ app.whenReady().then(async () => {
     () => getCurrentWorkspace(),
     (sessionId) => isSessionRunActive(sessionId)
   )
+  // System contract (MVP semantic-search card): 'system:open-path' invoke —
+  // open a workspace file with the OS default app, sandbox-contained.
+  registerSystemIpc()
   onSidecarStatusChange((event) => {
     // Push to every window — the focused window alone goes stale when blurred.
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send('sidecar:status', event)
     }
+  })
+
+  // MVP (MVP_PLAN.md step 5): warm the embedding model as soon as the
+  // sidecar is healthy — the ~90 MB download happens once, off the critical
+  // path, instead of inside the first semantic_search call. Fire-and-forget.
+  const unsubscribeWarmup = onSidecarStatusChange((event) => {
+    if (event.status !== 'healthy') return
+    unsubscribeWarmup()
+    void warmEmbeddingModel()
   })
 
   // Sidecar lifecycle (docs/02 §2.4): per-launch token, spawn, /health polling.

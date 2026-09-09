@@ -54,6 +54,13 @@ export interface WebCapabilities {
   fetch(url: string): Promise<{ status: number; body: string; contentType: string }>
 }
 
+export interface SemanticCapabilities {
+  /** On-device semantic search over the workspace (MVP standout feature):
+   * indexes readable files into cached embeddings and ranks a query. Throws
+   * a plain-language Error on failure. */
+  search(query: string, topK?: number): Promise<{ path: string; snippet: string; score: number }[]>
+}
+
 // The ONLY way a tool reaches the disk. Tools never import node:fs — the
 // registry wraps every mutation behind this facade, which itself refuses any
 // path outside the workspace root (defense in depth on top of the sandbox's
@@ -132,6 +139,8 @@ export interface ToolExecutionContext {
   llm?: LlmCapabilities
   /** MVP: plain HTTP GET for web_fetch (IPC-injected, Node global fetch). */
   web?: WebCapabilities
+  /** MVP: on-device semantic search (IPC-injected, fastembed via sidecar). */
+  semantic?: SemanticCapabilities
 }
 
 export interface ToolResult<TOutput = unknown> {

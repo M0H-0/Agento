@@ -7,6 +7,7 @@ import type {
   ApprovalDecision,
   DocumentCapabilities,
   LlmCapabilities,
+  SemanticCapabilities,
   SnapshotStore,
   ToolExecutionContext,
   WebCapabilities
@@ -69,6 +70,9 @@ export interface RunContextDeps {
   llm?: LlmCapabilities
   /** MVP (MVP_PLAN.md step 4): plain HTTP GET for web_fetch. IPC-injected. */
   web?: WebCapabilities
+  /** MVP (MVP_PLAN.md step 5): on-device semantic search. IPC-injected;
+   * undefined when no workspace is picked (the tool answers honestly). */
+  semantic?: SemanticCapabilities
 }
 
 export interface PlanStepRef {
@@ -439,7 +443,8 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
     fs,
     documents: deps.documents,
     llm: deps.llm,
-    web: deps.web
+    web: deps.web,
+    semantic: deps.semantic
   }
 
   return {

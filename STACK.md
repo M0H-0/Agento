@@ -63,6 +63,7 @@
 | **pydantic** v2 | Request/response contracts | MIT |
 | **docling** | PDF/DOCX/PPTX/XLSX/CSV/HTML parsing to structured markdown | MIT |
 | **pypdf** | `.pdf` text extraction (MVP cut — see PROGRESS.md Devlog; Docling stays the M4.7 choice for structured parsing) | BSD-3 |
+| **fastembed** | On-device sentence embeddings (`all-MiniLM-L6-v2` via ONNX) for MVP semantic search | Apache-2.0 |
 | **python-docx** | `.docx` text extraction (MVP cut) + edit round-trips (text-level) | MIT |
 | pytest | Tests + eval harness | MIT |
 

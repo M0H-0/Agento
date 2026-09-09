@@ -303,6 +303,10 @@ export interface ClearApiKeyPayload {
   provider: string
 }
 
+export interface SystemOpenPathPayload {
+  path: string
+}
+
 export interface AgentoSettings {
   /** Invoke 'settings:get' — snapshot for the selected provider (docs/03 §4). */
   get: () => Promise<SettingsSnapshot>
@@ -316,6 +320,13 @@ export interface AgentoSettings {
   clearApiKey: (payload: ClearApiKeyPayload) => Promise<void>
 }
 
+export interface AgentoSystem {
+  /** Invoke 'system:open-path' — open a workspace file with the OS default
+   * app (MVP semantic-search card). Main resolves against the current
+   * workspace and sandbox-checks containment before shell.openPath. */
+  openPath: (payload: SystemOpenPathPayload) => Promise<{ ok: boolean; reason?: string }>
+}
+
 export interface AgentoAPI {
   chat: AgentoChat
   tool: AgentoTool
@@ -327,6 +338,7 @@ export interface AgentoAPI {
   sidecar: AgentoSidecar
   agent: AgentoAgent
   settings: AgentoSettings
+  system: AgentoSystem
 }
 
 declare global {

@@ -18,9 +18,12 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 
 from agento_intelligence.auth import TokenAuthMiddleware
+from agento_intelligence.embed import EmbeddingError, embed_texts
 from agento_intelligence.extract import ExtractionError, extract_text
 from agento_intelligence.schemas import (
     Capabilities,
+    EmbedRequest,
+    EmbedResponse,
     ExtractRequest,
     ExtractResponse,
     HealthResponse,
@@ -65,3 +68,12 @@ async def document_extract(request: ExtractRequest) -> ExtractResponse:
     except ExtractionError as error:
         raise HTTPException(status_code=error.status_code, detail=str(error)) from error
     return ExtractResponse(text=text, truncated=truncated)
+
+
+@app.post("/embed/embed", response_model=EmbedResponse)
+async def embed(request: EmbedRequest) -> EmbedResponse:
+    try:
+        vectors = embed_texts(request.texts)
+    except EmbeddingError as error:
+        raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+    return EmbedResponse(vectors=vectors)

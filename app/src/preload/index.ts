@@ -255,6 +255,10 @@ export interface ClearApiKeyPayload {
   provider: string
 }
 
+export interface SystemOpenPathPayload {
+  path: string
+}
+
 const agento = {
   chat: {
     send: (payload: ChatSendPayload): Promise<void> => ipcRenderer.invoke('chat:send', payload),
@@ -335,6 +339,13 @@ const agento = {
       ipcRenderer.invoke('settings:set-provider', payload),
     clearApiKey: (payload: ClearApiKeyPayload): Promise<void> =>
       ipcRenderer.invoke('settings:clear-api-key', payload)
+  },
+  system: {
+    /** Open a workspace file with the OS default app (MVP semantic-search
+     * card) — main resolves the path against the current workspace and runs
+     * the sandbox containment check; nothing outside the workspace opens. */
+    openPath: (payload: SystemOpenPathPayload): Promise<{ ok: boolean; reason?: string }> =>
+      ipcRenderer.invoke('system:open-path', payload)
   }
 }
 
