@@ -9,6 +9,8 @@ import type { ChangeEntry } from '../../../preload/index'
 export interface ChangesPanelProps {
   sessionId: string | null
   refreshKey: number
+  /** M3.1: shift below the PlanPanel when one is visible (both fixed right-rail). */
+  shifted?: boolean
 }
 
 interface ChangeGroup {
@@ -86,7 +88,8 @@ function relativeTime(createdAt: string): string {
 
 export function ChangesPanel({
   sessionId,
-  refreshKey
+  refreshKey,
+  shifted
 }: ChangesPanelProps): React.JSX.Element | null {
   const [entries, setEntries] = useState<ChangeEntry[]>([])
   const [activeCount, setActiveCount] = useState(0)
@@ -199,7 +202,10 @@ export function ChangesPanel({
   const groups = groupEntries(entries)
 
   return (
-    <aside className="changes-panel" aria-label="Changes">
+    <aside
+      className={shifted ? 'changes-panel changes-panel--plan-open' : 'changes-panel'}
+      aria-label="Changes"
+    >
       <h2 className="changes-panel__title">
         Changes{' '}
         {activeCount > 0 ? <span className="changes-panel__count">{activeCount}</span> : null}

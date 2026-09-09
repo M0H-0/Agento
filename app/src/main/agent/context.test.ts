@@ -78,20 +78,64 @@ describe('buildRunContext — per-run ctx', () => {
     expect(snapshotStore.entries[0].existed).toBe(false) // nothing there
   })
 
-  it('approves automatically because M2.4 has no risk ≥ 2 tools', async () => {
-    const { ctx } = buildRunContext({
+  it('blocks a risk ≥ 2 approval until resolveApproval (M3.2 dialog promise)', async () => {
+    const bundle = buildRunContext({
       sender: { emit: () => undefined },
       sessionId: 's-6',
       runId: newRunId(),
       workspaceRoot: 'C:/ws'
     })
-    const decision = await ctx.requestApproval({
+    const pending = bundle.ctx.requestApproval({
       tool: 'write_file',
       title: 'Write',
       riskLevel: 2,
       reason: 'overwrite',
       paths: ['C:/ws/x']
     })
-    expect(decision).toBe('approve')
+    expect(bundle._pendingApprovalIds()).toHaveLength(1)
+    expect(bundle.resolveApproval(bundle._pendingApprovalIds()[0] as string, 'approve')).toBe(true)
+    expect(await pending).toBe('approve')
+  })
+
+  it('plan-start gate: request registers, resolve approves, resolve false when idle', async () => {
+    const { requestPlanStart, resolvePlanStart } = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-plan',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    // Nothing pending → resolving is a miss (the plan:start handler's ok:false).
+    expect(resolvePlanStart(true)).toBe(false)
+    const pending = requestPlanStart(['s1', 's2'])
+    expect(resolvePlanStart(true)).toBe(true)
+    expect(await pending).toEqual({ approved: true })
+    // Settled → miss again (a stale Start click after the run settles).
+    expect(resolvePlanStart(true)).toBe(false)
+  })
+
+  it('plan-start gate: resolve(false) carries the decline through', async () => {
+    const { requestPlanStart, resolvePlanStart } = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-plan-2',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    const pending = requestPlanStart(['s1'])
+    expect(resolvePlanStart(false)).toBe(true)
+    expect(await pending).toEqual({ approved: false })
+  })
+
+  it('plan-start gate: rejectPlanStart rejects (used by the chat:stop path)', async () => {
+    const { requestPlanStart, rejectPlanStart } = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-plan-3',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    expect(rejectPlanStart('Run stopped before the user replied.')).toBe(false)
+    const pending = requestPlanStart(['s1'])
+    expect(rejectPlanStart('Run stopped before the user replied.')).toBe(true)
+    await expect(pending).rejects.toThrow(/Run stopped/)
+    expect(rejectPlanStart('Run stopped before the user replied.')).toBe(false)
   })
 })

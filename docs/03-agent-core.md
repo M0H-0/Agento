@@ -59,7 +59,7 @@ All `agent:event` payloads share `{ sessionId, runId, ts, seq }` and are Zod-val
 | `approval/requested` | `{ approvalId, title, body, riskLevel, count?, allowOptions }` | ApprovalDialog |
 | `approval/resolved` | `{ approvalId, decision }` | close dialog, log |
 | `checkpoint/created` | `{ checkpointId, files: [paths] }` | ChangesPanel |
-| `verification/finished` | `{ callId, score, isComplete, missedSegments }` | badges, logger |
+| `verification/finished` | `{ stepId, score, isComplete, missedSegments }` (`stepId` is the plan step; `'run'` = whole-run verdict in the M3 slice) | badges, logger |
 | `session/notice` | `{ level: info\|warn, text }` | degraded-mode banner |
 | `usage` | `{ inputTokens, outputTokens }` | header meter |
 | `error` | `{ code, message (plain), detail? }` | toast + card |

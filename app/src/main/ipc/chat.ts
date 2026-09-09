@@ -1,12 +1,12 @@
 import { ipcMain } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
-import { APICallError, RetryError, stepCountIs, streamText } from 'ai'
-import type { LanguageModel, LanguageModelUsage, UIMessage, UIMessageChunk } from 'ai'
+import type { LanguageModel, UIMessage, UIMessageChunk } from 'ai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { getSettings, resolveProviderKey } from '../settings'
 import { appendMessage, getSession } from '../storage/sessions'
 import { insertUsage } from '../storage/usage'
+import { nextPlanVersion, recordPlanSteps } from '../storage/plan-steps'
 import {
   recordCheckpoint,
   recordToolCall,
@@ -22,19 +22,32 @@ import {
   deletePathTool,
   editExcerpts,
   editFileTool,
+  emitPlanTool,
   excerptOf,
   listDirTool,
   movePathTool,
   newRunId,
   readFileTool,
+  runPlanFirstTurn,
   searchFilesTool,
-  stripStepReasoning,
   writeFileTool
 } from '../agent'
-import type { RunContextBundle } from '../agent'
-import { emitUsageEvent } from './agent-events'
-import { AssistantMessageAccumulator } from './assistant-accumulator'
+import type { PlanStep, RunContextBundle, ToolRegistry } from '../agent'
+import {
+  emitApprovalResolved,
+  emitPlanCreated,
+  emitUsageEvent,
+  emitVerificationFinished
+} from './agent-events'
 import { FULL_SYSTEM_PROMPT } from './system-prompt'
+
+// M3.1: the run loop itself (streamText calls, stream forwarding, provider
+// error classification, step guard) lives in src/main/agent/plan-run.ts —
+// this module is the thin IPC adapter: it builds the deps (Electron sender,
+// storage sinks, the plan-start gate), calls the loop, and owns the settle
+// point (persistence + terminal parts + usage recording).
+
+type ToolOutcomeEntry = Parameters<ToolRegistry['run']>[0]['onOutcome']
 
 interface ChatSendPayload {
   sessionId: string
@@ -50,14 +63,16 @@ interface ToolAnswerPayload {
   answer: string
 }
 
-// docs/04 §5 copy rules: provider failures never surface as raw codes or
-// stack traces. Google signals a rejected key as 400 INVALID_ARGUMENT
-// ("API key not valid"), so 401-class detection also matches that shape.
-const KEY_REJECTED_COPY =
-  "The API key for this provider isn't working. Check it in Settings → Providers."
-const RATE_LIMITED_COPY = "The model is rate-limiting us. I'll wait a moment and retry."
-const GENERIC_PROVIDER_COPY =
-  'Something went wrong talking to the model provider. Check your connection and try again.'
+interface PlanStartPayload {
+  /** Omitted/true = approve (the Start button / "go ahead"); card 05 adds the deny surface. */
+  approved?: boolean
+}
+
+interface ApprovalRespondPayload {
+  approvalId: string
+  decision: 'approve' | 'skip' | 'cancel'
+}
+
 // M1.4: persistence failures are always loud (docs/02 §2.1 wire contract) —
 // the terminal part that would have closed the run is replaced by this error.
 const PERSIST_FAILED_COPY = 'The reply could not be saved to this conversation.'
@@ -74,32 +89,76 @@ const SECOND_RUN_COPY =
 const STEP_LIMIT_COPY =
   'I stopped after taking 25 actions in a row. Say "continue" if you want me to keep going.'
 
-function friendlyProviderError(error: unknown): string {
-  // streamText retries transient failures and surfaces them as a RetryError
-  // wrapping the provider's own APICallError — unwrap before classifying, or
-  // a rate limit (429) falls through to the generic copy (docs/04 §5).
-  const cause = RetryError.isInstance(error) ? error.lastError : error
-  if (APICallError.isInstance(cause)) {
-    const body = `${cause.message} ${cause.responseBody ?? ''}`
-    if (cause.statusCode === 401 || cause.statusCode === 403) return KEY_REJECTED_COPY
-    if (cause.statusCode === 400 && /api key/i.test(body)) return KEY_REJECTED_COPY
-    if (cause.statusCode === 429) return RATE_LIMITED_COPY
+// M2.5 audit sink, built per run: every registry tool wrapper outcome lands a
+// tool_calls row; mutating tools get their checkpoint after-excerpt backfilled
+// (write_file's whole-file excerpt / edit_file's region recomputation).
+// Bookkeeping failures are logged and never break the run.
+function createToolCallAuditSink(
+  sessionId: string,
+  checkpointIdsByToolCall: Map<string, string>,
+  checkpointContentByToolCall: Map<string, string>
+): ToolOutcomeEntry {
+  return (entry) => {
+    try {
+      recordToolCall({
+        sessionId,
+        toolCallId: entry.toolCallId,
+        tool: entry.tool,
+        input: entry.input,
+        output: entry.status === 'executed' && entry.ok ? { message: entry.message } : undefined,
+        ok: entry.ok,
+        error: entry.ok ? undefined : entry.status === 'refused' ? entry.message : entry.message,
+        riskLevel: entry.riskLevel,
+        riskSource: 'rule_table',
+        durationMs: entry.durationMs
+      })
+    } catch (error) {
+      console.error('[tool_calls] audit write failed:', error)
+    }
+    // M2.5: backfill the after-excerpt onto the checkpoint row written at
+    // snapshot time (the snapshot fires pre-execution; write_file computes
+    // the excerpt caps itself — reuse its own excerptOf so the durable copy
+    // matches the card). M2.6: edit_file's region excerpts come from its
+    // own editExcerpts over the input anchors (the checkpoint's
+    // before-excerpt is the whole-file head; the card reads the tool
+    // result — both flow from the same caps). Bookkeeping failures are
+    // logged and never break the run.
+    if (
+      entry.status === 'executed' &&
+      entry.ok &&
+      entry.tool === 'write_file' &&
+      entry.toolCallId
+    ) {
+      const cpId = checkpointIdsByToolCall.get(entry.toolCallId)
+      const content = (entry.input as { content?: unknown } | null)?.content
+      if (cpId && typeof content === 'string') {
+        try {
+          setCheckpointAfterExcerpts(cpId, { afterExcerpt: excerptOf(content) })
+        } catch (error) {
+          console.error('[checkpoints] after-excerpt backfill failed:', error)
+        }
+      }
+    }
+    if (entry.status === 'executed' && entry.ok && entry.tool === 'edit_file' && entry.toolCallId) {
+      const cpId = checkpointIdsByToolCall.get(entry.toolCallId)
+      const input = (entry.input as { old_text?: unknown; new_text?: unknown } | null) ?? {}
+      if (cpId && typeof input.old_text === 'string' && typeof input.new_text === 'string') {
+        try {
+          // The pre-mutation content rode the snapshot sink (stashed by
+          // toolCallId above); the region window recomputes from the
+          // anchors. Anchors that no longer locate degrade to the
+          // new-text head rather than breaking the run.
+          const before = checkpointContentByToolCall.get(entry.toolCallId) ?? ''
+          const { afterExcerpt } = before.includes(input.old_text)
+            ? editExcerpts(before, input.old_text, input.new_text)
+            : { afterExcerpt: excerptOf(input.new_text) }
+          setCheckpointAfterExcerpts(cpId, { afterExcerpt })
+        } catch (error) {
+          console.error('[checkpoints] after-excerpt backfill failed:', error)
+        }
+      }
+    }
   }
-  return GENERIC_PROVIDER_COPY
-}
-
-// Reasoning parts are model-internal scratch (thinking models like
-// openai/gpt-oss-* emit them). The renderer replays the full UIMessage history
-// on every send, and OpenAI-compatible providers reject reasoning content on
-// input (Groq: "property 'reasoning_content' is unsupported") — reasoning
-// never persists either (the accumulator keeps text only). Strip it from
-// assistant messages before building model messages.
-function replayable(messages: UIMessage[]): UIMessage[] {
-  return messages.map((message) =>
-    message.role === 'assistant'
-      ? { ...message, parts: message.parts.filter((part) => part.type !== 'reasoning') }
-      : message
-  )
 }
 
 // Provider clients enabled this phase (STACK.md's provider table): Google AI
@@ -153,6 +212,10 @@ function buildGlobalRegistry(): ReturnType<typeof createToolRegistry> {
   registry.define(movePathTool)
   registry.define(copyPathTool)
   registry.define(deletePathTool)
+  // M3.1: the plan tool. The plan phase wraps ONLY this tool (forced
+  // toolChoice); it stays in the registry so a revised plan mid-execution
+  // goes through the same wrapper (docs/03 §2 "plans are advisory").
+  registry.define(emitPlanTool)
   return registry
 }
 
@@ -169,6 +232,11 @@ export function registerChatIpc(): void {
     if (!sessionId) return
     const active = activeRuns.get(sessionId)
     if (active) {
+      // Reject any pending plan-start promise (M3.1) so the loop does not sit
+      // on the gate forever — same doctrine as the ask_user rejection below.
+      active.run.rejectPlanStart('Run stopped before the user replied.')
+      // Reject pending approvals (M3.2) + ask_user so a stop unwinds both.
+      active.run.rejectApprovals('Stopped before you decided.')
       // Reject any pending ask_user promise so the AI SDK sees an error and
       // unwinds the in-flight step (otherwise a stop on a paused ask_user
       // would hang on an unobserved promise until the next send).
@@ -195,6 +263,46 @@ export function registerChatIpc(): void {
     return { ok: false, reason: 'No active ask_user matches that toolCallId.' }
   })
 
+  // M3.1 plan-start gate (docs/03 §2): resolves the pending plan-start
+  // promise of the session's active run — the loop is blocked on it between
+  // `plan/created` and execution. Mirrors tool:answer: walk every active run
+  // (in practice only one plan is ever waiting), return ok:false when no
+  // plan is waiting (a stale Start click after the run settled).
+  ipcMain.handle('plan:start', (_event: IpcMainInvokeEvent, payload: PlanStartPayload) => {
+    const approved = payload?.approved !== false
+    for (const active of activeRuns.values()) {
+      if (active.run.resolvePlanStart(approved)) {
+        return { ok: true }
+      }
+    }
+    return { ok: false, reason: 'No plan is waiting to start.' }
+  })
+
+  // M3.2 approval response (docs/03 §4): resolves the pending approval
+  // promise — the registry wrapper is blocked on it for risk ≥ 2.
+  ipcMain.handle(
+    'approval:respond',
+    (_event: IpcMainInvokeEvent, payload: ApprovalRespondPayload) => {
+      const approvalId = typeof payload?.approvalId === 'string' ? payload.approvalId : ''
+      const decision = payload?.decision
+      if (!approvalId) return { ok: false, reason: 'approvalId is required' }
+      if (decision !== 'approve' && decision !== 'skip' && decision !== 'cancel') {
+        return { ok: false, reason: 'decision must be approve, skip, or cancel' }
+      }
+      for (const [sessionId, entry] of activeRuns.entries()) {
+        if (entry.run.resolveApproval(approvalId, decision)) {
+          try {
+            emitApprovalResolved({ sessionId, runId: entry.runId, approvalId, decision })
+          } catch {
+            // resolution above is the contract; event failures never break it
+          }
+          return { ok: true }
+        }
+      }
+      return { ok: false, reason: 'No pending approval matches that id.' }
+    }
+  )
+
   ipcMain.handle('chat:send', async (event: IpcMainInvokeEvent, payload: ChatSendPayload) => {
     const messages = Array.isArray(payload?.messages) ? payload.messages : []
     const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId : ''
@@ -220,7 +328,12 @@ export function registerChatIpc(): void {
     try {
       apiKey = resolveProviderKey(provider)
     } catch {
-      sendPart(event.sender, sessionId, { type: 'error', errorText: GENERIC_PROVIDER_COPY })
+      sendPart(event.sender, sessionId, {
+        type: 'error',
+        // docs/04 §5 copy rules: provider failures never surface as raw codes
+        // or stack traces. (The key-missing copy below is the same doctrine.)
+        errorText: "The API key for this provider isn't working. Check it in Settings → Providers."
+      })
       return
     }
     if (apiKey === undefined) {
@@ -291,199 +404,96 @@ export function registerChatIpc(): void {
     const checkpointContentByToolCall = new Map<string, string>()
     activeRuns.set(sessionId, { controller, run, runId })
 
-    // The provider's own 'finish' part is HELD: it is forwarded only after
-    // persistence completes, so the wire never claims a complete run whose
-    // reply did not reach storage.
-    let heldFinish: UIMessageChunk | null = null
-    let aborted = false
-    let terminalSent = false
-    const accumulator = new AssistantMessageAccumulator()
-    // Token usage for this run (M1.5), captured from the SDK's onFinish.
-    // Verified against the installed ai@5.0.250 dist: onFinish fires only
-    // when at least one step completed, and it always runs inside the
-    // stream's flush — before the forwarding loop below exits, so the value
-    // is settled by the time the settle point records it. On a mid-stream
-    // abort (the only abort shape without tools) onFinish never fires and
-    // result.totalUsage REJECTS with NoOutputGeneratedError — which is why
-    // usage is captured via the callback, never awaited.
-    let capturedUsage: LanguageModelUsage | undefined
-    let stepsTaken = 0
-    let stepLimitReached = false
-    try {
-      const result = streamText({
-        model: languageModel,
-        system: FULL_SYSTEM_PROMPT,
-        messages: convertToModelMessagesSafe(replayable(messages)),
-        tools: globalRegistry.toAiSdkTools(run.ctx, {
-          onOutcome: (entry) => {
-            try {
-              recordToolCall({
-                sessionId,
-                toolCallId: entry.toolCallId,
-                tool: entry.tool,
-                input: entry.input,
-                output:
-                  entry.status === 'executed' && entry.ok ? { message: entry.message } : undefined,
-                ok: entry.ok,
-                error: entry.ok
-                  ? undefined
-                  : entry.status === 'refused'
-                    ? entry.message
-                    : entry.message,
-                riskLevel: entry.riskLevel,
-                riskSource: 'rule_table',
-                durationMs: entry.durationMs
-              })
-            } catch (error) {
-              console.error('[tool_calls] audit write failed:', error)
-            }
-            // M2.5: backfill the after-excerpt onto the checkpoint row written at
-            // snapshot time (the snapshot fires pre-execution; write_file computes
-            // the excerpt caps itself — reuse its own excerptOf so the durable copy
-            // matches the card). M2.6: edit_file's region excerpts come from its
-            // own editExcerpts over the input anchors (the checkpoint's
-            // before-excerpt is the whole-file head; the card reads the tool
-            // result — both flow from the same caps). Bookkeeping failures are
-            // logged and never break the run.
-            if (
-              entry.status === 'executed' &&
-              entry.ok &&
-              entry.tool === 'write_file' &&
-              entry.toolCallId
-            ) {
-              const cpId = checkpointIdsByToolCall.get(entry.toolCallId)
-              const content = (entry.input as { content?: unknown } | null)?.content
-              if (cpId && typeof content === 'string') {
-                try {
-                  setCheckpointAfterExcerpts(cpId, { afterExcerpt: excerptOf(content) })
-                } catch (error) {
-                  console.error('[checkpoints] after-excerpt backfill failed:', error)
-                }
-              }
-            }
-            if (
-              entry.status === 'executed' &&
-              entry.ok &&
-              entry.tool === 'edit_file' &&
-              entry.toolCallId
-            ) {
-              const cpId = checkpointIdsByToolCall.get(entry.toolCallId)
-              const input = (entry.input as { old_text?: unknown; new_text?: unknown } | null) ?? {}
-              if (
-                cpId &&
-                typeof input.old_text === 'string' &&
-                typeof input.new_text === 'string'
-              ) {
-                try {
-                  // The pre-mutation content rode the snapshot sink (stashed by
-                  // toolCallId above); the region window recomputes from the
-                  // anchors. Anchors that no longer locate degrade to the
-                  // new-text head rather than breaking the run.
-                  const before = checkpointContentByToolCall.get(entry.toolCallId) ?? ''
-                  const { afterExcerpt } = before.includes(input.old_text)
-                    ? editExcerpts(before, input.old_text, input.new_text)
-                    : { afterExcerpt: excerptOf(input.new_text) }
-                  setCheckpointAfterExcerpts(cpId, { afterExcerpt })
-                } catch (error) {
-                  console.error('[checkpoints] after-excerpt backfill failed:', error)
-                }
-              }
-            }
-          }
-        }),
-        abortSignal: controller.signal,
-        stopWhen: stepCountIs(25),
-        // Every step's provider request is scrubbed of reasoning parts (see
-        // stripStepReasoning): without this, step 2+ of any tool turn whose
-        // first step reasoned dies on Groq's reasoning_content rejection.
-        prepareStep: ({ messages: stepMessages }) => ({
-          messages: stripStepReasoning(stepMessages)
-        }),
-        onAbort: () => {
-          aborted = true
-        },
-        onStepFinish: () => {
-          stepsTaken += 1
-        },
-        onFinish: (event) => {
-          capturedUsage = event.totalUsage
-        }
-      })
-      for await (const part of result.toUIMessageStream({ onError: friendlyProviderError })) {
-        accumulator.addChunk(part)
-        if (part.type === 'finish') {
-          heldFinish = part
-          continue
-        }
-        if (part.type === 'abort') {
-          aborted = true
-          continue
-        }
-        if (part.type === 'error' && controller.signal.aborted) {
-          // An error chunk arriving on an aborted signal is the abort
-          // signature (the onError transform has no context that we stopped
-          // this run) — never surface the generic provider copy for it.
-          aborted = true
-          continue
-        }
-        // M2.5 hard-won carve-out (gate finding): Groq streams tool-input
-        // deltas in one JSON key order and then sends the final arguments with a
-        // different key order. @assistant-ui/react's useToolInvocations enforces
-        // an append-only argsText invariant across renders, and the reorder throws
-        // "Tool call argsText can only be appended, not updated" — a React
-        // render error that unmounts the entire ChatView (blank tree — the gate
-        // driver found "composer input not found" right after turn 2). Our
-        // cards render only from the tool RESULT (never the streaming args), so
-        // the tool-input-* deltas are dropped; the final 'tool-input-available'
-        // then creates the part fresh and the append guard is never engaged.
-
-        if (part.type === 'tool-input-start' || part.type === 'tool-input-delta') continue
-        sendPart(event.sender, sessionId, part)
+    // M3.1 plan persistence + event: the loop calls this exactly once per
+    // plan (the initial one, or a revised one mid-execution). Rows land in
+    // plan_steps (docs/03 §8) and the `plan/created` agent event goes out on
+    // the standard envelope (Zod-validated in agent-events.ts). Bookkeeping
+    // failures are logged and never break the run.
+    const onPlanCreated = (steps: PlanStep[]): void => {
+      // M3.3: the run's coalescer projects batch counts from these steps —
+      // set even if persistence/emission below throws (projection must not
+      // depend on bookkeeping).
+      try {
+        run.setPlanSteps(steps)
+      } catch (error) {
+        console.error('[plan] run plan-steps handoff failed:', error)
       }
-      // The step guard's effect: the SDK stops calling tools after the cap,
-      // emits a finish part with reason 'tool-calls' or 'length', and never
-      // throws. We surface a one-line friendly note so the user can ask
-      // "continue" without a separate UI affordance.
-      if (!aborted && stepsTaken >= 25) {
-        stepLimitReached = true
+      try {
+        const planVersion = nextPlanVersion(sessionId)
+        recordPlanSteps({ sessionId, planVersion, steps })
+        emitPlanCreated({ sessionId, runId, steps })
+      } catch (error) {
+        console.error('[plan] recording plan failed:', error)
       }
-    } catch (error) {
-      // ask_user rejections (the run was stopped) and other unhandled errors
-      // come through here. The provider-error transform handles
-      // RetryError/APICallError specifically; anything else gets the generic
-      // copy unless we know the run was stopped.
-      if (controller.signal.aborted) {
-        aborted = true
-      } else if (!accumulator.isFailed() && !terminalSent) {
-        const message = isAskUserRejection(error)
-          ? 'Stopped before the reply was sent.'
-          : friendlyProviderError(error)
-        sendPart(event.sender, sessionId, { type: 'error', errorText: message })
-        terminalSent = true
-      }
-    } finally {
-      activeRuns.delete(sessionId)
     }
 
+    // The two-phase loop (plan-first, docs/03 §2) — extracted into the
+    // plain-Node agent tree (src/main/agent/plan-run.ts). It never throws:
+    // every failure becomes the terminal handling below (outcome.terminalSent
+    // / accumulatorFailed), and a stop lands as outcome.aborted.
+    const outcome = await runPlanFirstTurn({
+      model: languageModel,
+      system: FULL_SYSTEM_PROMPT,
+      messages,
+      registry: globalRegistry,
+      ctx: run.ctx,
+      requestPlanStart: (stepIds) => run.requestPlanStart(stepIds),
+      sendPart: (part) => sendPart(event.sender, sessionId, part),
+      onOutcome: createToolCallAuditSink(
+        sessionId,
+        checkpointIdsByToolCall,
+        checkpointContentByToolCall
+      ),
+      onPlanCreated,
+      signal: controller.signal,
+      // M3.5 degraded default: no sidecar judge in the 1-hour slice — the
+      // injected verifier reports skipped so every mutating step shows the
+      // honest "not verified" badge (M4.3 swaps in the real HTTP client).
+      verify: async () => ({ verdict: 'skipped' }) as const,
+      onVerification: (result) => {
+        try {
+          emitVerificationFinished({
+            sessionId,
+            runId,
+            stepId: result.stepId,
+            isComplete: result.isComplete,
+            score: result.score,
+            ...(result.missedSegments !== undefined
+              ? { missedSegments: result.missedSegments }
+              : {})
+          })
+        } catch (error) {
+          console.error('[verify] emitting verification failed:', error)
+        }
+      }
+    })
+    activeRuns.delete(sessionId)
+
     // Token usage rides the settle point (docs/03 §2 token guard, §8
-    // usage_events): recorded only when the run's usage actually resolved.
-    // A stopped run resolves no usage with the pinned ai@5.0.250 (onFinish
-    // never fires on a mid-first-step abort; result.totalUsage rejects), so
-    // it records nothing — no row, no event — rather than a fabricated zero.
-    // The SDK also reports reasoningTokens/cachedInputTokens/totalTokens;
-    // the documented schema holds input/output only, so those are dropped.
-    // A bookkeeping failure must never break the run or replace the terminal
+    // usage_events): recorded only when the run's usage actually resolved
+    // (plan + execution phases summed by the loop). A stopped run resolves
+    // no usage with the pinned ai@5.0.250 (onFinish never fires on a
+    // mid-first-step abort; result.totalUsage rejects), so it records
+    // nothing — no row, no event — rather than a fabricated zero. The SDK
+    // also reports reasoningTokens/cachedInputTokens/totalTokens; the
+    // documented schema holds input/output only, so those are dropped. A
+    // bookkeeping failure must never break the run or replace the terminal
     // (only reply-persistence failures are loud, docs/02 §2.1), so it is
     // logged main-side and the run continues.
-    if (capturedUsage !== undefined) {
-      const inputTokens =
-        typeof capturedUsage.inputTokens === 'number' ? capturedUsage.inputTokens : null
-      const outputTokens =
-        typeof capturedUsage.outputTokens === 'number' ? capturedUsage.outputTokens : null
-      if (inputTokens !== null || outputTokens !== null) {
+    if (outcome.usage) {
+      if (outcome.usage.inputTokens !== null || outcome.usage.outputTokens !== null) {
         try {
-          insertUsage({ sessionId, inputTokens, outputTokens })
-          emitUsageEvent({ sessionId, runId, inputTokens, outputTokens })
+          insertUsage({
+            sessionId,
+            inputTokens: outcome.usage.inputTokens,
+            outputTokens: outcome.usage.outputTokens
+          })
+          emitUsageEvent({
+            sessionId,
+            runId,
+            inputTokens: outcome.usage.inputTokens,
+            outputTokens: outcome.usage.outputTokens
+          })
         } catch (error) {
           console.error('[usage] recording token usage failed:', error)
         }
@@ -492,26 +502,24 @@ export function registerChatIpc(): void {
 
     // Exactly one terminal part per run, sent only after persistence:
     //  - stopped run → native v5 { type: 'abort' } after the partial reply is
-    //    saved (toUIMessage() is null when nothing textual arrived — e.g. a
-    //    stop during the reasoning lead-in — and then nothing is persisted);
+    //    saved (assistantMessage is null when nothing textual arrived — e.g.
+    //    a stop during the reasoning lead-in — and then nothing is persisted);
     //  - natural run → the held 'finish' after the full reply is saved;
     //  - either save failing swaps that terminal for an 'error' part, so a
     //    persistence failure is visible in the thread, never swallowed.
     //  A stream that already ended in an 'error' part sent its terminal then.
-    if (!terminalSent && !accumulator.isFailed()) {
-      if (aborted && heldFinish === null) {
+    if (!outcome.terminalSent && !outcome.accumulatorFailed) {
+      if (outcome.aborted && outcome.heldFinish === null) {
         try {
-          const partial = accumulator.toUIMessage()
-          if (partial) appendMessage(sessionId, partial)
+          if (outcome.assistantMessage) appendMessage(sessionId, outcome.assistantMessage)
           sendPart(event.sender, sessionId, { type: 'abort' })
         } catch {
           sendPart(event.sender, sessionId, { type: 'error', errorText: PERSIST_FAILED_COPY })
         }
       } else {
         try {
-          const assistantMessage = accumulator.toUIMessage()
-          if (assistantMessage) appendMessage(sessionId, assistantMessage)
-          sendPart(event.sender, sessionId, heldFinish ?? { type: 'finish' })
+          if (outcome.assistantMessage) appendMessage(sessionId, outcome.assistantMessage)
+          sendPart(event.sender, sessionId, outcome.heldFinish ?? { type: 'finish' })
         } catch {
           sendPart(event.sender, sessionId, { type: 'error', errorText: PERSIST_FAILED_COPY })
         }
@@ -522,7 +530,7 @@ export function registerChatIpc(): void {
     // terminal so the user can read it without the natural finish claiming
     // success. We treat it as informational — not a terminal — so the loop
     // status is consistent with a normal reply.
-    if (stepLimitReached) {
+    if (outcome.stepLimitReached) {
       sendPart(event.sender, sessionId, { type: 'error', errorText: STEP_LIMIT_COPY })
     }
   })
@@ -530,16 +538,6 @@ export function registerChatIpc(): void {
 
 function sendPart(sender: Electron.WebContents, sessionId: string, part: UIMessageChunk): void {
   sender.send('chat:part', { sessionId, part })
-}
-
-// convertToModelMessages is exported by `ai` and takes UIMessage[]. We import
-// it lazily inside the function to keep module-load cost off the test path;
-// also keeps the agent-loop module's import surface narrow.
-import { convertToModelMessages } from 'ai'
-function convertToModelMessagesSafe(
-  messages: UIMessage[]
-): ReturnType<typeof convertToModelMessages> {
-  return convertToModelMessages(messages)
 }
 
 // Reach into the run ctx to find pending ask_user ids. The agent's `context`
@@ -553,8 +551,4 @@ function collectPendingAnswerIds(run: RunContextBundle): string[] {
   // the resolve/reject API). For the IPC's stop path we expose a small
   // helper on the run — see `context.ts`.
   return (run as RunContextBundle & { _pendingAnswerIds(): string[] })._pendingAnswerIds?.() ?? []
-}
-
-function isAskUserRejection(error: unknown): boolean {
-  return error instanceof Error && /Run stopped before the user replied\./.test(error.message)
 }

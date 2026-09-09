@@ -83,6 +83,14 @@ export interface ToolExecutionContext {
   /** Blocks on the user's decision for risk ≥ 2 (docs/06 §3); the caller wires the dialog. */
   requestApproval(request: ApprovalRequest): Promise<ApprovalDecision>
   /**
+   * M3.3 coalescing projection (docs/03 §5): read-only tools report the size
+   * of the enumeration they just produced (list_dir = file entries,
+   * search_files = matches). The approval hook uses the most recent value as
+   * the batch-count projection when the plan step's description states none.
+   * Optional so test/harness contexts need not provide it.
+   */
+  noteEnumeration?: (fileCount: number) => void
+  /**
    * Blocks until the user replies to an ask_user question. The bridge is the
    * synthetic `tool-output-available` chunk over `chat:part` carrying
    * `{ __askUserAwait: true, toolCallId, question, options? }` (M2.4 design);

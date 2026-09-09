@@ -77,6 +77,27 @@ export const toolCalls = sqliteTable('tool_calls', {
   createdAt: text('created_at').notNull()
 })
 
+// Plan steps (docs/03 §8, migration 0005 — M3.1): one row per step of every
+// emitted plan version. Append-style per plan; a revised plan is a new
+// plan_version. `status` mirrors the plan/step_updated event vocabulary.
+export const planSteps = sqliteTable('plan_steps', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id')
+    .notNull()
+    .references(() => sessions.id),
+  planVersion: integer('plan_version').notNull().default(1),
+  position: integer('position').notNull(),
+  description: text('description').notNull(),
+  tool: text('tool'),
+  riskLevel: integer('risk_level').default(0),
+  status: text('status').notNull().default('pending'), // pending|in_progress|done|failed|awaiting_approval|skipped
+  verificationScore: real('verification_score'),
+  verified: integer('verified'),
+  missedSegmentsJson: text('missed_segments_json'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull()
+})
+
 // Append-only checkpoint log (migration 0003, M2.5; docs/03 §7-8): every
 // risk >= 1 mutation lands a row BEFORE the tool executes — a mutation
 // without a checkpoint is unrepresentable. Undo (M2.8) writes new rows;

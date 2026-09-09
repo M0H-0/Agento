@@ -74,6 +74,29 @@ export interface ToolRegistry {
       }) => void
     }
   ): Record<string, ReturnType<typeof aiTool>>
+  /**
+   * Build ONE tool's AI SDK wrapper by name (M3.1): the plan phase calls this
+   * for `emit_plan` only, so the forced plan step goes through the exact same
+   * registry wrapper as every other tool — never a bypass. Returns undefined
+   * when the name is not defined.
+   */
+  toAiSdkTool(
+    name: string,
+    ctx: ToolExecutionContext,
+    hooks?: {
+      /** M2.5 audit sink — one notification per wrapper run (every status). */
+      onOutcome?: (entry: {
+        tool: string
+        toolCallId: string | null
+        input: unknown
+        ok: boolean
+        status: ToolCallStatus
+        message: string
+        riskLevel: number
+        durationMs: number
+      }) => void
+    }
+  ): ReturnType<typeof aiTool> | undefined
 }
 
 // Stage refusals are normal outcomes (a refused call is not a crash): the tool
@@ -287,6 +310,67 @@ export function createToolRegistry(): ToolRegistry {
     return truncatedResult(tool.name, result)
   }
 
+  function toAiSdkTool(
+    name: string,
+    ctx: ToolExecutionContext,
+    hooks?: {
+      /** M2.5 audit sink — one notification per wrapper run (every status). */
+      onOutcome?: Parameters<ToolRegistry['run']>[0]['onOutcome']
+    }
+  ): ReturnType<typeof aiTool> | undefined {
+    const tool = tools.get(name)
+    if (!tool) return undefined
+    // The AI SDK's `tool()` helper is generic on INPUT/OUTPUT. Our registry
+    // stores the untyped ToolDefinition (the schema is Zod-typed and the
+    // runtime re-validates). We build the AI SDK tool with `unknown` shape
+    // — the wrapper handles validation, so the SDK just plumbs args through.
+    // The execute callback receives `(input, options)` where options carries
+    // the AI SDK's `toolCallId` and `messages`; we pass toolCallId through
+    // so ask_user can identify its pause request on the renderer side.
+    const wrapped = aiTool({
+      description: tool.description,
+      inputSchema: zodSchema(tool.inputSchema as unknown as z.ZodTypeAny) as never,
+      execute: async (input: unknown, options: { toolCallId: string }): Promise<unknown> => {
+        // One-line lifecycle log per tool call (main stdout → dev log).
+        // Permanent value, not gate scaffolding: until the M3 audit log
+        // lands, this is the only record of what the loop actually ran.
+        console.log(`[tools] call ${name} ${JSON.stringify(input)?.slice(0, 200)}`)
+        const outcome = await run({
+          tool: name,
+          args: input,
+          ctx,
+          toolCallId: options.toolCallId,
+          onOutcome: hooks?.onOutcome
+        })
+        console.log(`[tools] ${name} -> ${outcome.status} ok=${outcome.ok}`)
+        // The AI SDK consumes whatever the execute returns as the tool
+        // output (and renders it in the card body). Refusals/skips/
+        // cancellations become a plain-language message object so the
+        // card is honest about what happened.
+        if (outcome.status === 'refused') {
+          throw new Error(outcome.message)
+        }
+        if (outcome.status === 'skipped') {
+          return { __agentoOutcome: 'skipped', message: outcome.message }
+        }
+        if (outcome.status === 'cancelled') {
+          return { __agentoOutcome: 'cancelled', message: outcome.message }
+        }
+        if (outcome.ok === false) {
+          throw new Error(outcome.message)
+        }
+        // 'executed' (the success path) — `outcome.result` is the wrapper's
+        // shape (may be the `truncated` envelope); unwrap when present.
+        const result = outcome.result as { truncated?: boolean; hint?: string } | undefined
+        if (result && typeof result === 'object' && 'truncated' in result && result.truncated) {
+          return { truncated: true, hint: result.hint ?? 'Large result; see session log.' }
+        }
+        return result
+      }
+    }) as unknown as ReturnType<typeof aiTool>
+    return wrapped
+  }
+
   function toAiSdkTools(
     ctx: ToolExecutionContext,
     hooks?: {
@@ -295,59 +379,12 @@ export function createToolRegistry(): ToolRegistry {
     }
   ): Record<string, ReturnType<typeof aiTool>> {
     const out: Record<string, ReturnType<typeof aiTool>> = {}
-    for (const [name, tool] of tools) {
-      // The AI SDK's `tool()` helper is generic on INPUT/OUTPUT. Our registry
-      // stores the untyped ToolDefinition (the schema is Zod-typed and the
-      // runtime re-validates). We build the AI SDK tool with `unknown` shape
-      // — the wrapper handles validation, so the SDK just plumbs args through.
-      // The execute callback receives `(input, options)` where options carries
-      // the AI SDK's `toolCallId` and `messages`; we pass toolCallId through
-      // so ask_user can identify its pause request on the renderer side.
-      const wrapped = aiTool({
-        description: tool.description,
-        inputSchema: zodSchema(tool.inputSchema as unknown as z.ZodTypeAny) as never,
-        execute: async (input: unknown, options: { toolCallId: string }): Promise<unknown> => {
-          // One-line lifecycle log per tool call (main stdout → dev log).
-          // Permanent value, not gate scaffolding: until the M3 audit log
-          // lands, this is the only record of what the loop actually ran.
-          console.log(`[tools] call ${name} ${JSON.stringify(input)?.slice(0, 200)}`)
-          const outcome = await run({
-            tool: name,
-            args: input,
-            ctx,
-            toolCallId: options.toolCallId,
-            onOutcome: hooks?.onOutcome
-          })
-          console.log(`[tools] ${name} -> ${outcome.status} ok=${outcome.ok}`)
-          // The AI SDK consumes whatever the execute returns as the tool
-          // output (and renders it in the card body). Refusals/skips/
-          // cancellations become a plain-language message object so the
-          // card is honest about what happened.
-          if (outcome.status === 'refused') {
-            throw new Error(outcome.message)
-          }
-          if (outcome.status === 'skipped') {
-            return { __agentoOutcome: 'skipped', message: outcome.message }
-          }
-          if (outcome.status === 'cancelled') {
-            return { __agentoOutcome: 'cancelled', message: outcome.message }
-          }
-          if (outcome.ok === false) {
-            throw new Error(outcome.message)
-          }
-          // 'executed' (the success path) — `outcome.result` is the wrapper's
-          // shape (may be the `truncated` envelope); unwrap when present.
-          const result = outcome.result as { truncated?: boolean; hint?: string } | undefined
-          if (result && typeof result === 'object' && 'truncated' in result && result.truncated) {
-            return { truncated: true, hint: result.hint ?? 'Large result; see session log.' }
-          }
-          return result
-        }
-      }) as unknown as ReturnType<typeof aiTool>
-      out[name] = wrapped
+    for (const name of tools.keys()) {
+      const wrapped = toAiSdkTool(name, ctx, hooks)
+      if (wrapped) out[name] = wrapped
     }
     return out
   }
 
-  return { define, get: (name) => tools.get(name), run, toAiSdkTools }
+  return { define, get: (name) => tools.get(name), run, toAiSdkTools, toAiSdkTool }
 }

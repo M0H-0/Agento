@@ -124,7 +124,98 @@ export interface AgentUsageEvent {
   outputTokens: number | null
 }
 
-export type AgentEvent = AgentUsageEvent
+export type AgentEvent =
+  | AgentUsageEvent
+  | AgentPlanCreatedEvent
+  | AgentPlanStepUpdatedEvent
+  | AgentApprovalRequestedEvent
+  | AgentApprovalResolvedEvent
+  | AgentVerificationFinishedEvent
+
+export interface AgentApprovalRequestedEvent {
+  type: 'approval/requested'
+  sessionId: string
+  runId: string
+  ts: number
+  seq: number
+  approvalId: string
+  title: string
+  body: string
+  riskLevel: number
+  count?: number
+}
+
+export interface AgentApprovalResolvedEvent {
+  type: 'approval/resolved'
+  sessionId: string
+  runId: string
+  ts: number
+  seq: number
+  approvalId: string
+  decision: 'approve' | 'skip' | 'cancel'
+}
+
+export interface AgentVerificationFinishedEvent {
+  type: 'verification/finished'
+  sessionId: string
+  runId: string
+  ts: number
+  seq: number
+  stepId: string
+  isComplete: boolean
+  score: number | null
+  missedSegments?: string[]
+}
+
+export interface ApprovalRespondPayload {
+  approvalId: string
+  decision: 'approve' | 'skip' | 'cancel'
+}
+
+// Plan events (docs/03 §4, M3.1): the plan's user surface is the PlanPanel
+// (docs/04 §3.3); the wire step id is the model's own id. `plan/step_updated`
+// has no M3.1 emitter yet (per-step tracing lands M3.5/M3.6) — the type is
+// the contract from day one (Zod-both-sides rule: main schema + renderer
+// mirror + this preload type must stay in sync).
+export interface AgentPlanStep {
+  id: string
+  description: string
+  tool: string
+  riskLevel: number
+  requiresApproval: boolean
+}
+
+export interface AgentPlanCreatedEvent {
+  type: 'plan/created'
+  sessionId: string
+  runId: string
+  ts: number
+  seq: number
+  steps: AgentPlanStep[]
+}
+
+export type PlanStepStatus =
+  'pending' | 'in_progress' | 'done' | 'failed' | 'awaiting_approval' | 'skipped'
+
+export interface AgentPlanStepUpdatedEvent {
+  type: 'plan/step_updated'
+  sessionId: string
+  runId: string
+  ts: number
+  seq: number
+  stepId: string
+  status: PlanStepStatus
+  verification?: { score: number | null; verified: boolean }
+  error?: string
+}
+
+// Plan-start gate (M3.1, docs/03 §2): resolves the run's pending plan-start
+// promise — execution starts only after the user presses Start (or replies
+// "go ahead"; both call this). `approved: false` is card 05's deny surface.
+export interface PlanStartResult {
+  ok: boolean
+  reason?: string
+}
 
 // Sidecar status contract per docs/03 §4: app-level push + pull, deliberately
 // not a session-scoped 'agent:event' (no sessionId/runId exists for it).
@@ -180,6 +271,14 @@ const agento = {
   tool: {
     answer: (payload: ToolAnswerPayload): Promise<{ ok: boolean; reason?: string }> =>
       ipcRenderer.invoke('tool:answer', payload)
+  },
+  plan: {
+    start: (payload?: { approved?: boolean }): Promise<PlanStartResult> =>
+      ipcRenderer.invoke('plan:start', payload ?? {})
+  },
+  approval: {
+    respond: (payload: ApprovalRespondPayload): Promise<{ ok: boolean; reason?: string }> =>
+      ipcRenderer.invoke('approval:respond', payload)
   },
   changes: {
     list: (payload: { sessionId: string }): Promise<ChangesListResult> =>

@@ -11,7 +11,11 @@ import type { UIMessage } from 'ai'
 import { createIpcChatTransport } from './chat/transport'
 import type { SessionSummary } from './chat/transport'
 import { parseAgentEvent } from './chat/agent-events'
+import type { PlanStep } from './chat/agent-events'
+import type { AgentApprovalRequestedEvent } from '../../preload/index'
+import { ApprovalDialog } from './components/ApprovalDialog'
 import MarkdownText from './components/MarkdownText'
+import { PlanPanel } from './components/PlanPanel'
 import ScrollToBottomButton from './components/ScrollToBottomButton'
 import SettingsDialog from './components/SettingsDialog'
 import SessionsSidebar from './components/SessionsSidebar'
@@ -19,6 +23,20 @@ import SidecarStatusDot from './components/SidecarStatusDot'
 import ThinkingIndicator from './components/ThinkingIndicator'
 import { ChangesPanel } from './components/ChangesPanel'
 import { ToolUIRegistry } from './components/cards/ToolUIRegistry'
+
+// Plan panel state (M3.1 + M3.6 live): fed by the agent:event subscription
+// below. The runId disambiguates a fresh plan (new run) from a REVISED plan
+// in the same run — only the latter shows the "updated" chip (docs/04 §3.3).
+// `statuses`/`verification`/`errors` are fed by plan/step_updated +
+// verification/finished (M3.6); absent entries render as pending.
+interface PlanPanelState {
+  runId: string
+  steps: PlanStep[]
+  updated: boolean
+  statuses: Record<string, string>
+  verification: Record<string, { score: number | null; verified: boolean }>
+  errors: Record<string, string>
+}
 
 // User messages stay plain text (docs/04 §8.3 scopes markdown to model
 // replies); assistant text renders as streaming markdown.
@@ -205,14 +223,116 @@ function App(): React.JSX.Element {
   // StrictMode-safe because resubscription is complete and non-destructive
   // — the registerDispose ref pattern stays reserved for the transport's
   // destructive dispose (M1.4 rule).
+  // ── Plan panel (M3.1) ────────────────────────────────────────────────────
+  const [plan, setPlan] = useState<PlanPanelState | null>(null)
+  const [planStartRequested, setPlanStartRequested] = useState(false)
+
+  const handlePlanStart = useCallback(() => {
+    // Optimistic: the run is blocked on the gate; main resolves it. The
+    // button hides either way — a declined/duplicate start is ok:false and
+    // the panel just stays on its honest pre-execution footer.
+    setPlanStartRequested(true)
+    window.agento.plan.start().catch((error) => console.error('plan:start failed:', error))
+  }, [setPlanStartRequested])
+
+  // M3.2 approval dialog: one at a time, keyed by approvalId, closed on
+  // approval/resolved (or after responding).
+  const [approval, setApproval] = useState<AgentApprovalRequestedEvent | null>(null)
+
+  function handleApprovalRespond(decision: 'approve' | 'skip' | 'cancel'): void {
+    setApproval((current) => {
+      if (current) {
+        window.agento.approval
+          .respond({ approvalId: current.approvalId, decision })
+          .catch((error) => console.error('approval:respond failed:', error))
+      }
+      return null
+    })
+  }
+
+  const resetPlan = useCallback(() => {
+    setPlan(null)
+    setPlanStartRequested(false)
+    setApproval(null)
+  }, [])
+
   useEffect(() => {
     const unsubscribe = window.agento.agent.onEvent((raw) => {
-      // Validate and drop: invalid events must never reach state; the
-      // per-event consumers (plan/approval panels) arrive in M3.
-      parseAgentEvent(raw)
+      // Validate and drop: invalid events must never reach state. Consumers
+      // route on type (M3): plan/created feeds the PlanPanel; step/verify/
+      // approval events join with M3.5/M3.6.
+      const event = parseAgentEvent(raw)
+      if (!event) return
+      if (event.sessionId !== activeSessionIdRef.current) return
+      if (event.type === 'plan/created') {
+        setPlan((prev) =>
+          prev !== null && prev.runId === event.runId
+            ? {
+                runId: event.runId,
+                steps: event.steps,
+                updated: true,
+                statuses: {},
+                verification: {},
+                errors: {}
+              }
+            : {
+                runId: event.runId,
+                steps: event.steps,
+                updated: false,
+                statuses: {},
+                verification: {},
+                errors: {}
+              }
+        )
+      } else if (event.type === 'plan/step_updated') {
+        setPlan((prev) => {
+          if (!prev || prev.runId !== event.runId) return prev
+          return {
+            ...prev,
+            statuses: { ...prev.statuses, [event.stepId]: event.status },
+            verification:
+              event.verification !== undefined
+                ? { ...prev.verification, [event.stepId]: event.verification }
+                : prev.verification,
+            errors:
+              event.error !== undefined
+                ? { ...prev.errors, [event.stepId]: event.error }
+                : prev.errors
+          }
+        })
+      } else if (event.type === 'verification/finished') {
+        setPlan((prev) => {
+          if (!prev || prev.runId !== event.runId) return prev
+          const key = event.stepId === 'run' ? (prev.steps[0]?.id ?? 'run') : event.stepId
+          return {
+            ...prev,
+            verification: {
+              ...prev.verification,
+              [key]: { score: event.score, verified: event.isComplete }
+            },
+            errors:
+              event.missedSegments !== undefined && event.missedSegments.length > 0
+                ? { ...prev.errors, [key]: event.missedSegments.join('; ') }
+                : prev.errors
+          }
+        })
+      } else if (event.type === 'approval/requested') {
+        setApproval(event)
+        // The owning step (first match) shows the awaiting glyph.
+        setPlan((prev) => {
+          if (!prev || prev.runId !== event.runId || prev.steps.length === 0) return prev
+          const firstId = prev.steps[0]?.id
+          if (!firstId) return prev
+          return { ...prev, statuses: { ...prev.statuses, [firstId]: 'awaiting_approval' } }
+        })
+      } else if (event.type === 'approval/resolved') {
+        setApproval((current) =>
+          current && current.approvalId === event.approvalId ? null : current
+        )
+      }
     })
     return unsubscribe
-  }, [])
+  }, [setPlan])
 
   const getSessionId = useCallback(() => activeSessionIdRef.current, [])
 
@@ -233,27 +353,32 @@ function App(): React.JSX.Element {
     setChangesRefreshKey((key) => key + 1)
   }, [refreshSessions])
 
-  const openSession = useCallback(async (session: SessionSummary) => {
-    if (session.id === activeSessionIdRef.current) return
-    chatDisposeRef.current?.()
-    try {
-      const messages = await window.agento.sessions.messages({ sessionId: session.id })
-      activeSessionIdRef.current = session.id
-      setActiveSessionId(session.id)
-      setPendingMessages(messages)
-      setThreadEpoch((epoch) => epoch + 1)
-    } catch (error) {
-      console.error('session:messages failed:', error)
-    }
-  }, [])
+  const openSession = useCallback(
+    async (session: SessionSummary) => {
+      if (session.id === activeSessionIdRef.current) return
+      chatDisposeRef.current?.()
+      resetPlan()
+      try {
+        const messages = await window.agento.sessions.messages({ sessionId: session.id })
+        activeSessionIdRef.current = session.id
+        setActiveSessionId(session.id)
+        setPendingMessages(messages)
+        setThreadEpoch((epoch) => epoch + 1)
+      } catch (error) {
+        console.error('session:messages failed:', error)
+      }
+    },
+    [resetPlan]
+  )
 
   const startNewChat = useCallback(() => {
     chatDisposeRef.current?.()
+    resetPlan()
     activeSessionIdRef.current = null
     setActiveSessionId(null)
     setPendingMessages([])
     setThreadEpoch((epoch) => epoch + 1)
-  }, [])
+  }, [resetPlan])
 
   // ⌘/Ctrl+, opens Settings (docs/04 §7). Renderer-side keydown rather than an
   // Electron Menu accelerator: no Menu exists (autoHideMenuBar) and pure UI
@@ -286,7 +411,28 @@ function App(): React.JSX.Element {
       >
         Settings
       </button>
-      <ChangesPanel sessionId={activeSessionId} refreshKey={changesRefreshKey} />
+      {/* M3.1: while a plan is visible in the right rail, the changes panel
+          shifts below it — both are fixed-position and would otherwise
+          overlap (`.changes-panel--plan-open` in main.css). */}
+      <ChangesPanel
+        sessionId={activeSessionId}
+        refreshKey={changesRefreshKey}
+        shifted={plan !== null}
+      />
+      {approval !== null ? (
+        <ApprovalDialog request={approval} onRespond={handleApprovalRespond} />
+      ) : null}
+      {plan !== null ? (
+        <PlanPanel
+          steps={plan.steps}
+          updated={plan.updated}
+          awaitingStart={!planStartRequested}
+          onStart={handlePlanStart}
+          statuses={plan.statuses}
+          verification={plan.verification}
+          errors={plan.errors}
+        />
+      ) : null}
       <ChatView
         key={threadEpoch}
         getSessionId={getSessionId}

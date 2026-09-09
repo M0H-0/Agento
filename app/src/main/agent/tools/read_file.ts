@@ -24,7 +24,10 @@ export const readFileTool: ToolDefinition<
   inputSchema: z.object({
     path: z.string().min(1),
     startLine: z.number().int().min(0).optional(),
-    maxLines: z.number().int().min(1).max(2000).optional()
+    // No `.max()` cap on purpose (M3.7 gate finding — same as search_files):
+    // provider-side validation would kill the turn; `execute` clamps via the
+    // `?? 2000` default + slice bounds below.
+    maxLines: z.number().int().min(1).optional()
   }),
   pathFields: ['path'],
   risk: () => ({ level: 0, reason: 'Read-only' }),

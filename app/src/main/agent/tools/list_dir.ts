@@ -26,6 +26,11 @@ export const listDirTool: ToolDefinition<
   }),
   execute: async (input, ctx) => {
     const entries = ctx.fs.readdir(input.path)
+    // M3.3 projection feed (docs/03 §5): the file count is what a following
+    // same-shape batch (e.g. one move per listed file) projects from when the
+    // plan description states no number. Directories excluded — only files
+    // get moved/copied/deleted one by one.
+    ctx.noteEnumeration?.(entries.filter((e) => e.type === 'file').length)
     // The list_dir output is what the model sees; cap defensively even though
     // the wrapper truncates oversized outputs. A real workspace with >8 KB of
     // entry names is itself the problem.

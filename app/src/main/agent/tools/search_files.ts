@@ -48,7 +48,11 @@ export const searchFilesTool: ToolDefinition<
     path: z.string().min(1),
     query: z.string().min(1),
     glob: z.string().min(1).optional(),
-    maxResults: z.number().int().min(1).max(MAX_MATCHES).optional()
+    // No `.max()` cap on purpose (M3.7 gate finding): the provider validates
+    // the model's arguments against this schema BEFORE our wrapper sees them,
+    // and a breach kills the whole turn provider-side. Over-large values are
+    // clamped in `execute` instead (`Math.min(maxResults, MAX_MATCHES)`).
+    maxResults: z.number().int().min(1).optional()
   }),
   pathFields: ['path'],
   risk: () => ({ level: 0, reason: 'Read-only' }),
@@ -98,6 +102,9 @@ export const searchFilesTool: ToolDefinition<
         from = idx + input.query.length
       }
     }
+    // M3.3 projection feed (docs/03 §5): match count, same doctrine as
+    // list_dir's file count — last enumeration wins at the approval hook.
+    ctx.noteEnumeration?.(matches.length)
     return { ok: true, output: { query: input.query, matches, truncated } }
   }
 }

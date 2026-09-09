@@ -9,6 +9,11 @@ import type { TextUIPart, UIMessage, UIMessageChunk } from 'ai'
 // Structured for M1.4 (stop button): toUIMessage() is a cheap snapshot that
 // is valid mid-stream, so an aborted run can persist the partial reply; the
 // id is fixed at construction so a persisted partial can be recognized later.
+//
+// M3.1: moved from src/main/ipc/ into the agent tree — the extracted
+// plan-run loop (plan-run.ts) owns the stream forwarding + accumulation now,
+// and src/main/agent/ must not import from ipc/ (it stays plain Node,
+// AGENTS.md rule 1); the accumulation logic is loop logic.
 export class AssistantMessageAccumulator {
   readonly id = randomUUID()
 

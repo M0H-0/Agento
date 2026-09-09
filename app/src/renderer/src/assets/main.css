@@ -1387,3 +1387,171 @@
   color: var(--destructive);
   font-size: 0.78rem;
 }
+
+/* M3.1: Plan panel (docs/04 §3.3) — top-right rail; the changes panel shifts
+   below it while a plan is visible (both fixed-position, same rail). */
+.plan-panel {
+  position: fixed;
+  top: 3.2rem;
+  right: 0.75rem;
+  width: 15rem;
+  max-height: 45vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--card-foreground);
+  overflow: hidden;
+  font-size: 0.82rem;
+}
+
+.changes-panel--plan-open {
+  top: calc(3.2rem + 45vh + 0.5rem);
+}
+
+.plan-panel__title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.plan-panel__updated {
+  display: inline-block;
+  padding: 0 0.4rem;
+  border-radius: 9999px;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  font-size: 0.72rem;
+  font-weight: 400;
+}
+
+.plan-panel__start {
+  margin-left: auto;
+  font-size: 0.78rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  cursor: pointer;
+}
+
+.plan-panel__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.plan-panel__step {
+  display: flex;
+  gap: 0.35rem;
+  align-items: flex-start;
+}
+
+.plan-panel__step--risk .plan-panel__step-text {
+  border-left: 2px solid var(--destructive);
+  padding-left: 0.35rem;
+}
+
+.plan-panel__step-glyph {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+.plan-panel__step-text {
+  word-break: break-word;
+}
+
+.plan-panel__footer {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+/* M3.6 live badges + failed-step errors (docs/04 §3.3) — never faked: the
+   badge renders only from plan/step_updated.verification. */
+.plan-panel__badge {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0 0.4rem;
+  border-radius: 9999px;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  font-size: 0.7rem;
+}
+
+.plan-panel__error {
+  display: block;
+  color: var(--destructive);
+  font-size: 0.75rem;
+}
+
+/* M3.2 ApprovalDialog (docs/04 §3.2) — blocking modal, no overlay-click or
+   Escape dismiss; the run stays blocked until a decision resolves. */
+.approval-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 50;
+  width: 22rem;
+  max-width: calc(100vw - 2rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--card-foreground);
+}
+
+.approval-dialog__title {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.approval-dialog__body,
+.approval-dialog__count,
+.approval-dialog__assurance {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.approval-dialog__assurance {
+  color: var(--muted-foreground);
+}
+
+.approval-dialog__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.approval-dialog__approve {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+
+.approval-dialog__skip,
+.approval-dialog__cancel {
+  background: transparent;
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}

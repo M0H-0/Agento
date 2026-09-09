@@ -72,7 +72,91 @@ export interface AgentUsageEvent {
   outputTokens: number | null
 }
 
-export type AgentEvent = AgentUsageEvent
+export type AgentEvent =
+  | AgentUsageEvent
+  | AgentPlanCreatedEvent
+  | AgentPlanStepUpdatedEvent
+  | AgentApprovalRequestedEvent
+  | AgentApprovalResolvedEvent
+  | AgentVerificationFinishedEvent
+
+export interface AgentApprovalRequestedEvent {
+  type: 'approval/requested'
+  sessionId: string
+  runId: string
+  ts: number
+  seq: number
+  approvalId: string
+  title: string
+  body: string
+  riskLevel: number
+  count?: number
+}
+
+export interface AgentApprovalResolvedEvent {
+  type: 'approval/resolved'
+  sessionId: string
+  runId: string
+  ts: number
+  seq: number
+  approvalId: string
+  decision: 'approve' | 'skip' | 'cancel'
+}
+
+export interface AgentVerificationFinishedEvent {
+  type: 'verification/finished'
+  sessionId: string
+  runId: string
+  ts: number
+  seq: number
+  stepId: string
+  isComplete: boolean
+  score: number | null
+  missedSegments?: string[]
+}
+
+// Plan events (docs/03 §4, M3.1): the plan's user surface is the PlanPanel
+// (docs/04 §3.3). `plan/step_updated` has no M3.1 emitter yet (per-step
+// tracing lands M3.5/M3.6) — the type is the contract from day one.
+export interface AgentPlanStep {
+  id: string
+  description: string
+  tool: string
+  riskLevel: number
+  requiresApproval: boolean
+}
+
+export interface AgentPlanCreatedEvent {
+  type: 'plan/created'
+  sessionId: string
+  runId: string
+  ts: number
+  seq: number
+  steps: AgentPlanStep[]
+}
+
+export type PlanStepStatus =
+  'pending' | 'in_progress' | 'done' | 'failed' | 'awaiting_approval' | 'skipped'
+
+export interface AgentPlanStepUpdatedEvent {
+  type: 'plan/step_updated'
+  sessionId: string
+  runId: string
+  ts: number
+  seq: number
+  stepId: string
+  status: PlanStepStatus
+  verification?: { score: number | null; verified: boolean }
+  error?: string
+}
+
+// Plan-start gate (M3.1, docs/03 §2): resolves the run's pending plan-start
+// promise — execution starts only after the user presses Start (or replies
+// "go ahead"; both call this). `approved: false` is card 05's deny surface.
+export interface PlanStartResult {
+  ok: boolean
+  reason?: string
+}
 
 export interface AgentoChat {
   /** Invoke 'chat:send' — main streams UIMessageChunks back via 'chat:part' (docs/02 §2.1). */
@@ -86,6 +170,21 @@ export interface AgentoChat {
 export interface AgentoTool {
   /** Invoke 'tool:answer' — settles a paused ask_user (docs/03 §5 / M2.4). */
   answer: (payload: ToolAnswerPayload) => Promise<{ ok: boolean; reason?: string }>
+}
+
+export interface AgentoPlan {
+  /** Invoke 'plan:start' — resolves the run's pending plan-start gate (docs/03 §2, M3.1). */
+  start: (payload?: { approved?: boolean }) => Promise<PlanStartResult>
+}
+
+export interface ApprovalRespondPayload {
+  approvalId: string
+  decision: 'approve' | 'skip' | 'cancel'
+}
+
+export interface AgentoApproval {
+  /** Invoke 'approval:respond' — settles a pending risk ≥ 2 approval (docs/03 §4, M3.2). */
+  respond: (payload: ApprovalRespondPayload) => Promise<{ ok: boolean; reason?: string }>
 }
 
 // Changes (M2.8 panel; docs/03 §4 + §7-8): a session's checkpoints
@@ -220,6 +319,8 @@ export interface AgentoSettings {
 export interface AgentoAPI {
   chat: AgentoChat
   tool: AgentoTool
+  plan: AgentoPlan
+  approval: AgentoApproval
   changes: AgentoChanges
   sessions: AgentoSessions
   workspaces: AgentoWorkspaces
