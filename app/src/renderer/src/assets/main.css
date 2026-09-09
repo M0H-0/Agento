@@ -1338,6 +1338,63 @@
   word-break: break-word;
 }
 
+/* MVP onboarding (M6.1 cut): one static full-screen gate — welcome, pick a
+   workspace, enter an API key. Reuses the settings-* field classes for the
+   inputs; only the shell + start button are new. */
+.onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: var(--background);
+  overflow-y: auto;
+}
+
+.onboarding-card {
+  width: min(480px, calc(100vw - 3rem));
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 2rem 2.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--card);
+}
+
+.onboarding-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.onboarding-lede {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.onboarding-start {
+  align-self: flex-end;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: none;
+  border-radius: 0.375rem;
+  padding: 0.5rem 1.1rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  font: inherit;
+  cursor: pointer;
+  transition: opacity 150ms ease;
+}
+
+.onboarding-start:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* M2.5: write_file before/after excerpts (no diff component — plain
    pre blocks under labels, docs/04 section 3.1). */
 .tool-card__excerpt {

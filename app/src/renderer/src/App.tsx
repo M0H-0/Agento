@@ -22,6 +22,7 @@ import SessionsSidebar from './components/SessionsSidebar'
 import SidecarStatusDot from './components/SidecarStatusDot'
 import ThinkingIndicator from './components/ThinkingIndicator'
 import { ChangesPanel } from './components/ChangesPanel'
+import { Onboarding } from './components/Onboarding'
 import { ToolUIRegistry } from './components/cards/ToolUIRegistry'
 
 // Plan panel state (M3.1 + M3.6 live): fed by the agent:event subscription
@@ -190,6 +191,26 @@ function App(): React.JSX.Element {
   const chatDisposeRef = useRef<(() => void) | null>(null)
   const registerDispose = useCallback((dispose: (() => void) | null) => {
     chatDisposeRef.current = dispose
+  }, [])
+
+  // MVP onboarding gate (MVP_PLAN.md; M6.1 cut): first launch walks one
+  // static screen until a workspace AND an API key exist. null = still
+  // checking (render nothing — a brief blank beats flashing the chat UI);
+  // a failed check degrades to the main UI, which already handles both
+  // missing states honestly.
+  const [setupReady, setSetupReady] = useState<boolean | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([window.agento.settings.get(), window.agento.workspaces.get()])
+      .then(([settings, workspaces]) => {
+        if (!cancelled) setSetupReady(settings.hasKey && workspaces.current !== null)
+      })
+      .catch(() => {
+        if (!cancelled) setSetupReady(true)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const refreshSessions = useCallback(async () => {
@@ -393,6 +414,13 @@ function App(): React.JSX.Element {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
+
+  if (setupReady === false) {
+    return <Onboarding onDone={() => setSetupReady(true)} />
+  }
+  if (setupReady === null) {
+    return <SidecarStatusDot />
+  }
 
   return (
     <>
