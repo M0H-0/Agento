@@ -90,6 +90,20 @@ LLM fallback handles only `input` shapes the table can't resolve; its output may
 
 Editing `.docx` is deliberately conservative: text-level replacements whose anchors were read from the same file. Free-form regeneration of styled documents would produce worse artifacts than honest limitations.
 
+### MVP cut (2026-09-10) — the endpoints live TODAY, in cut-down shapes
+
+Per `MVP_PLAN.md` ("supersedes implementation_plan.md for today only"), these MVP variants shipped one day; **the frozen contracts above remain the M4+ full-build target**, and today's code degrades honestly everywhere (docs/05 §6). One commit carries code + this section (AGENTS.md rule 6).
+
+| Endpoint | MVP shape (live) | Notes |
+|---|---|---|
+| `POST /document/extract` | `{path}` → `{text, truncated}` | **pypdf + python-docx instead of Docling** (MVP_PLAN's call; Devlog deviation, STACK.md rows updated). `.pdf .docx .txt .md` only; 200k-char honest cap; 404 missing / 422 unsupported. Docling's structured `/documents/parse` (M4.7) supersedes this. |
+| `POST /embed/embed` | `{texts: [str]}` → `{vectors: [[f32]]}` | NOT in any prior contract — added for the MVP standout feature: on-device `all-MiniLM-L6-v2` via **fastembed** (Apache-2.0, STACK.md row). Batch caps 256 texts / 400k chars; 503 when the model can't load; lazy import + lazy build per §1. |
+| `POST /intent/classify` | `{message}` → `{intent, confidence: "heuristic"}` | Heuristic keyword/regex scorer (§3's LLM design deferred — a same-day model on a classifier is a liability per MVP_PLAN). `confidence` is a provenance literal today, NOT the numeric §2 confidence; `requires_clarification`/`reasoning_tokens` arrive with M4.1. Wired **audit-only** in `chat.ts` (logged, never blocks). |
+| `POST /safety/classify` | `{tool, args}` → `{risk: 0-3, reason}` | Deny-list (traversal, system dirs, credential paths, bulk >25) + rule-table mirror. Field names differ from §2's frozen shape (`risk` vs `risk_level`/`risk_label`, no `requires_approval`/`source`); the TS rule table stays the approval floor — this endpoint is an **audit cross-check only** in the MVP. |
+| `POST /completion/verify` | `{instruction, step_description, actions, before_after}` → `{completion_score, is_complete, missed_segments}` | Same response shape as §2, but the REQUEST is the **flattened** variant the shipped TS client (`app/src/main/agent/verify.ts`, M3.5) actually sends — §2's nested `step` example above is stale and this row is the corrected contract. Heuristic postconditions (targets exist/gone), no LLM judge (M4.3). |
+
+**`/document/summarize` does not exist** — MVP_PLAN listed it, but summarization is an LLM task and the sidecar has no provider access (keys never leave Electron main, per the MVP LLM-placement decision). `summarize_document` extracts via `/document/extract` and completes over the user's configured provider TS-side.
+
 ### `GET /metrics` and `/eval/*`
 Read-only endpoints for the evaluation harness (§5); also runnable offline as `uv run eval` scripts writing `eval/reports/*.md`.
 

@@ -2,7 +2,7 @@
 
 **How this file is used:** every coding agent works through the **current sub-phase's** checkboxes top-to-bottom — one sub-phase at a time (each is sized ≈ half a day). Tick a box only when it is *verifiably* true (run the thing). Never skip acceptance criteria. When a sub-phase's boxes are all ticked, set **Current phase** to the next one. Milestones (M0–M6) are umbrella groupings — their **Milestone gate** is checked when every sub-phase inside is done. If you deviate from `AGENTS.md`/`STACK.md`/`docs/`, append a dated line to the **Devlog** at the bottom explaining what and why.
 
-**Current phase:** M3.7 — Degraded-mode dress rehearsal (code slice done; manual rehearsal open)
+**Current phase:** One-day MVP SHIPPED (2026-09-10, section below) — next: M4 proper. M3.7's manual dress rehearsal is superseded by the MVP run-through; M4.1–M4.3 endpoints exist in MVP-cut shapes (docs/05 "MVP cut" section) and need upgrading to the frozen contracts.
 
 **Never-cut items** (thesis-critical, dropped only by explicit human decision): M3 trust loop · eval harness (M4/M6) · snapshot/undo.
 
@@ -327,6 +327,27 @@
 
 ---
 
+## One-day MVP — shipped 2026-09-10 (per `MVP_PLAN.md`)
+
+**Shipped** (each step committed + gated; `docs/05` "MVP cut" section + STACK.md rows in the same commits):
+
+| Item | State |
+|---|---|
+| `read_document` tool | ✅ risk 0; pypdf/python-docx via sidecar `/document/extract` for `.pdf/.docx`, direct read for text (sidecar-down-safe), 6k-char honest cap |
+| `summarize_document` tool | ✅ risk 0; extract + one-shot LLM completion over the user's provider TS-side (`ctx.llm`) — no LLM or key ever reaches Python |
+| `web_fetch` tool | ✅ risk 0; plain GET (10 s / 2 MB caps), dependency-free HTML→text + `<title>` |
+| `semantic_search` tool (standout) | ✅ risk 0; fastembed `all-MiniLM-L6-v2` on-device via sidecar `/embed/embed`, content-hash-keyed JSON cache in userData, cosine top-k, ranked card with click-to-open (new sandbox-contained `system:open-path` IPC); boot-time model warmup |
+| `/intent/classify` + `/safety/classify` | ✅ heuristic-only (honest `confidence: "heuristic"`), wired **audit-only** — the trust loop is untouched |
+| `/completion/verify` | ✅ heuristic postconditions matching the SHIPPED TS client's flattened contract; M3.5's skipped-stub replaced; read-only runs skip honestly |
+| Onboarding | ✅ one static screen (workspace pick + provider/key), App-level gate, no new IPC |
+| Demo path | ✅ `electron-vite dev` — boot smoke verified (clean build, DB migrated, sidecar healthy on 7891, zero log errors, clean teardown) |
+
+**Explicitly deferred (unchanged from MVP_PLAN):** Docling integration, `edit_document`/`convert_document`, `web_search`, batch flows, eval harness, NSIS/auto-update, multi-step onboarding. Plus MVP-cut deviations: `/document/summarize` endpoint dropped (summarization runs TS-side — keys stay in main); embeddings cache in userData instead of `.agento/` in the workspace (a risk-0 tool must not write there); classifier LLM-fallback not built (heuristic-only, shapes leave room).
+
+**Open for the user (needs a real API key):** the interactive demo run-through (summarize a doc → fetch a URL → "where did I write about pricing?" → approval dialog → verification badge → undo). The automated gates and boot smoke are green; the live model exchange is the one thing automation can't vouch for.
+
+---
+
 ## Devlog
 
 *(append-only; one line per entry: `YYYY-MM-DD — what/why — who`)*
@@ -389,3 +410,4 @@
 - 2026-09-10 — **MVP step 6: `/intent/classify` + `/safety/classify` heuristics, audit-only wiring.** Deliberate scope notes: (1) MVP_PLAN step 5 assumed classifier stubs existed in `plan-run.ts` — none do (grep-verified), so there was nothing to "fill in"; (2) per the approved decision, wiring is audit-only and the trust loop is untouched (`registry.ts`/`plan-run.ts` unmodified, `riskSource` stays `rule_table`). Python `heuristics.py`: intent = keyword/regex scoring over document_read/web_research/organize/file_operation with multi_step on cross-category conflict and honest `unsure` fallback, confidence literal always `"heuristic"`; safety = deny-list first (traversal, system dirs, credential locations, bulk >25 paths → risk 3) then rule-table mirror (read-only→0, create→1, overwrite/move/copy→2, delete→3). TS wiring in `chat.ts` only: fire-and-forget `/intent/classify` per send (logged) + `/safety/classify` per tool outcome (logged on disagreement with the rule table) — never blocking, silent degrade. pytest 31 passed (15 new), vitest/typecheck/lint green — ZCode
 - 2026-09-10 — **MVP step 7: `/completion/verify` live + M3.5's stub verifier replaced.** Python `verify.py`: heuristic postcondition checks over the actions' sandbox-resolved ABSOLUTE paths (create/write/edit/copy → target exists; move → dest exists + source gone; delete → absent; relative paths and read-only tools carry no check), score = passed/checked, plain-language `missed_segments`, nothing-checkable → honest 1.0/true. The endpoint implements the SHIPPED TS client's flattened contract (`{instruction, step_description, actions, before_after}` → `{completion_score, is_complete, missed_segments}`) — docs/05's nested example is reconciled to the client in the docs pass (rule 6). TS: M3.5's `verify: skipped` stub in `chat.ts` replaced by `verifyStep` over `sidecarFetch` (8 s timeout); the audit sink feeds a per-run action list and the new `hasMutatingActions` gate (unit-tested) skips read-only-only runs so badges stay honest in both directions; the one retry re-checks the full action set (no drain). pytest 40 passed (9 new), vitest 196 passed + 2 skipped (2 new), typecheck + lint green — ZCode
 - 2026-09-10 — **MVP step 8: onboarding screen live.** One static full-screen gate (`Onboarding.tsx` + `onboarding*` CSS block, reusing the settings-* field classes): welcome → pick a workspace folder (`workspaces.pick` IS the setter main-side) → provider select + API key entry (same settings IPC as SettingsDialog; plaintext dropped from renderer state on save). App gate: on mount reads `settings.get()` + `workspaces.get()`, shows the screen until `hasKey && current` — null-check renders the status dot only (blank beats a chat-UI flash), a failed check degrades to the main UI which already handles both missing states honestly. No new IPC channels. vitest 196 passed + 2 skipped, typecheck + lint green — ZCode
+- 2026-09-10 — **MVP step 9 / final pass: docs + tracker + boot smoke.** docs/05 gained the dated "MVP cut (2026-09-10)" section (rule 6): the five live endpoints' shapes, the pypdf/python-docx substitution recorded, `/document/summarize` documented as non-existent (summarization is TS-side — keys never reach Python), and the stale nested `/completion/verify` request example corrected to the flattened shape the shipped TS client sends. Current phase updated; shipped-vs-deferred table above. Boot smoke: `npm run dev` launched clean — main/preload built, DB migrated through 0005, sidecar healthy on 7891, zero log errors — and closed via the documented graceful `taskkill /PID` with zero stray processes and the port freed. Final gates: typecheck 0, lint 0, vitest 32 files / 196 passed + 2 skipped (40 new tests across the MVP), pytest 40 passed (37 new). Real-model fastembed download (~90 MB) runs in the background; the first semantic search or the dev-boot warmup completes it if not — ZCode
