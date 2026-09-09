@@ -13,6 +13,7 @@ import { ReadDocumentCard } from './ReadDocumentCard'
 import { ReadFileCard } from './ReadFileCard'
 import { SearchFilesCard } from './SearchFilesCard'
 import { SummarizeDocumentCard } from './SummarizeDocumentCard'
+import { WebFetchCard } from './WebFetchCard'
 import { WriteFileCard } from './WriteFileCard'
 import type { ToolCardStatus } from './BaseToolCard'
 
@@ -83,6 +84,8 @@ function titleFromToolName(toolName: string): string {
       return 'Read document'
     case 'summarize_document':
       return 'Summarize document'
+    case 'web_fetch':
+      return 'Open web page'
     case 'search_files':
       return 'Search files'
     case 'ask_user':
@@ -162,6 +165,17 @@ function asSummarizeDocument(value: unknown): {
   if (!isRecord(value)) return null
   if (typeof value.summary !== 'string' || typeof value.truncated !== 'boolean') return null
   return { summary: value.summary, truncated: value.truncated }
+}
+
+function asWebFetch(value: unknown): {
+  pageTitle?: string
+  text: string
+  truncated: boolean
+} | null {
+  if (!isRecord(value)) return null
+  if (typeof value.text !== 'string' || typeof value.truncated !== 'boolean') return null
+  const pageTitle = typeof value.title === 'string' ? value.title : undefined
+  return { pageTitle, text: value.text, truncated: value.truncated }
 }
 
 function asSearchResults(value: unknown): {
@@ -285,6 +299,19 @@ function renderSummarizeDocumentCard(part: AuiToolPart): React.JSX.Element | nul
   return (
     <SummarizeDocumentCard
       title={titleFromToolName('summarize_document')}
+      status={statusFor(part.status)}
+      toolCallId={part.toolCallId}
+      {...result}
+    />
+  )
+}
+
+function renderWebFetchCard(part: AuiToolPart): React.JSX.Element | null {
+  const result = asWebFetch(part.result)
+  if (!result) return null
+  return (
+    <WebFetchCard
+      title={titleFromToolName('web_fetch')}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -426,6 +453,10 @@ function renderToolCard(part: AuiToolPart): React.JSX.Element {
     const card = renderSummarizeDocumentCard(part)
     if (card) return card
   }
+  if (part.toolName === 'web_fetch') {
+    const card = renderWebFetchCard(part)
+    if (card) return card
+  }
   if (part.toolName === 'search_files') {
     const card = renderSearchFilesCard(part)
     if (card) return card
@@ -510,6 +541,7 @@ export function ToolUIRegistry(): null {
       'read_file',
       'read_document',
       'summarize_document',
+      'web_fetch',
       'search_files',
       'ask_user',
       'write_file',

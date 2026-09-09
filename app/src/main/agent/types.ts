@@ -48,6 +48,12 @@ export interface LlmCapabilities {
   complete(prompt: string): Promise<string>
 }
 
+export interface WebCapabilities {
+  /** HTTP GET returning the raw body (capped) — MVP: web_fetch. Throws a
+   * plain-language Error on network failure. */
+  fetch(url: string): Promise<{ status: number; body: string; contentType: string }>
+}
+
 // The ONLY way a tool reaches the disk. Tools never import node:fs — the
 // registry wraps every mutation behind this facade, which itself refuses any
 // path outside the workspace root (defense in depth on top of the sandbox's
@@ -124,6 +130,8 @@ export interface ToolExecutionContext {
   documents?: DocumentCapabilities
   /** MVP: one-shot LLM completion over the run's provider/model (IPC-injected). */
   llm?: LlmCapabilities
+  /** MVP: plain HTTP GET for web_fetch (IPC-injected, Node global fetch). */
+  web?: WebCapabilities
 }
 
 export interface ToolResult<TOutput = unknown> {

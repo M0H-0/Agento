@@ -8,7 +8,8 @@ import type {
   DocumentCapabilities,
   LlmCapabilities,
   SnapshotStore,
-  ToolExecutionContext
+  ToolExecutionContext,
+  WebCapabilities
 } from './types'
 
 // Per-run ToolExecutionContext builder (docs/03 §5 "ctx"). The factory takes
@@ -66,6 +67,8 @@ export interface RunContextDeps {
   /** MVP (MVP_PLAN.md step 3): one-shot LLM completion over the run's
    * provider/model. Injected by the IPC layer; absent in tests. */
   llm?: LlmCapabilities
+  /** MVP (MVP_PLAN.md step 4): plain HTTP GET for web_fetch. IPC-injected. */
+  web?: WebCapabilities
 }
 
 export interface PlanStepRef {
@@ -435,7 +438,8 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
     requestUserAnswer,
     fs,
     documents: deps.documents,
-    llm: deps.llm
+    llm: deps.llm,
+    web: deps.web
   }
 
   return {

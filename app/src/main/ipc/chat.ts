@@ -33,6 +33,7 @@ import {
   runPlanFirstTurn,
   searchFilesTool,
   summarizeDocumentTool,
+  webFetchTool,
   writeFileTool
 } from '../agent'
 import type { PlanStep, RunContextBundle, ToolRegistry } from '../agent'
@@ -201,6 +202,26 @@ function llmCompleter(model: LanguageModel): (prompt: string) => Promise<string>
   }
 }
 
+// MVP (MVP_PLAN.md step 4): plain HTTP GET for web_fetch over Node's global
+// fetch — 10 s timeout, 2 MB body cap, decoded as UTF-8. Network failures
+// throw; the tool catches and answers honestly.
+const WEB_FETCH_TIMEOUT_MS = 10_000
+const WEB_FETCH_MAX_BYTES = 2_000_000
+
+async function webFetch(
+  url: string
+): Promise<{ status: number; body: string; contentType: string }> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(WEB_FETCH_TIMEOUT_MS) })
+  const buffer = await response.arrayBuffer()
+  const capped =
+    buffer.byteLength > WEB_FETCH_MAX_BYTES ? buffer.slice(0, WEB_FETCH_MAX_BYTES) : buffer
+  return {
+    status: response.status,
+    body: new TextDecoder('utf-8').decode(capped),
+    contentType: response.headers.get('content-type') ?? ''
+  }
+}
+
 // Per-run active context. The run ctx exposes the ask_user answer resolver
 // (so the `tool:answer` IPC can settle the pending promise) and the abort
 // callback (so the renderer-initiated `chat:stop` aborts the AI SDK stream
@@ -227,6 +248,7 @@ function buildGlobalRegistry(): ReturnType<typeof createToolRegistry> {
   registry.define(readFileTool)
   registry.define(readDocumentTool)
   registry.define(summarizeDocumentTool)
+  registry.define(webFetchTool)
   registry.define(searchFilesTool)
   registry.define(askUserTool)
   registry.define(writeFileTool)
@@ -399,6 +421,8 @@ export function registerChatIpc(): void {
       documents: { extract: extractDocument },
       // MVP (MVP_PLAN.md step 3): summarize_document's one-shot completion.
       llm: { complete: llmCompleter(languageModel) },
+      // MVP (MVP_PLAN.md step 4): web_fetch's plain HTTP GET.
+      web: { fetch: webFetch },
       onSnapshot: (entry) => {
         const row = recordCheckpoint({
           sessionId,
