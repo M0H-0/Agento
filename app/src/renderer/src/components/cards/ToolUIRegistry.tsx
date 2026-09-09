@@ -12,6 +12,7 @@ import { MovePathCard } from './MovePathCard'
 import { ReadDocumentCard } from './ReadDocumentCard'
 import { ReadFileCard } from './ReadFileCard'
 import { SearchFilesCard } from './SearchFilesCard'
+import { SummarizeDocumentCard } from './SummarizeDocumentCard'
 import { WriteFileCard } from './WriteFileCard'
 import type { ToolCardStatus } from './BaseToolCard'
 
@@ -80,6 +81,8 @@ function titleFromToolName(toolName: string): string {
       return 'Read file'
     case 'read_document':
       return 'Read document'
+    case 'summarize_document':
+      return 'Summarize document'
     case 'search_files':
       return 'Search files'
     case 'ask_user':
@@ -150,6 +153,15 @@ function asReadDocument(value: unknown): {
   if (!isRecord(value)) return null
   if (typeof value.text !== 'string' || typeof value.truncated !== 'boolean') return null
   return { text: value.text, truncated: value.truncated }
+}
+
+function asSummarizeDocument(value: unknown): {
+  summary: string
+  truncated: boolean
+} | null {
+  if (!isRecord(value)) return null
+  if (typeof value.summary !== 'string' || typeof value.truncated !== 'boolean') return null
+  return { summary: value.summary, truncated: value.truncated }
 }
 
 function asSearchResults(value: unknown): {
@@ -260,6 +272,19 @@ function renderReadDocumentCard(part: AuiToolPart): React.JSX.Element | null {
   return (
     <ReadDocumentCard
       title={titleFromToolName('read_document')}
+      status={statusFor(part.status)}
+      toolCallId={part.toolCallId}
+      {...result}
+    />
+  )
+}
+
+function renderSummarizeDocumentCard(part: AuiToolPart): React.JSX.Element | null {
+  const result = asSummarizeDocument(part.result)
+  if (!result) return null
+  return (
+    <SummarizeDocumentCard
+      title={titleFromToolName('summarize_document')}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -397,6 +422,10 @@ function renderToolCard(part: AuiToolPart): React.JSX.Element {
     const card = renderReadDocumentCard(part)
     if (card) return card
   }
+  if (part.toolName === 'summarize_document') {
+    const card = renderSummarizeDocumentCard(part)
+    if (card) return card
+  }
   if (part.toolName === 'search_files') {
     const card = renderSearchFilesCard(part)
     if (card) return card
@@ -480,6 +509,7 @@ export function ToolUIRegistry(): null {
       'list_dir',
       'read_file',
       'read_document',
+      'summarize_document',
       'search_files',
       'ask_user',
       'write_file',

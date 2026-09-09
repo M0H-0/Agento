@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import type { LanguageModel, UIMessage, UIMessageChunk } from 'ai'
+import { generateText } from 'ai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { getSettings, resolveProviderKey } from '../settings'
@@ -31,6 +32,7 @@ import {
   readDocumentTool,
   runPlanFirstTurn,
   searchFilesTool,
+  summarizeDocumentTool,
   writeFileTool
 } from '../agent'
 import type { PlanStep, RunContextBundle, ToolRegistry } from '../agent'
@@ -182,6 +184,23 @@ function resolveLanguageModel(provider: string, model: string, apiKey: string): 
   throw new Error(`Unsupported provider: ${provider}`)
 }
 
+// MVP (MVP_PLAN.md step 3): the one-shot LLM capability backing ctx.llm —
+// the run's configured provider/model, called from the Electron main process
+// only (keys never cross to the sidecar). Failures become plain-language
+// errors the tool answers honestly.
+function llmCompleter(model: LanguageModel): (prompt: string) => Promise<string> {
+  return async (prompt: string) => {
+    try {
+      const { text } = await generateText({ model, prompt })
+      return text
+    } catch {
+      throw new Error(
+        'The model call for this step failed. Check your connection and provider settings.'
+      )
+    }
+  }
+}
+
 // Per-run active context. The run ctx exposes the ask_user answer resolver
 // (so the `tool:answer` IPC can settle the pending promise) and the abort
 // callback (so the renderer-initiated `chat:stop` aborts the AI SDK stream
@@ -207,6 +226,7 @@ function buildGlobalRegistry(): ReturnType<typeof createToolRegistry> {
   registry.define(listDirTool)
   registry.define(readFileTool)
   registry.define(readDocumentTool)
+  registry.define(summarizeDocumentTool)
   registry.define(searchFilesTool)
   registry.define(askUserTool)
   registry.define(writeFileTool)
@@ -377,6 +397,8 @@ export function registerChatIpc(): void {
       // MVP (MVP_PLAN.md step 2): .pdf/.docx extraction rides the sidecar.
       // Failures throw plain-language errors the tool answers honestly.
       documents: { extract: extractDocument },
+      // MVP (MVP_PLAN.md step 3): summarize_document's one-shot completion.
+      llm: { complete: llmCompleter(languageModel) },
       onSnapshot: (entry) => {
         const row = recordCheckpoint({
           sessionId,

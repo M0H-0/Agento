@@ -6,6 +6,7 @@ import type {
   ApprovalRequest,
   ApprovalDecision,
   DocumentCapabilities,
+  LlmCapabilities,
   SnapshotStore,
   ToolExecutionContext
 } from './types'
@@ -62,6 +63,9 @@ export interface RunContextDeps {
    * .pdf/.docx. Injected by the IPC layer; absent in tests/degraded mode —
    * tools then answer honestly for binary formats (docs/05 §6). */
   documents?: DocumentCapabilities
+  /** MVP (MVP_PLAN.md step 3): one-shot LLM completion over the run's
+   * provider/model. Injected by the IPC layer; absent in tests. */
+  llm?: LlmCapabilities
 }
 
 export interface PlanStepRef {
@@ -430,7 +434,8 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
     requestApproval,
     requestUserAnswer,
     fs,
-    documents: deps.documents
+    documents: deps.documents,
+    llm: deps.llm
   }
 
   return {

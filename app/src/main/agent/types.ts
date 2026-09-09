@@ -42,6 +42,12 @@ export interface DocumentCapabilities {
   extract(path: string): Promise<{ text: string; truncated: boolean }>
 }
 
+export interface LlmCapabilities {
+  /** One-shot completion over the run's configured provider/model (MVP:
+   * summarize_document). Throws a plain-language Error on failure. */
+  complete(prompt: string): Promise<string>
+}
+
 // The ONLY way a tool reaches the disk. Tools never import node:fs — the
 // registry wraps every mutation behind this facade, which itself refuses any
 // path outside the workspace root (defense in depth on top of the sandbox's
@@ -116,6 +122,8 @@ export interface ToolExecutionContext {
   fs: WorkspaceFs
   /** MVP: sidecar-backed extraction for .pdf/.docx (injected by the IPC layer). */
   documents?: DocumentCapabilities
+  /** MVP: one-shot LLM completion over the run's provider/model (IPC-injected). */
+  llm?: LlmCapabilities
 }
 
 export interface ToolResult<TOutput = unknown> {
