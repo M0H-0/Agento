@@ -47,10 +47,19 @@ export async function openDatabase(
   database.pragma('synchronous = NORMAL')
   // FKs are off by default in SQLite and per-connection: the messages ->
   // sessions reference in docs/03 §8 only exists if this is set on every open.
-  database.pragma('foreign_keys = ON')
+  // They stay OFF while the drizzle-kit migrations run: table-rebuild
+  // migrations (e.g. 0006 recreating `sessions`) carry their own
+  // `PRAGMA foreign_keys=OFF`, but the migrator executes each file inside a
+  // transaction — and SQLite ignores FK-pragma changes inside transactions —
+  // so `DROP TABLE` of a referenced parent fails with SQLITE_CONSTRAINT
+  // on any database that already holds data. Toggling at the connection
+  // level, outside the migrator's transaction, actually takes effect; FKs
+  // are re-enabled before any repository touches the DB.
+  database.pragma('foreign_keys = OFF')
 
   driz = drizzle(database, { schema })
   await migrate(driz, { migrationsFolder })
+  database.pragma('foreign_keys = ON')
 
   db = database
   return db
