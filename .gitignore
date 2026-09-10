@@ -15,3 +15,9 @@ __pycache__/
 # Local-only project files — never pushed to GitHub (history preserved on backup/full-history)
 phase-reports/
 SESSION-*.md
+session-*.md
+
+# Planning scratch docs (live spec work; the durable specs live in docs/)
+MVP_PLAN.md
+implementation_plan.md
+PROJECT_OVERVIEW.md
