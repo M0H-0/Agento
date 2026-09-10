@@ -51,7 +51,7 @@ import {
   emitUsageEvent,
   emitVerificationFinished
 } from './agent-events'
-import { FULL_SYSTEM_PROMPT } from './system-prompt'
+import { buildSystemPrompt } from './system-prompt'
 import { classifyIntent, classifySafety, embedTexts, extractDocument } from './sidecar-calls'
 
 // M3.1: the run loop itself (streamText calls, stream forwarding, provider
@@ -564,7 +564,7 @@ export function registerChatIpc(): void {
     // / accumulatorFailed), and a stop lands as outcome.aborted.
     const outcome = await runPlanFirstTurn({
       model: languageModel,
-      system: FULL_SYSTEM_PROMPT,
+      system: buildSystemPrompt(workspaceRoot || null),
       messages,
       registry: globalRegistry,
       ctx: run.ctx,

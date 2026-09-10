@@ -1,21 +1,29 @@
-// Full system prompt — docs/03 §9, verbatim. The M1.x chat ran a MINIMAL
-// prompt (just LANGUAGE + RULES excerpt) because none of the tool/workflow
-// machinery existed; the WORKFLOW section lands here with M2.4 so the model
-// actually has tools to call when the prompt asks for them.
+// Full system prompt — docs/03 §9, verbatim (see BASE_SYSTEM_PROMPT). The
+// M1.x chat ran a MINIMAL prompt (just LANGUAGE + RULES excerpt) because none
+// of the tool/workflow machinery existed; the WORKFLOW section lands here
+// with M2.4 so the model actually has tools to call when the prompt asks for
+// them.
 //
-// Plain-text constant — `streamText({ system })` takes a string. Compact by
+// Plain-text builder — `streamText({ system })` takes a string. Compact by
 // design (docs/03 §9: "compact — policy only; mechanics live in code"). The
 // system prompt and tool descriptions are provider-neutral (docs/03 §10), so
 // no per-vendor forks are needed.
 //
-// When the user has not picked a workspace, the model is told to ask for one
-// via ask_user — a workspace is a prerequisite for any file tool. The
-// system prompt deliberately does NOT enumerate per-tool rules; that
+// The workspace root is resolved per run in ipc/chat.ts
+// (getCurrentWorkspace() ?? '') and threaded into the tool context — it is
+// also threaded here so the model knows a workspace is already set. Without
+// it the model asked which folder to explore even with one picked in the
+// sidebar, because WORKFLOW step 1 told it to ask when none is set.
+//
+// When the user has not picked a workspace (null), the model is told to ask
+// for one via ask_user — a workspace is a prerequisite for any file tool.
+// The system prompt deliberately does NOT enumerate per-tool rules; that
 // information lives in each tool's LLM-facing `description` (docs/03 §5:
 // "One definition drives the LLM schema, the card, the risk gate, and the
 // logger").
 
-export const FULL_SYSTEM_PROMPT = `You are Agento, a careful AI assistant that works with the user's files,
+// Base text — kept verbatim so docs/03 §9 and the code stay aligned.
+const BASE_SYSTEM_PROMPT = `You are Agento, a careful AI assistant that works with the user's files,
 documents, and the web. The user is not necessarily technical. Reply in clear,
 plain language; add detail only when asked or clearly wanted.
 
@@ -38,3 +46,24 @@ RULES
 - There is no terminal or shell. Code-related requests are fulfilled by writing code into files.
 - Be frugal: read only what you need, prefer search over bulk reads, keep edits targeted.
 - For batch work, say how many files are involved before starting.`
+
+const UNDERSTAND_WITH_ASK =
+  '1. UNDERSTAND — If the request is ambiguous or missing something essential, ask one clear question (ask_user) first. Never guess. If no workspace is set, ask the user to pick one before reading or changing files.'
+const UNDERSTAND_WITHOUT_ASK =
+  '1. UNDERSTAND — If the request is ambiguous or missing something essential, ask one clear question (ask_user) first. Never guess.'
+
+/**
+ * Build the system prompt for a run. With a workspace set, the prompt names
+ * the folder plainly and drops the "ask the user to pick one" clause (the
+ * model must not ask which folder to use — file tools already operate inside
+ * it). Without a workspace (null), the base text is returned verbatim so the
+ * model asks the user to pick one.
+ */
+export function buildSystemPrompt(workspaceRoot: string | null): string {
+  if (!workspaceRoot) {
+    return BASE_SYSTEM_PROMPT
+  }
+  const withoutAsk = BASE_SYSTEM_PROMPT.replace(UNDERSTAND_WITH_ASK, UNDERSTAND_WITHOUT_ASK)
+  const workspaceSection = `WORKSPACE\nThe current workspace folder is ${workspaceRoot}. File tools already operate inside it — do not ask which folder to use; pass . for the workspace root in tool calls.\n`
+  return withoutAsk.replace('\n\nLANGUAGE', `\n\n${workspaceSection}\nLANGUAGE`)
+}
