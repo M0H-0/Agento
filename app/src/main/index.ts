@@ -139,7 +139,13 @@ app.whenReady().then(async () => {
 
   // Sidecar lifecycle (docs/02 §2.4): per-launch token, spawn, /health polling.
   // Dev layout: services/intelligence sits beside app/; packaged layout is M6.6.
-  startSidecar(generateSidecarToken(), resolve(app.getAppPath(), '..', 'services', 'intelligence'))
+  // The fastembed cache is pinned to a durable app-owned dir (a TEMP default
+  // would get cleaned) — see sidecar.ts for the offline-mode rationale.
+  startSidecar(
+    generateSidecarToken(),
+    resolve(app.getAppPath(), '..', 'services', 'intelligence'),
+    resolve(app.getPath('userData'), 'fastembed')
+  )
 
   createWindow()
 

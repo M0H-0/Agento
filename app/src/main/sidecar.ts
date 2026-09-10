@@ -125,7 +125,7 @@ async function poll(): Promise<void> {
   }
 }
 
-export function startSidecar(token: string, sidecarCwd: string): void {
+export function startSidecar(token: string, sidecarCwd: string, fastembedCachePath?: string): void {
   if (child !== null) return
   authToken = token
   bootDeadline = Date.now() + BOOT_CEILING_MS
@@ -138,7 +138,21 @@ export function startSidecar(token: string, sidecarCwd: string): void {
     ['run', 'uvicorn', 'agento_intelligence.main:app', '--port', String(SIDECAR_PORT)],
     {
       cwd: sidecarCwd,
-      env: { ...process.env, AGENTO_INTELLIGENCE_TOKEN: token, UV_LINK_MODE: 'copy' },
+      env: {
+        ...process.env,
+        AGENTO_INTELLIGENCE_TOKEN: token,
+        UV_LINK_MODE: 'copy',
+        // MVP semantic search (2026-09-10): fastembed 0.8 defaults its cache
+        // to the TEMP directory (Windows cleanup would delete the ~90 MB
+        // model), so the caller pins a durable app-owned path. HF_HUB_OFFLINE=1:
+        // the hub's file CDN hangs indefinitely on this network (the API
+        // answers but file downloads stall — no error, so fastembed's GCS
+        // fallback never fires), while its GCS mirror is fast. The model is
+        // seeded manually into the cache (Devlog); a fresh machine must seed
+        // it once or semantic_search answers 503 honestly.
+        ...(fastembedCachePath !== undefined ? { FASTEMBED_CACHE_PATH: fastembedCachePath } : {}),
+        HF_HUB_OFFLINE: '1'
+      },
       windowsHide: true,
       stdio: ['ignore', 'ignore', 'pipe']
     }
