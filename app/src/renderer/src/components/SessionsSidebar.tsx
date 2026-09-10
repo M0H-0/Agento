@@ -1,4 +1,5 @@
 import type { SessionSummary } from '../chat/transport'
+import SidecarStatusDot from './SidecarStatusDot'
 import WorkspacePicker from './WorkspacePicker'
 
 interface SessionsSidebarProps {
@@ -6,6 +7,7 @@ interface SessionsSidebarProps {
   activeSessionId: string | null
   onNewChat: () => void
   onOpenSession: (session: SessionSummary) => void
+  onOpenSettings: () => void
 }
 
 // Relative timestamps for the session list — small local helper, no
@@ -31,13 +33,14 @@ function formatUsage(usage: { inputTokens: number; outputTokens: number }): stri
 }
 
 // Left rail (docs/04 §2/§4): new chat + chronological sessions, most recent
-// first. Minimal M1.3 cut — the Workspace section, delete/rename and the
-// plan/changes columns arrive in later phases.
+// first. The UI-polish shell pins Settings + the sidecar status dot to this
+// rail's footer (was floating top-right chrome over the panels).
 function SessionsSidebar({
   sessions,
   activeSessionId,
   onNewChat,
-  onOpenSession
+  onOpenSession,
+  onOpenSettings
 }: SessionsSidebarProps): React.JSX.Element {
   return (
     <nav className="sessions-sidebar" aria-label="Sessions">
@@ -47,6 +50,7 @@ function SessionsSidebar({
       <button type="button" className="sessions-new-chat" onClick={onNewChat}>
         + New chat
       </button>
+      <h2 className="sessions-section-label">Conversations</h2>
       <ul className="sessions-list">
         {sessions.map((session) => (
           <li key={session.id}>
@@ -69,6 +73,17 @@ function SessionsSidebar({
           </li>
         ))}
       </ul>
+      <footer className="sessions-footer">
+        <SidecarStatusDot />
+        <button
+          type="button"
+          className="sessions-footer-settings"
+          onClick={onOpenSettings}
+          aria-haspopup="dialog"
+        >
+          Settings
+        </button>
+      </footer>
     </nav>
   )
 }

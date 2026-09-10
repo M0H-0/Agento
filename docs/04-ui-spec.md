@@ -42,9 +42,9 @@ Fixed three-column shell; collapsible sidebars; min window 960×640.
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Left — Sessions sidebar:** new task, chronological sessions, **Workspace** section (name, file count, top-level tree, change button).
-- **Center — Thread:** assistant-ui's transcript: user messages, streaming assistant markdown, action cards inline.
-- **Right — Plan panel:** task plan during runs; becomes the **Changes** list (with undo) when idle; collapses when unused.
+- **Left — Sessions sidebar:** workspace chip, new task, chronological sessions, small-caps "Conversations" label; **Settings** + sidecar status dot pinned in a hairline-bordered footer (image-2-style app chrome; was floating top-right).
+- **Center — Thread:** assistant-ui's transcript in its own flex column (`.chat-main`), centered at ~760px — messages can never render under a panel.
+- **Right — Right rail:** one in-flow column (`.right-rail`) holding the **Plan** panel above the **Changes** panel (with undo). Plan caps at half the rail height and scrolls internally; Changes fills the rest and scrolls. Plan renders only while a plan is live, Changes only once a session exists (until then the rail shows whichever is available); the rail collapses entirely when unused.
 - **Bottom — Composer:** assistant-ui composer, autosize, mode chip (`Auto`/`Plan`), model chip, send/stop.
 
 ## 3. Components
@@ -121,6 +121,7 @@ First run: welcome (+ privacy statement) → pick workspace → add key ("or use
 - ChangesPanel — session checkpoint list replacing ChangesStub: rows sharing a toolCallId render as one item (a move is one "Moved A → B" row), friendly action + relative time, per-item `undo ↩` behind an inline confirm, Undo all behind a confirm, reverted rows dim + "restored ✓", eviction refusals surface as honest errors — assistant-ui has no changes/history surface (M2.8).
 - ReadDocumentCard / SummarizeDocumentCard / WebFetchCard — per-tool card bodies on the `setToolUI` slots for the MVP read-only tools: extracted text preview (with truncation meta), plain-language summary, fetched page text with the page `<title>` in the meta — assistant-ui ships the slots but no document/web bodies; built fresh per §3.1 (no code aesthetics) (MVP 2026-09-10).
 - SemanticSearchCard — ranked results (workspace-relative path, score %, snippet) each rendered as a button that opens the file with the OS default app via `system:open-path`; empty state points at search_files for exact-text matching — no assistant-ui or registry equivalent exists; built fresh per §3.1 (MVP 2026-09-10).
+- UI polish pass (2026-09-10) — **no new components adopted** (AGENTS.md rule 4 ladder never needed, restructure only): the fixed-position Plan/Changes overlays became in-flow children of one `aside.right-rail` in `App.tsx` (thread wrapped in its own `main.chat-main` flex column; rail collapses when unused), and Settings + the sidecar status dot moved into the SessionsSidebar footer.
 
 ## 5. Copy rules
 

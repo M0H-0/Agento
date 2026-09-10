@@ -424,51 +424,51 @@ function App(): React.JSX.Element {
 
   return (
     <>
-      <SidecarStatusDot />
       <SessionsSidebar
         sessions={sessions}
         activeSessionId={activeSessionId}
         onNewChat={startNewChat}
         onOpenSession={openSession}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
-      <button
-        type="button"
-        className="settings-button"
-        onClick={() => setSettingsOpen(true)}
-        aria-haspopup="dialog"
-      >
-        Settings
-      </button>
-      {/* M3.1: while a plan is visible in the right rail, the changes panel
-          shifts below it — both are fixed-position and would otherwise
-          overlap (`.changes-panel--plan-open` in main.css). */}
-      <ChangesPanel
-        sessionId={activeSessionId}
-        refreshKey={changesRefreshKey}
-        shifted={plan !== null}
-      />
+      {/* Real three-column shell (UI_POLISH_PLAN.md): the thread lives in its
+          own flex column (.chat-main), so messages can never render under the
+          panels; the right rail is in flow — Plan above Changes — so the two
+          panels can never overlap either. */}
+      <main className="chat-main">
+        <ChatView
+          key={threadEpoch}
+          getSessionId={getSessionId}
+          onSessionCreated={onSessionCreated}
+          onSettled={onSettled}
+          initialMessages={pendingMessages}
+          registerDispose={registerDispose}
+        />
+      </main>
+      {/* The rail collapses when there is no plan and no active session
+          (docs/04 §2); ChangesPanel itself returns null without a session.
+          Plain div wrapper — deliberately not a landmark: PlanPanel and
+          ChangesPanel are the complementary regions (each has its own
+          aria-label), avoiding three nested complementary landmarks. */}
+      {plan !== null || activeSessionId !== null ? (
+        <div className="right-rail">
+          {plan !== null ? (
+            <PlanPanel
+              steps={plan.steps}
+              updated={plan.updated}
+              awaitingStart={!planStartRequested}
+              onStart={handlePlanStart}
+              statuses={plan.statuses}
+              verification={plan.verification}
+              errors={plan.errors}
+            />
+          ) : null}
+          <ChangesPanel sessionId={activeSessionId} refreshKey={changesRefreshKey} />
+        </div>
+      ) : null}
       {approval !== null ? (
         <ApprovalDialog request={approval} onRespond={handleApprovalRespond} />
       ) : null}
-      {plan !== null ? (
-        <PlanPanel
-          steps={plan.steps}
-          updated={plan.updated}
-          awaitingStart={!planStartRequested}
-          onStart={handlePlanStart}
-          statuses={plan.statuses}
-          verification={plan.verification}
-          errors={plan.errors}
-        />
-      ) : null}
-      <ChatView
-        key={threadEpoch}
-        getSessionId={getSessionId}
-        onSessionCreated={onSessionCreated}
-        onSettled={onSettled}
-        initialMessages={pendingMessages}
-        registerDispose={registerDispose}
-      />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </>
   )

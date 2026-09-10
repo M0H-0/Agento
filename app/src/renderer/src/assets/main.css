@@ -133,8 +133,10 @@
   }
 }
 
-/* App shell (docs/04 §2): minimal M1.3 cut — a fixed left sessions rail plus
-   the thread. The Workspace section and the plan/changes columns arrive later. */
+/* App shell (docs/04 §2): a real three-column flex row — sessions rail ·
+   thread column (.chat-main) · right rail (Plan above Changes). Everything is
+   in flow, so overlap is impossible by construction; the right rail only
+   renders while a plan or an active session exists. */
 .sessions-sidebar {
   display: flex;
   flex-direction: column;
@@ -267,7 +269,7 @@
 /* Primary action (docs/04 §7: one indigo accent). */
 .sessions-new-chat {
   padding: 0.45rem 0.6rem;
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   border-radius: 0.5rem;
   background: var(--primary);
   color: var(--primary-foreground);
@@ -281,6 +283,17 @@
 
 .sessions-new-chat:hover {
   background: color-mix(in oklab, var(--primary) 90%, transparent);
+}
+
+/* Small-caps section label above the session list (matches the
+   .workspace-chip-label treatment). */
+.sessions-section-label {
+  margin: 0;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
+  user-select: none;
 }
 
 .sessions-list {
@@ -299,7 +312,7 @@
   flex-direction: column;
   gap: 0.1rem;
   width: 100%;
-  padding: 0.4rem 0.55rem;
+  padding: 0.35rem 0.5rem;
   border: 1px solid transparent;
   border-radius: 0.5rem;
   background: transparent;
@@ -340,13 +353,37 @@
   color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
 }
 
+/* UI polish (UI_POLISH_PLAN.md): the thread's own flex column — flex:1 fills
+   whatever the fixed-width rails leave; min-width:0 lets the centered thread
+   shrink before anything wraps or overflows. */
+.chat-main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+/* Right rail: in flow (not fixed), so Plan + Changes can never overlap. The
+   column collapses entirely when App renders no rail (docs/04 §2). */
+.right-rail {
+  width: 17rem;
+  flex-shrink: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.9rem 0.75rem;
+  border-left: 1px solid var(--border);
+  box-sizing: border-box;
+  min-height: 0;
+}
+
 .thread {
   position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
   min-width: 0;
-  max-width: 56rem;
+  max-width: 48rem;
   height: 100%;
   margin: 0 auto;
   padding: 1rem;
@@ -777,18 +814,15 @@
   background: color-mix(in oklab, var(--foreground) 8%, var(--secondary));
 }
 
-/* Sidecar status dot (M0.5) — fixed app chrome, top-right. Semantic green/red
-   only for status (docs/04 §7); neutral = starting. */
+/* Sidecar status dot (M0.5) — app chrome in the sidebar footer. Semantic
+   green/red only for status (docs/04 §7); neutral = starting. */
 .status-dot {
-  position: fixed;
-  top: 0.9rem;
-  right: 1rem;
+  flex-shrink: 0;
   width: 0.6rem;
   height: 0.6rem;
   border-radius: 9999px;
   background: var(--muted-foreground);
   transition: background 160ms ease;
-  z-index: 1000;
 }
 
 .status-dot--healthy {
@@ -799,12 +833,18 @@
   background: var(--destructive);
 }
 
-/* Settings (M1.1) — fixed chrome entry beside the status dot + modal dialog
-   (docs/04 §3.7, Providers section only; M6.3 adds the other sections). */
-.settings-button {
-  position: fixed;
-  top: 0.55rem;
-  right: 1.9rem;
+/* Settings (M1.1) + status dot live in the sidebar footer (UI polish shell;
+   was floating top-right chrome). Modal dialog (docs/04 §3.7, Providers
+   section only; M6.3 adds the other sections). */
+.sessions-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.4rem;
+  border-top: 1px solid var(--border);
+}
+
+.sessions-footer-settings {
   padding: 0.15rem 0.45rem;
   border: none;
   border-radius: 0.4rem;
@@ -814,10 +854,9 @@
   font-size: 0.75rem;
   cursor: pointer;
   transition: background 150ms ease;
-  z-index: 1000;
 }
 
-.settings-button:hover {
+.sessions-footer-settings:hover {
   color: var(--accent-foreground);
   background: var(--accent);
 }
@@ -1409,16 +1448,13 @@
   font-size: 0.78rem;
 }
 
-/* M2.5: Changes stub (full panel is M3) — a right-rail list of the
-   session's checkpoints. */
 /* Changes panel (M2.8, docs/04 §3.4): session checkpoints with per-item undo
-   and Undo all. Replaces the M2.5 ChangesStub styles. */
+   and Undo all. In-flow child of .right-rail since the UI-polish shell:
+   fills whatever the Plan panel leaves; its __list scrolls internally. */
 .changes-panel {
-  position: fixed;
-  top: 3.2rem;
-  right: 0.75rem;
-  bottom: 6.5rem;
-  width: 15rem;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
@@ -1452,6 +1488,8 @@
 }
 
 .changes-panel__list {
+  flex: 1;
+  min-height: 0;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1511,14 +1549,13 @@
   font-size: 0.78rem;
 }
 
-/* M3.1: Plan panel (docs/04 §3.3) — top-right rail; the changes panel shifts
-   below it while a plan is visible (both fixed-position, same rail). */
+/* M3.1: Plan panel (docs/04 §3.3) — top of the in-flow right rail; capped at
+   half the rail height with an internally scrolling __list so it can never
+   hide the Changes panel (the old 45vh fixed-offset hack is gone). */
 .plan-panel {
-  position: fixed;
-  top: 3.2rem;
-  right: 0.75rem;
-  width: 15rem;
-  max-height: 45vh;
+  flex-shrink: 0;
+  max-height: 50%;
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
@@ -1529,10 +1566,6 @@
   color: var(--card-foreground);
   overflow: hidden;
   font-size: 0.82rem;
-}
-
-.changes-panel--plan-open {
-  top: calc(3.2rem + 45vh + 0.5rem);
 }
 
 .plan-panel__title {
@@ -1566,6 +1599,8 @@
 }
 
 .plan-panel__list {
+  flex: 1 1 auto;
+  min-height: 0;
   margin: 0;
   padding: 0;
   list-style: none;

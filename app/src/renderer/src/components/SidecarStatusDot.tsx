@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 
 type Status = 'starting' | 'healthy' | 'unhealthy'
 
-// Fixed chrome dot reflecting the intelligence sidecar's /health (docs/02
-// §2.4): gray while starting, green when healthy, red when unhealthy.
+// Chrome dot reflecting the intelligence sidecar's /health (docs/02 §2.4):
+// gray while starting, green when healthy, red when unhealthy. Rendered in
+// the sessions sidebar footer since the UI-polish shell (docs/04 §2).
 function SidecarStatusDot(): React.JSX.Element {
   const [status, setStatus] = useState<Status>('starting')
   const [detail, setDetail] = useState<string | undefined>(undefined)

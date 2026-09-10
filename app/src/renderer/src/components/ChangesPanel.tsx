@@ -5,12 +5,12 @@ import type { ChangeEntry } from '../../../preload/index'
 // and Undo all. Rows sharing a groupKey are one mutation (M2.7: a move lands
 // a source row + a dest row) and render as a single item whose undo fans out
 // over the group's rows oldest-first — the same order the engine's undo-all
-// uses (snapshot order restores both sides of a move correctly).
+// uses (snapshot order restores both sides of a move correctly). Since the
+// UI-polish shell, the panel is an in-flow child of the right rail (nothing
+// fixed, nothing overlaps) and fills whatever the Plan panel leaves.
 export interface ChangesPanelProps {
   sessionId: string | null
   refreshKey: number
-  /** M3.1: shift below the PlanPanel when one is visible (both fixed right-rail). */
-  shifted?: boolean
 }
 
 interface ChangeGroup {
@@ -88,8 +88,7 @@ function relativeTime(createdAt: string): string {
 
 export function ChangesPanel({
   sessionId,
-  refreshKey,
-  shifted
+  refreshKey
 }: ChangesPanelProps): React.JSX.Element | null {
   const [entries, setEntries] = useState<ChangeEntry[]>([])
   const [activeCount, setActiveCount] = useState(0)
@@ -202,10 +201,7 @@ export function ChangesPanel({
   const groups = groupEntries(entries)
 
   return (
-    <aside
-      className={shifted ? 'changes-panel changes-panel--plan-open' : 'changes-panel'}
-      aria-label="Changes"
-    >
+    <aside className="changes-panel" aria-label="Changes">
       <h2 className="changes-panel__title">
         Changes{' '}
         {activeCount > 0 ? <span className="changes-panel__count">{activeCount}</span> : null}
