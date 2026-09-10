@@ -82,13 +82,26 @@ const verificationFinishedEventSchema = z.object({
   missedSegments: z.array(z.string()).optional()
 })
 
+// Auto-generated chat title landed (docs/03 §4) — mirrors the main-side
+// sessionTitleUpdatedEventSchema. Idempotent by sessionId; the sidebar applies
+// it even for a session that is no longer active.
+const sessionTitleUpdatedEventSchema = z.object({
+  type: z.literal('session/title_updated'),
+  sessionId: z.string().min(1),
+  runId: z.string().min(1),
+  ts: z.number(),
+  seq: z.number().int().min(0),
+  title: z.string().min(1)
+})
+
 export const agentEventSchema = z.discriminatedUnion('type', [
   usageEventSchema,
   planCreatedEventSchema,
   planStepUpdatedEventSchema,
   approvalRequestedEventSchema,
   approvalResolvedEventSchema,
-  verificationFinishedEventSchema
+  verificationFinishedEventSchema,
+  sessionTitleUpdatedEventSchema
 ])
 
 export type AgentEvent = z.infer<typeof agentEventSchema>
@@ -98,6 +111,7 @@ export type PlanStepUpdatedEvent = z.infer<typeof planStepUpdatedEventSchema>
 export type ApprovalRequestedEvent = z.infer<typeof approvalRequestedEventSchema>
 export type ApprovalResolvedEvent = z.infer<typeof approvalResolvedEventSchema>
 export type VerificationFinishedEvent = z.infer<typeof verificationFinishedEventSchema>
+export type SessionTitleUpdatedEvent = z.infer<typeof sessionTitleUpdatedEventSchema>
 export type PlanStep = z.infer<typeof planStepSchema>
 
 // Returns the parsed event, or null when validation failed (logged by the

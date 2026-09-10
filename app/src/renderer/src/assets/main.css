@@ -339,8 +339,9 @@
   text-overflow: ellipsis;
 }
 
-/* M1.5: per-session token totals (docs/03 §4), now on the token layer. */
-.session-item-usage {
+/* The folder this chat is bound to (docs/03 §8 per-session workspace_path).
+   Same muted treatment the old token line had — a quiet factual row. */
+.session-item-workspace {
   font-size: 0.72rem;
   color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
   white-space: nowrap;
@@ -404,15 +405,32 @@
   color: var(--foreground);
 }
 
+/* Grounding eyebrow: names the folder this chat will work in — the one thing
+   this screen knows that a template line can't. Same small-caps treatment as
+   the sidebar's section label. */
+.thread-welcome p.thread-welcome-eyebrow {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
 .thread-welcome h1 {
+  margin-top: 0.35rem;
   font-size: 1.6rem;
   font-weight: 600;
 }
 
-.thread-welcome p {
-  margin-top: 0.4rem;
+/* Balanced wrap: the two-sentence lede breaks at a natural point instead of
+   stranding one word on the last line. */
+.thread-welcome p.thread-welcome-lede {
+  max-width: 34rem;
+  margin: 0.4rem auto 0;
   color: var(--muted-foreground);
   font-size: 0.9rem;
+  text-wrap: balance;
 }
 
 .message {

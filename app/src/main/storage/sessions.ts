@@ -79,6 +79,20 @@ export function setSessionMode(sessionId: string, mode: unknown): SessionRow | u
   return row === undefined ? undefined : withNormalizedMode(row)
 }
 
+// Title-only update for auto-generated chat titles (docs/03 §4): the rename
+// lands in the background after the first send. updatedAt is deliberately NOT
+// bumped — sidebar ordering stays message-driven, and a background rename
+// must not shuffle the list.
+export function setSessionTitle(sessionId: string, title: string): SessionRow | undefined {
+  const row = getDrizzle()
+    .update(sessions)
+    .set({ title })
+    .where(eq(sessions.id, sessionId))
+    .returning()
+    .get()
+  return row === undefined ? undefined : withNormalizedMode(row)
+}
+
 function withNormalizedMode<T extends { mode: string }>(row: T): T & { mode: SessionMode } {
   return { ...row, mode: normalizeSessionMode(row.mode) }
 }

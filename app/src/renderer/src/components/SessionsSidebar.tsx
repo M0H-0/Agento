@@ -26,10 +26,17 @@ function formatRelativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString()
 }
 
-// Per-session token totals (M1.5, docs/03 §4) — plain number formatting, no
-// library; only rendered once the session has recorded usage.
-function formatUsage(usage: { inputTokens: number; outputTokens: number }): string {
-  return `${usage.inputTokens.toLocaleString()} in · ${usage.outputTokens.toLocaleString()} out`
+// The folder each chat is bound to (per-session workspace_path, docs/03 §8) —
+// the path itself, not just the leaf name, so chats in sibling folders are
+// tellable apart at a glance. Short paths render whole; longer ones keep the
+// last two segments recognizable with an ellipsis head (same treatment as the
+// workspace chip). '' placeholder rows (created before any pick) say so
+// honestly instead of inventing a folder; the full path stays in the tooltip.
+function formatWorkspacePath(path: string): string {
+  if (!path) return 'No folder'
+  if (path.length <= 46) return path
+  const segments = path.split(/[\\/]/).filter(Boolean)
+  return `…\\${segments.slice(-2).join('\\')}`
 }
 
 // Left rail (docs/04 §2/§4): new chat + chronological sessions, most recent
@@ -62,12 +69,14 @@ function SessionsSidebar({
                   : 'session-item'
               }
               onClick={() => onOpenSession(session)}
-              title={session.title}
+              title={
+                session.workspacePath ? `${session.title}\n${session.workspacePath}` : session.title
+              }
             >
               <span className="session-item-title">{session.title}</span>
-              {session.usage && (
-                <span className="session-item-usage">{formatUsage(session.usage)}</span>
-              )}
+              <span className="session-item-workspace">
+                {formatWorkspacePath(session.workspacePath)}
+              </span>
               <span className="session-item-time">{formatRelativeTime(session.updatedAt)}</span>
             </button>
           </li>

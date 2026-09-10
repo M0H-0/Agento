@@ -4,6 +4,7 @@ import type { IpcMainInvokeEvent } from 'electron'
 import type { LanguageModel, UIMessage, UIMessageChunk } from 'ai'
 import { generateText } from 'ai'
 import { assertPublicHttpUrl } from '../agent/web-fetch-guard'
+import { generateSessionTitle } from '../agent/title'
 import { buildLanguageModel, providerRequiresKey } from '../providers'
 import {
   getPermissionDefaults,
@@ -11,7 +12,12 @@ import {
   resolveActiveBaseUrl,
   resolveProviderKey
 } from '../settings'
-import { appendMessage, getSession, normalizeSessionMode } from '../storage/sessions'
+import {
+  appendMessage,
+  getSession,
+  normalizeSessionMode,
+  setSessionTitle
+} from '../storage/sessions'
 import { insertUsage } from '../storage/usage'
 import { getLatestPlan, nextPlanVersion, recordPlanSteps } from '../storage/plan-steps'
 import {
@@ -57,6 +63,7 @@ import {
   emitApprovalResolved,
   emitPlanCreated,
   emitPlanStepUpdated,
+  emitSessionTitleUpdated,
   emitUsageEvent,
   emitVerificationFinished
 } from './agent-events'
@@ -544,6 +551,45 @@ export function registerChatIpc(): void {
     const runId = newRunId()
     const sessionWorkspace = session.workspacePath?.trim() ? session.workspacePath : null
     const workspaceRoot = sessionWorkspace ?? getCurrentWorkspace() ?? ''
+
+    // Auto title (docs/03 §4): on the FIRST send only — messages holds the
+    // full history, so length 1 means exactly the opening user message — ask
+    // the model for a real topic title in the user's language. Fire-and-forget
+    // alongside the run: the derived first-message title stays until (and
+    // unless) the rename lands. A failure (e.g. the provider refusing a
+    // concurrent request) is logged, never touches the run, and retries once
+    // at the settle point, when the run no longer competes for the provider.
+    // An unchanged answer (some reasoning models return empty text for a side
+    // call) is logged and skipped — no pointless rename event.
+    const runTitleGeneration = (onFailure?: () => void): void => {
+      void generateSessionTitle({
+        complete: llmCompleter(languageModel),
+        firstMessage: lastUserText,
+        fallback: session.title
+      })
+        .then((title) => {
+          if (title === session.title) {
+            console.info(`[title] model returned nothing usable for session ${sessionId}`)
+            return
+          }
+          const row = setSessionTitle(sessionId, title)
+          if (row) {
+            console.info(`[title] "${session.title}" -> "${title}"`)
+            emitSessionTitleUpdated({ sessionId, runId, title })
+          }
+        })
+        .catch((error: unknown) => {
+          console.error('[title] generation failed:', error)
+          onFailure?.()
+        })
+    }
+    const isFirstSend = messages.length === 1 && lastUserText !== ''
+    let retryTitleAtSettle = false
+    if (isFirstSend) {
+      runTitleGeneration(() => {
+        retryTitleAtSettle = true
+      })
+    }
     // MVP (MVP_PLAN.md step 5): the semantic index cache lives in the app's
     // own userData — never inside the user's workspace (a risk-0 tool must
     // not write there; it would bypass the snapshot pipeline). Undefined
@@ -871,6 +917,11 @@ export function registerChatIpc(): void {
         }
       }
     }
+
+    // The title's one retry lives here rather than mid-run: with the stream
+    // finished, the side call no longer competes with the run for the
+    // provider.
+    if (retryTitleAtSettle) runTitleGeneration()
 
     // Token usage rides the settle point (docs/03 §2 token guard, §8
     // usage_events): recorded only when the run's usage actually resolved

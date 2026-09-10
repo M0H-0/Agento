@@ -129,6 +129,17 @@ export interface AgentUsageEvent {
   outputTokens: number | null
 }
 
+// Auto-generated chat title landed (docs/03 §4) — structural mirror of the
+// main-side sessionTitleUpdatedEventSchema.
+export interface AgentSessionTitleUpdatedEvent {
+  type: 'session/title_updated'
+  sessionId: string
+  runId: string
+  ts: number
+  seq: number
+  title: string
+}
+
 export type AgentEvent =
   | AgentUsageEvent
   | AgentPlanCreatedEvent
@@ -136,6 +147,7 @@ export type AgentEvent =
   | AgentApprovalRequestedEvent
   | AgentApprovalResolvedEvent
   | AgentVerificationFinishedEvent
+  | AgentSessionTitleUpdatedEvent
 
 export interface AgentApprovalRequestedEvent {
   type: 'approval/requested'

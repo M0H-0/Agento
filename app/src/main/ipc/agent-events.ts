@@ -97,13 +97,27 @@ const verificationFinishedEventSchema = z.object({
   missedSegments: z.array(z.string()).optional()
 })
 
+// Auto-generated chat title landed (docs/03 §4): fired when background title
+// generation after the first send succeeds. Idempotent by sessionId — the
+// renderer patches the sidebar row and must apply it even for a session that
+// is no longer active, so it is handled before the active-run/seq guards.
+const sessionTitleUpdatedEventSchema = z.object({
+  type: z.literal('session/title_updated'),
+  sessionId: z.string().min(1),
+  runId: z.string().min(1),
+  ts: z.number(),
+  seq: z.number().int().min(0),
+  title: z.string().min(1)
+})
+
 export const agentEventSchema = z.discriminatedUnion('type', [
   usageEventSchema,
   planCreatedEventSchema,
   planStepUpdatedEventSchema,
   approvalRequestedEventSchema,
   approvalResolvedEventSchema,
-  verificationFinishedEventSchema
+  verificationFinishedEventSchema,
+  sessionTitleUpdatedEventSchema
 ])
 
 export type AgentEvent = z.infer<typeof agentEventSchema>
@@ -113,6 +127,7 @@ export type PlanStepUpdatedEvent = z.infer<typeof planStepUpdatedEventSchema>
 export type ApprovalRequestedEvent = z.infer<typeof approvalRequestedEventSchema>
 export type ApprovalResolvedEvent = z.infer<typeof approvalResolvedEventSchema>
 export type VerificationFinishedEvent = z.infer<typeof verificationFinishedEventSchema>
+export type SessionTitleUpdatedEvent = z.infer<typeof sessionTitleUpdatedEventSchema>
 
 // Per-session event counter, in memory (see the M1.5 note above): starts at 1
 // per session, advances with every agent:event, resets on app restart.
@@ -257,5 +272,23 @@ export function emitPlanStepUpdated(input: {
     status: input.status,
     ...(input.verification !== undefined ? { verification: input.verification } : {}),
     ...(input.error !== undefined ? { error: input.error } : {})
+  })
+}
+
+// A session's auto-generated title landed (docs/03 §4): fired from chat:send's
+// background first-send rename. The sidebar patches the row by id — safe for
+// active and background sessions alike (title setting is idempotent).
+export function emitSessionTitleUpdated(input: {
+  sessionId: string
+  runId: string
+  title: string
+}): void {
+  emitAgentEvent({
+    type: 'session/title_updated',
+    sessionId: input.sessionId,
+    runId: input.runId,
+    ts: Date.now(),
+    seq: nextEventSeq(input.sessionId),
+    title: input.title
   })
 }

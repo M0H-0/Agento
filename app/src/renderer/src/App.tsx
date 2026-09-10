@@ -62,6 +62,50 @@ function AssistantMessage(): React.JSX.Element {
   )
 }
 
+// Tail of the workspace path for the welcome eyebrow — the same "keep the
+// last two segments recognizable" treatment as the sidebar chip's formatPath.
+function formatFolderTail(path: string): string {
+  if (path.length <= 46) return path
+  const segments = path.split(/[\\/]/).filter(Boolean)
+  return `…\\${segments.slice(-2).join('\\')}`
+}
+
+// Empty-thread welcome (docs/04 §2). Grounded, not template copy: the eyebrow
+// names the folder this new chat will actually work in (the picker's current
+// pick — the same state session:create stamps), and the lede states the two
+// things this product really promises: plans before big changes, undo for
+// everything. Plain useState fetch, state lands in the promise callback
+// (StrictMode rule); a failed read degrades to the no-folder copy.
+function ThreadWelcome(): React.JSX.Element {
+  const [workspace, setWorkspace] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    window.agento.workspaces
+      .get()
+      .then((snapshot) => {
+        if (!cancelled) setWorkspace(snapshot.current)
+      })
+      .catch(() => {
+        // Never crash the welcome on a workspace read failure.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  return (
+    <div className="thread-welcome">
+      <p className="thread-welcome-eyebrow">
+        {workspace ? `Working in ${formatFolderTail(workspace)}` : 'Pick a folder to work in'}
+      </p>
+      <h1>Agento</h1>
+      <p className="thread-welcome-lede">
+        Ask for anything in this folder — find, read, fix, or reorganize. Bigger changes come back
+        as a plan to approve, and every change can be undone.
+      </p>
+    </div>
+  )
+}
+
 function Thread({
   error,
   runStatus,
@@ -79,10 +123,7 @@ function Thread({
     <ThreadPrimitive.Root className="thread">
       <ThreadPrimitive.Viewport className="thread-viewport">
         <ThreadPrimitive.If empty>
-          <div className="thread-welcome">
-            <h1>Agento</h1>
-            <p>Say something — the main process echoes it back over IPC.</p>
-          </div>
+          <ThreadWelcome />
         </ThreadPrimitive.If>
         {runStatus ? (
           <div className="run-status" role="status" aria-live="polite">
@@ -467,6 +508,16 @@ function App(): React.JSX.Element {
       // seq and active-run binding — stale/cross-run events are discarded.
       const event = parseAgentEvent(raw)
       if (!event) return
+      // Auto-generated chat titles (docs/03 §4): patch the sidebar row by id.
+      // Handled BEFORE the active-session/seq guards — a rename is idempotent,
+      // can land for a session the user already switched away from, and must
+      // never be dropped by the per-run monotonic-seq guard.
+      if (event.type === 'session/title_updated') {
+        setSessions((prev) =>
+          prev.map((s) => (s.id === event.sessionId ? { ...s, title: event.title } : s))
+        )
+        return
+      }
       if (event.sessionId !== activeSessionIdRef.current) return
       if (typeof event.seq === 'number') {
         if (event.seq <= lastSeqRef.current) return
@@ -521,7 +572,9 @@ function App(): React.JSX.Element {
         })
       } else if (event.type === 'verification/finished') {
         setRunStatus(
-          event.isComplete ? 'Verified. Finishing up...' : 'The result could not be fully verified.'
+          event.isComplete
+            ? 'Everything checks out — finishing up.'
+            : 'Some results could not be confirmed — take a quick look when it finishes.'
         )
         setPlan((prev) => {
           if (!prev || prev.runId !== event.runId) return prev

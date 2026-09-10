@@ -103,7 +103,11 @@ export default function WorkspacePicker(): React.JSX.Element {
         onClick={() => setOpen((value) => !value)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        title={current ?? 'No workspace selected'}
+        title={
+          current
+            ? `Folder new chats will use: ${current}\nEach chat keeps the folder it was created in.`
+            : 'Pick a folder — new chats will work in it.'
+        }
       >
         <span className="workspace-chip-label">Workspace</span>
         <span className="workspace-chip-path">{formatPath(current)}</span>
@@ -112,7 +116,7 @@ export default function WorkspacePicker(): React.JSX.Element {
       {open && (
         <ul className="workspace-menu" role="listbox" aria-label="Recent workspaces">
           {recents.length === 0 && !current && (
-            <li className="workspace-menu-empty">Pick a folder to work in.</li>
+            <li className="workspace-menu-empty">Pick a folder for new chats to work in.</li>
           )}
           {recents.map((recent) => (
             <li key={recent.path}>
