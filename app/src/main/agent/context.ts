@@ -87,6 +87,10 @@ export interface RunContextDeps {
     count?: number
   }) => void
   onApprovalResolved?: (input: { approvalId: string; decision: ApprovalDecision }) => void
+  /** Permission defaults (M6.3 Settings → Permissions): risk1 ask / risk2
+   * auto. Absent in tests — the wrapper keeps today's behavior (risk1 runs,
+   * risk ≥ 2 blocks). Risk 3 always blocks. */
+  permissionDefaults?: { risk1: 'auto' | 'ask'; risk2: 'auto' | 'ask' }
 }
 
 export interface PlanStepRef {
@@ -428,6 +432,12 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
 
   const ctx: ToolExecutionContext = {
     workspaceRoot,
+    // M6.3 permission defaults (Settings → Permissions): read once per run;
+    // tool execution never re-reads settings mid-run.
+    approvalPolicy: {
+      askRisk1: deps.permissionDefaults?.risk1 === 'ask',
+      autoRisk2: deps.permissionDefaults?.risk2 === 'auto'
+    },
     // M3.3 projection feed: read tools report their enumeration size here;
     // the next approval group projects from it when the plan states none.
     noteEnumeration: (fileCount: number) => {

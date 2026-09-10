@@ -4,9 +4,13 @@ import type { IpcMainInvokeEvent } from 'electron'
 import type { LanguageModel, UIMessage, UIMessageChunk } from 'ai'
 import { generateText } from 'ai'
 import { assertPublicHttpUrl } from '../agent/web-fetch-guard'
-import { createGoogleGenerativeAI } from '@ai-sdk/google'
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
-import { getSettings, resolveProviderKey } from '../settings'
+import { buildLanguageModel, providerRequiresKey } from '../providers'
+import {
+  getPermissionDefaults,
+  getSettings,
+  resolveActiveBaseUrl,
+  resolveProviderKey
+} from '../settings'
 import { appendMessage, getSession, normalizeSessionMode } from '../storage/sessions'
 import { insertUsage } from '../storage/usage'
 import { getLatestPlan, nextPlanVersion, recordPlanSteps } from '../storage/plan-steps'
@@ -224,23 +228,19 @@ function createToolCallAuditSink(
   }
 }
 
-// Provider clients enabled this phase (STACK.md's provider table): Google AI
-// Studio and Groq (via its OpenAI-compatible endpoint). The key comes from
-// settings' safeStorage store; an unknown provider keeps the honest "not set
-// up in this version" error part in the handler.
-function resolveLanguageModel(provider: string, model: string, apiKey: string): LanguageModel {
-  if (provider === 'google') {
-    return createGoogleGenerativeAI({ apiKey })(model)
-  }
-  if (provider === 'groq') {
-    const groq = createOpenAICompatible({
-      name: 'groq',
-      baseURL: 'https://api.groq.com/openai/v1',
-      apiKey
-    })
-    return groq(model)
-  }
-  throw new Error(`Unsupported provider: ${provider}`)
+// Provider clients (STACK.md's provider table + M6.3 custom OpenAI-compatible
+// profiles, docs/03 §10). Built-ins keep their exact behavior; custom profiles
+// ride the already-installed @ai-sdk/openai-compatible adapter. The key comes
+// from settings' safeStorage store; custom endpoints may be keyless (local
+// servers). Unknown providers keep the honest error part in the handler.
+// Keys never cross to the sidecar (AGENTS.md).
+function resolveLanguageModel(
+  provider: string,
+  model: string,
+  apiKey: string | undefined,
+  baseUrl: string | undefined
+): LanguageModel {
+  return buildLanguageModel({ provider, model, apiKey, baseUrl })
 }
 
 // MVP (MVP_PLAN.md step 3): the one-shot LLM capability backing ctx.llm —
@@ -498,7 +498,7 @@ export function registerChatIpc(): void {
       })
       return
     }
-    if (apiKey === undefined) {
+    if (apiKey === undefined && providerRequiresKey(provider)) {
       sendPart(event.sender, sessionId, {
         type: 'error',
         errorText: 'There is no API key for this provider yet. Add one in Settings → Providers.'
@@ -507,12 +507,11 @@ export function registerChatIpc(): void {
     }
     let languageModel: LanguageModel
     try {
-      languageModel = resolveLanguageModel(provider, model, apiKey)
+      languageModel = resolveLanguageModel(provider, model, apiKey, resolveActiveBaseUrl())
     } catch {
       sendPart(event.sender, sessionId, {
         type: 'error',
-        errorText:
-          'Only Google and Groq are set up in this version of Agento. Check the provider in Settings → Providers.'
+        errorText: 'This provider is not set up. Check the provider in Settings → Providers.'
       })
       return
     }
@@ -574,6 +573,8 @@ export function registerChatIpc(): void {
       sessionId,
       runId,
       workspaceRoot,
+      // M6.3 permission defaults (Settings → Permissions): read once per run.
+      permissionDefaults: getPermissionDefaults(),
       onApprovalRequested: ({ approvalId, request, count }) => {
         try {
           emitApprovalRequested({

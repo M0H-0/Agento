@@ -240,9 +240,14 @@ export function createToolRegistry(): ToolRegistry {
     const risk: RiskClassification = tool.risk(resolvedInput as never, input.ctx)
     audit.riskLevel = risk.level
 
-    // 4 — approval hook: risk ≥ 2 blocks. 'skip'/'cancel' are honest
-    // non-executions — no snapshot, no mutation, run semantics left to the loop.
-    if (risk.level >= 2) {
+    // 4 — approval hook: risk ≥ 2 blocks (M6.3: risk 2 may auto-run when the
+    // user set Permissions → risk 2 to auto; risk 3 always blocks). Risk 1
+    // blocks only when Permissions → risk 1 is 'ask' (amber dialog; the audit
+    // row keeps level 1). 'skip'/'cancel' are honest non-executions — no
+    // snapshot, no mutation, run semantics left to the loop.
+    const askRisk1 = risk.level === 1 && input.ctx.approvalPolicy?.askRisk1 === true
+    const autoRisk2 = risk.level === 2 && input.ctx.approvalPolicy?.autoRisk2 === true
+    if ((risk.level >= 2 && !autoRisk2) || askRisk1) {
       const decision = await input.ctx.requestApproval({
         tool: tool.name,
         title: tool.describe(resolvedInput as never).title,

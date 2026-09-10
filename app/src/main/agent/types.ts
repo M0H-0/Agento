@@ -98,12 +98,22 @@ export interface WorkspaceFs {
   walkFiles(root: string, limit: number): string[]
 }
 
+// Permission policy (M6.3 Settings → Permissions, docs/04 §3.7): optional so
+// existing harness/test contexts keep today's behavior. risk1 'ask' routes
+// reversible creates through the approval dialog; risk2 'auto' runs overwrites
+// silently. Risk 3 always blocks — no such setting exists (docs/06 §2).
+export interface ApprovalPolicy {
+  askRisk1: boolean
+  autoRisk2: boolean
+}
+
 // Injected per run (docs/03 §5 "ctx"): workspace root, existence probe for the
 // risk stage, the mandatory snapshot hook, the approval hook, the guarded
 // fs facade, and the ask_user pause. Storage repos / intelligence client /
 // event sender connect here in M2.5/M3.
 export interface ToolExecutionContext {
   workspaceRoot: string
+  approvalPolicy?: ApprovalPolicy
   /** AI SDK v5's toolCallId for the current call (used by ask_user; the registry thread sets it). */
   activeToolCallId?: string
   /** Disk probe for risk classification (rule-table floor; docs/06 §2). */

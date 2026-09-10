@@ -1086,6 +1086,97 @@
   color: var(--muted-foreground);
 }
 
+/* M6.3 settings completion (docs/04 §3.7): title row with a visible close
+   button, custom-provider list + form, and Data-section confirms — all on the
+   existing token layer, no new deps. */
+.settings-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.settings-title-row .settings-title {
+  margin-bottom: 0;
+}
+
+.settings-close {
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.settings-close:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.settings-section + .settings-section {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.settings-custom-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.settings-custom-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--background);
+}
+
+.settings-custom-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-size: 0.85rem;
+}
+
+.settings-custom-meta .settings-note {
+  font-size: 0.78rem;
+}
+
+.settings-custom-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.settings-custom-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem;
+  border: 1px dashed var(--input);
+  border-radius: 0.5rem;
+}
+
+.settings-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
 /* docs/04 §8.2 — every scroll region styles its scrollbar; the native
    Chromium default never shows. 8px fully-rounded thumb themed to the
    border token, transparent track, brighter thumb on hover, horizontal

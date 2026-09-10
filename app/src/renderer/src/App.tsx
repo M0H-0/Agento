@@ -298,6 +298,42 @@ function App(): React.JSX.Element {
     }
   }, [])
 
+  // M6.3 Appearance (docs/04 §3.7): the settings snapshot owns the theme;
+  // the <html> .dark class is the token switch (main.css). Applied on launch
+  // and whenever the OS scheme changes under 'system'.
+  useEffect(() => {
+    let cancelled = false
+    const apply = (appearance: string): void => {
+      const root = document.documentElement
+      if (appearance === 'light') root.classList.remove('dark')
+      else if (appearance === 'dark') root.classList.add('dark')
+      else {
+        const light = window.matchMedia('(prefers-color-scheme: light)').matches
+        root.classList.toggle('dark', !light)
+      }
+    }
+    window.agento.settings
+      .get()
+      .then((snapshot) => {
+        if (!cancelled) apply(snapshot.appearance ?? 'dark')
+      })
+      .catch(() => {})
+    const media = window.matchMedia('(prefers-color-scheme: light)')
+    const onChange = (): void => {
+      window.agento.settings
+        .get()
+        .then((snapshot) => {
+          if (!cancelled && (snapshot.appearance ?? 'dark') === 'system') apply('system')
+        })
+        .catch(() => {})
+    }
+    media.addEventListener?.('change', onChange)
+    return () => {
+      cancelled = true
+      media.removeEventListener?.('change', onChange)
+    }
+  }, [setupReady])
+
   const refreshSessions = useCallback(async () => {
     try {
       setSessions(await window.agento.sessions.list())

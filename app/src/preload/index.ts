@@ -230,17 +230,40 @@ export interface SidecarStatusEvent {
 }
 
 // Settings contract per docs/03 §4 + docs/06 §7: plain invokes. Key material
-// travels renderer → main only; the snapshot never contains the key — hasKey
-// and keyLast4 at most.
+// travels renderer → main ONLY; the snapshot never contains the key — hasKey
+// and keyLast4 at most. M6.3: appearance + permission defaults + custom
+// OpenAI-compatible provider profiles join the snapshot.
+export type Appearance = 'dark' | 'light' | 'system'
+
+export interface CustomProviderSnapshot {
+  id: string
+  name: string
+  baseUrl: string
+  model: string
+  hasKey: boolean
+  keyLast4: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PermissionDefaults {
+  risk1: 'auto' | 'ask'
+  risk2: 'auto' | 'ask'
+}
+
 export interface SettingsSnapshot {
   provider: string
   model: string
   hasKey: boolean
   keyLast4: string
   storageAvailable: boolean
-  /** Provider ids enabled this phase — main is the source of truth. */
+  /** Built-in provider ids ('google', 'groq') — main is the source of truth. */
   providers: string[]
+  /** Model ids for the active provider (curated list, or [profile.model] for customs). */
   models: string[]
+  appearance: Appearance
+  permissionDefaults: PermissionDefaults
+  customProviders: CustomProviderSnapshot[]
 }
 
 export interface SetApiKeyPayload {
@@ -258,6 +281,51 @@ export interface SetProviderPayload {
 
 export interface ClearApiKeyPayload {
   provider: string
+}
+
+export interface SetAppearancePayload {
+  appearance: string
+}
+
+export interface SetPermissionDefaultsPayload {
+  risk1?: string
+  risk2?: string
+}
+
+export interface CreateCustomProviderPayload {
+  name: string
+  baseUrl: string
+  model: string
+}
+
+export interface UpdateCustomProviderPayload {
+  id: string
+  name?: string
+  baseUrl?: string
+  model?: string
+}
+
+export interface DeleteCustomProviderPayload {
+  id: string
+}
+
+export interface TestProviderPayload {
+  provider?: string
+  baseUrl?: string
+  model?: string
+  key?: string
+}
+
+export interface TestProviderResult {
+  ok: boolean
+  reason?: string
+}
+
+export interface DataSummary {
+  sessionCount: number
+  messageCount: number
+  checkpointCount: number
+  activeCheckpointCount: number
 }
 
 export interface SystemOpenPathPayload {
@@ -350,7 +418,27 @@ const agento = {
     setProvider: (payload: SetProviderPayload): Promise<void> =>
       ipcRenderer.invoke('settings:set-provider', payload),
     clearApiKey: (payload: ClearApiKeyPayload): Promise<void> =>
-      ipcRenderer.invoke('settings:clear-api-key', payload)
+      ipcRenderer.invoke('settings:clear-api-key', payload),
+    setAppearance: (payload: SetAppearancePayload): Promise<SettingsSnapshot> =>
+      ipcRenderer.invoke('settings:set-appearance', payload),
+    setPermissionDefaults: (payload: SetPermissionDefaultsPayload): Promise<PermissionDefaults> =>
+      ipcRenderer.invoke('settings:set-permission-defaults', payload),
+    createCustomProvider: (payload: CreateCustomProviderPayload): Promise<{ id: string }> =>
+      ipcRenderer.invoke('settings:create-custom-provider', payload),
+    updateCustomProvider: (payload: UpdateCustomProviderPayload): Promise<SettingsSnapshot> =>
+      ipcRenderer.invoke('settings:update-custom-provider', payload),
+    deleteCustomProvider: (payload: DeleteCustomProviderPayload): Promise<SettingsSnapshot> =>
+      ipcRenderer.invoke('settings:delete-custom-provider', payload),
+    testProvider: (payload: TestProviderPayload): Promise<TestProviderResult> =>
+      ipcRenderer.invoke('settings:test-provider', payload),
+    getDataSummary: (): Promise<DataSummary> => ipcRenderer.invoke('settings:get-data-summary'),
+    openDataFolder: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('settings:open-data-folder'),
+    clearSessions: (): Promise<{ sessions: number }> =>
+      ipcRenderer.invoke('settings:clear-sessions'),
+    purgeSnapshots: (): Promise<{ checkpoints: number }> =>
+      ipcRenderer.invoke('settings:purge-snapshots'),
+    exportEval: (): Promise<{ fileName: string; sessionCount: number }> =>
+      ipcRenderer.invoke('settings:export-eval')
   },
   system: {
     /** Open a workspace file with the OS default app (MVP semantic-search

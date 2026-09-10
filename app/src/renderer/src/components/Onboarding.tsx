@@ -19,6 +19,7 @@ interface OnboardingSettings {
   hasKey: boolean
   providers: string[]
   storageAvailable: boolean
+  customProviders: { id: string; name: string }[]
 }
 
 interface OnboardingProps {
@@ -54,7 +55,8 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
           provider: snapshot.provider,
           hasKey: snapshot.hasKey,
           providers: snapshot.providers,
-          storageAvailable: snapshot.storageAvailable
+          storageAvailable: snapshot.storageAvailable,
+          customProviders: snapshot.customProviders ?? []
         })
       })
       .catch(() => {})
@@ -69,7 +71,8 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
         provider: snapshot.provider,
         hasKey: snapshot.hasKey,
         providers: snapshot.providers,
-        storageAvailable: snapshot.storageAvailable
+        storageAvailable: snapshot.storageAvailable,
+        customProviders: snapshot.customProviders ?? []
       })
     })
 
@@ -184,6 +187,11 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
               {(settings?.providers ?? []).map((provider) => (
                 <option key={provider} value={provider}>
                   {PROVIDER_LABELS[provider] ?? provider}
+                </option>
+              ))}
+              {(settings?.customProviders ?? []).map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.name} (custom)
                 </option>
               ))}
             </select>

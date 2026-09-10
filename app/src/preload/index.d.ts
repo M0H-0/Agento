@@ -284,6 +284,26 @@ export interface AgentoAgent {
   onEvent: (listener: (event: AgentEvent) => void) => () => void
 }
 
+export type Appearance = 'dark' | 'light' | 'system'
+
+export interface CustomProviderSnapshot {
+  id: string
+  name: string
+  baseUrl: string
+  model: string
+  /** True when a key is stored for this profile (docs/06 §7). */
+  hasKey: boolean
+  /** Last 4 chars of the stored key; '' when absent — never the key itself. */
+  keyLast4: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PermissionDefaults {
+  risk1: 'auto' | 'ask'
+  risk2: 'auto' | 'ask'
+}
+
 export interface SettingsSnapshot {
   provider: string
   model: string
@@ -293,10 +313,13 @@ export interface SettingsSnapshot {
   keyLast4: string
   /** False when OS-level encryption is unavailable: keys stay session-only. */
   storageAvailable: boolean
-  /** Provider ids enabled this phase ('google', 'groq') — main is the source of truth. */
+  /** Built-in provider ids ('google', 'groq') — main is the source of truth. */
   providers: string[]
-  /** Curated model ids for the provider; main is the source of truth. */
+  /** Model ids for the active provider (curated list, or [profile.model] for customs). */
   models: string[]
+  appearance: Appearance
+  permissionDefaults: PermissionDefaults
+  customProviders: CustomProviderSnapshot[]
 }
 
 export interface SetApiKeyPayload {
@@ -316,6 +339,51 @@ export interface ClearApiKeyPayload {
   provider: string
 }
 
+export interface SetAppearancePayload {
+  appearance: string
+}
+
+export interface SetPermissionDefaultsPayload {
+  risk1?: string
+  risk2?: string
+}
+
+export interface CreateCustomProviderPayload {
+  name: string
+  baseUrl: string
+  model: string
+}
+
+export interface UpdateCustomProviderPayload {
+  id: string
+  name?: string
+  baseUrl?: string
+  model?: string
+}
+
+export interface DeleteCustomProviderPayload {
+  id: string
+}
+
+export interface TestProviderPayload {
+  provider?: string
+  baseUrl?: string
+  model?: string
+  key?: string
+}
+
+export interface TestProviderResult {
+  ok: boolean
+  reason?: string
+}
+
+export interface DataSummary {
+  sessionCount: number
+  messageCount: number
+  checkpointCount: number
+  activeCheckpointCount: number
+}
+
 export interface SystemOpenPathPayload {
   path: string
 }
@@ -331,6 +399,28 @@ export interface AgentoSettings {
   setProvider: (payload: SetProviderPayload) => Promise<void>
   /** Invoke 'settings:clear-api-key'. */
   clearApiKey: (payload: ClearApiKeyPayload) => Promise<void>
+  /** Invoke 'settings:set-appearance' — dark | light | system. */
+  setAppearance: (payload: SetAppearancePayload) => Promise<SettingsSnapshot>
+  /** Invoke 'settings:set-permission-defaults' — risk 3 stays always-ask (docs/06 §2). */
+  setPermissionDefaults: (payload: SetPermissionDefaultsPayload) => Promise<PermissionDefaults>
+  /** Invoke 'settings:create-custom-provider'. */
+  createCustomProvider: (payload: CreateCustomProviderPayload) => Promise<{ id: string }>
+  /** Invoke 'settings:update-custom-provider'. */
+  updateCustomProvider: (payload: UpdateCustomProviderPayload) => Promise<SettingsSnapshot>
+  /** Invoke 'settings:delete-custom-provider' — also removes its stored key. */
+  deleteCustomProvider: (payload: DeleteCustomProviderPayload) => Promise<SettingsSnapshot>
+  /** Invoke 'settings:test-provider' — bounded non-mutating check in main; plain verdict only. */
+  testProvider: (payload: TestProviderPayload) => Promise<TestProviderResult>
+  /** Invoke 'settings:get-data-summary'. */
+  getDataSummary: () => Promise<DataSummary>
+  /** Invoke 'settings:open-data-folder'. */
+  openDataFolder: () => Promise<{ ok: boolean }>
+  /** Invoke 'settings:clear-sessions'. */
+  clearSessions: () => Promise<{ sessions: number }>
+  /** Invoke 'settings:purge-snapshots'. */
+  purgeSnapshots: () => Promise<{ checkpoints: number }>
+  /** Invoke 'settings:export-eval' — redacted eval export into the data dir. */
+  exportEval: () => Promise<{ fileName: string; sessionCount: number }>
 }
 
 export interface AgentoSystem {

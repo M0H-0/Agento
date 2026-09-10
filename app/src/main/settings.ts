@@ -1,6 +1,26 @@
 import { safeStorage } from 'electron'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import {
+  BUILT_IN_PROVIDERS,
+  DEFAULT_PERMISSIONS,
+  SETTINGS_VERSION,
+  isCustomProviderId,
+  migratePrefs,
+  normalizeAppearance,
+  normalizeBaseUrl,
+  normalizePermissionDefaults,
+  nowIso,
+  validateCustomModel,
+  validateProviderName
+} from './settings-profiles'
+import type {
+  Appearance,
+  CustomProviderProfile,
+  PermissionDefaults,
+  PrefsV2
+} from './settings-profiles'
 
 // Settings + secrets storage (docs/06 §7 split): plain preferences live in
 // settings.json; model-provider API keys live ONLY in secrets.bin, wrapped
@@ -15,30 +35,40 @@ import { join } from 'node:path'
 // unavailable, keys are kept in memory for the session only and secrets.bin
 // is never written — the UI says so honestly via storageAvailable.
 
+export interface CustomProviderSnapshot {
+  id: string
+  name: string
+  baseUrl: string
+  model: string
+  hasKey: boolean
+  keyLast4: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface SettingsSnapshot {
   provider: string
   model: string
   hasKey: boolean
   keyLast4: string
   storageAvailable: boolean
-  /** Provider ids enabled this phase ('google', 'groq') — renderer renders stubs for the rest. */
+  /** Built-in provider ids ('google', 'groq') — main is the source of truth. */
   providers: string[]
+  /** Model ids for the active provider: curated list for built-ins, [profile.model] for customs. */
   models: string[]
-}
-
-interface Prefs {
-  version: number
-  provider: string
-  model: string
+  appearance: Appearance
+  permissionDefaults: PermissionDefaults
+  customProviders: CustomProviderSnapshot[]
 }
 
 // secrets.bin envelope: provider id → base64 safeStorage ciphertext.
+// Custom profiles use their opaque `custom:<uuid>` id as the key, so a rename
+// never orphans the stored secret.
 interface SecretsEnvelope {
   version: number
   keys: Record<string, string>
 }
 
-const SETTINGS_VERSION = 1
 const SECRETS_VERSION = 1
 const DEFAULT_PROVIDER = 'google'
 
@@ -76,15 +106,18 @@ const PROVIDERS: Record<string, { models: string[]; defaultModel: string }> = {
   google: { models: GOOGLE_MODEL_IDS, defaultModel: 'gemini-2.5-flash' },
   groq: { models: GROQ_MODEL_IDS, defaultModel: 'llama-3.3-70b-versatile' }
 }
-const ENABLED_PROVIDERS = Object.keys(PROVIDERS)
+const ENABLED_PROVIDERS: string[] = [...BUILT_IN_PROVIDERS]
 
 let initialized = false
 let dataDir: string | undefined
 let storageAvailable = false
-let prefs: Prefs = {
+let prefs: PrefsV2 = {
   version: SETTINGS_VERSION,
   provider: DEFAULT_PROVIDER,
-  model: PROVIDERS[DEFAULT_PROVIDER].defaultModel
+  model: PROVIDERS[DEFAULT_PROVIDER].defaultModel,
+  appearance: 'dark',
+  permissionDefaults: { ...DEFAULT_PERMISSIONS },
+  customProviders: []
 }
 // Encrypted key map as loaded from / destined for secrets.bin (empty when
 // encryption is unavailable).
@@ -101,41 +134,40 @@ function secretsFilePath(): string {
   return join(requireDataDir(), 'secrets.bin')
 }
 
-function requireDataDir(): string {
+export function requireDataDir(): string {
   if (dataDir === undefined) throw new Error('Settings are not initialized.')
   return dataDir
 }
 
-function loadPrefs(): Prefs {
+function resolveModelForPrefs(provider: string, model: unknown): string {
+  if (provider === 'google' || provider === 'groq') {
+    const list = PROVIDERS[provider]
+    return typeof model === 'string' && list.models.includes(model) ? model : list.defaultModel
+  }
+  if (isCustomProviderId(provider)) {
+    // Custom model validity needs the profile list, which migratePrefs is
+    // still building — accept any non-empty string here; migratePrefs keeps
+    // only rows whose own model validates.
+    return typeof model === 'string' && model.trim() !== '' ? model.trim() : 'model'
+  }
+  return PROVIDERS[DEFAULT_PROVIDER].defaultModel
+}
+
+function loadPrefs(): PrefsV2 {
   // Tolerant by contract (task M1.1): absent/corrupt/foreign file → defaults.
   try {
     const raw = JSON.parse(readFileSync(settingsFilePath(), 'utf-8')) as unknown
-    if (
-      raw !== null &&
-      typeof raw === 'object' &&
-      (raw as Prefs).version === SETTINGS_VERSION &&
-      typeof (raw as Prefs).provider === 'string' &&
-      (raw as Prefs).provider !== '' &&
-      typeof (raw as Prefs).model === 'string'
-    ) {
-      const parsed = raw as Prefs
-      const provider = ENABLED_PROVIDERS.includes(parsed.provider)
-        ? parsed.provider
-        : DEFAULT_PROVIDER
-      const models = PROVIDERS[provider].models
-      return {
-        version: SETTINGS_VERSION,
-        provider,
-        model: models.includes(parsed.model) ? parsed.model : PROVIDERS[provider].defaultModel
-      }
-    }
+    return migratePrefs(raw, resolveModelForPrefs, DEFAULT_PROVIDER)
   } catch {
     // Absent or unreadable — fall through to the defaults.
   }
   return {
     version: SETTINGS_VERSION,
     provider: DEFAULT_PROVIDER,
-    model: PROVIDERS[DEFAULT_PROVIDER].defaultModel
+    model: PROVIDERS[DEFAULT_PROVIDER].defaultModel,
+    appearance: 'dark',
+    permissionDefaults: { ...DEFAULT_PERMISSIONS },
+    customProviders: []
   }
 }
 
@@ -169,11 +201,22 @@ export function initSettings(userDataDir: string): void {
   dataDir = userDataDir
   storageAvailable = safeStorage.isEncryptionAvailable()
   prefs = loadPrefs()
+  // Repair pass: prefs.model for a custom provider mirrors its profile; a
+  // profile edit outside the setters (or a v1 file) could leave them apart.
+  const activeCustom = prefs.customProviders.find((p) => p.id === prefs.provider)
+  if (activeCustom && prefs.model !== activeCustom.model) {
+    prefs = { ...prefs, model: activeCustom.model }
+    try {
+      writePrefs()
+    } catch {
+      // Best-effort repair — the in-memory value is already correct.
+    }
+  }
   // secrets.bin is only ever read when we can also decrypt it, and only ever
   // written when encryption is available — never plaintext (docs/06 §7).
   encryptedKeys = storageAvailable ? loadSecrets() : {}
   console.log(
-    `[settings] ready — storageAvailable=${storageAvailable}, provider=${prefs.provider}, model=${prefs.model}, persistedKeys=${Object.keys(encryptedKeys).length}`
+    `[settings] ready — storageAvailable=${storageAvailable}, provider=${prefs.provider}, model=${prefs.model}, persistedKeys=${Object.keys(encryptedKeys).length}, customProviders=${prefs.customProviders.length}`
   )
   initialized = true
 }
@@ -196,10 +239,33 @@ export function resolveProviderKey(provider: string): string | undefined {
   }
 }
 
+function maskKey(key: string | undefined): string {
+  return key !== undefined && key.length >= 8 ? key.slice(-4) : ''
+}
+
+function toCustomSnapshot(profile: CustomProviderProfile): CustomProviderSnapshot {
+  const key = resolveProviderKey(profile.id)
+  return {
+    id: profile.id,
+    name: profile.name,
+    baseUrl: profile.baseUrl,
+    model: profile.model,
+    hasKey: key !== undefined,
+    keyLast4: maskKey(key),
+    createdAt: profile.createdAt,
+    updatedAt: profile.updatedAt
+  }
+}
+
 export function getSettings(): SettingsSnapshot {
   const key = resolveProviderKey(prefs.provider)
   // Only mask keys long enough that 4 chars reveal nothing meaningful.
-  const keyLast4 = key !== undefined && key.length >= 8 ? key.slice(-4) : ''
+  const keyLast4 = maskKey(key)
+  const activeCustom = prefs.customProviders.find((p) => p.id === prefs.provider)
+  const models =
+    activeCustom !== undefined
+      ? [activeCustom.model]
+      : [...(PROVIDERS[prefs.provider]?.models ?? [])]
   return {
     provider: prefs.provider,
     model: prefs.model,
@@ -207,12 +273,38 @@ export function getSettings(): SettingsSnapshot {
     keyLast4,
     storageAvailable,
     providers: [...ENABLED_PROVIDERS],
-    models: [...PROVIDERS[prefs.provider].models]
+    models,
+    appearance: prefs.appearance,
+    permissionDefaults: { ...prefs.permissionDefaults },
+    customProviders: prefs.customProviders.map(toCustomSnapshot)
   }
 }
 
+/** Active provider's endpoint URL for custom profiles; undefined for built-ins. */
+export function resolveActiveBaseUrl(): string | undefined {
+  const active = prefs.customProviders.find((p) => p.id === prefs.provider)
+  return active?.baseUrl
+}
+
+export function getAppearance(): Appearance {
+  return prefs.appearance
+}
+
+export function getPermissionDefaults(): PermissionDefaults {
+  return { ...prefs.permissionDefaults }
+}
+
+export function getCustomProviders(): CustomProviderProfile[] {
+  return prefs.customProviders.map((p) => ({ ...p }))
+}
+
 function writePrefs(): void {
-  writeFileSync(settingsFilePath(), `${JSON.stringify(prefs, null, 2)}\n`, 'utf-8')
+  // Atomic temp-file + rename (workspaces.json precedent): a crash mid-write
+  // never leaves a half-written settings.json.
+  const target = settingsFilePath()
+  const tmp = `${target}.tmp`
+  writeFileSync(tmp, `${JSON.stringify(prefs, null, 2)}\n`, 'utf-8')
+  renameSync(tmp, target)
 }
 
 function writeSecrets(keys: Record<string, string>): void {
@@ -248,25 +340,44 @@ export function setApiKey(provider: string, key: string): void {
 
 export function setProvider(provider: string): void {
   const cleanProvider = provider.trim()
-  if (!ENABLED_PROVIDERS.includes(cleanProvider)) {
+  const customIds = prefs.customProviders.map((p) => p.id)
+  const known = ENABLED_PROVIDERS.includes(cleanProvider) || customIds.includes(cleanProvider)
+  if (!known) {
     throw new Error(`Unknown provider: ${cleanProvider === '' ? '(empty)' : cleanProvider}`)
   }
   if (cleanProvider === prefs.provider) return
-  // Keep the model only when it exists on the new provider; otherwise fall
-  // back to that provider's curated default.
-  const next = PROVIDERS[cleanProvider]
-  const model = next.models.includes(prefs.model) ? prefs.model : next.defaultModel
+  let model = prefs.model
+  if (ENABLED_PROVIDERS.includes(cleanProvider)) {
+    const next = PROVIDERS[cleanProvider as 'google' | 'groq']
+    model = next.models.includes(prefs.model) ? prefs.model : next.defaultModel
+  } else {
+    const profile = prefs.customProviders.find((p) => p.id === cleanProvider)
+    if (profile) model = profile.model
+  }
   prefs = { ...prefs, provider: cleanProvider, model }
   writePrefs()
 }
 
 export function setModel(model: string): void {
   const cleanModel = model.trim()
-  const valid = PROVIDERS[prefs.provider].models.includes(cleanModel)
-  if (!valid) {
-    throw new Error(`Unknown model: ${cleanModel === '' ? '(empty)' : cleanModel}`)
+  if (prefs.provider === 'google' || prefs.provider === 'groq') {
+    const valid = PROVIDERS[prefs.provider as 'google' | 'groq'].models.includes(cleanModel)
+    if (!valid) {
+      throw new Error(`Unknown model: ${cleanModel === '' ? '(empty)' : cleanModel}`)
+    }
+    prefs = { ...prefs, model: cleanModel }
+    writePrefs()
+    return
   }
-  prefs = { ...prefs, model: cleanModel }
+  // Custom active provider: free-form model id, kept in sync with the profile.
+  const valid = validateCustomModel(cleanModel)
+  prefs = {
+    ...prefs,
+    model: valid,
+    customProviders: prefs.customProviders.map((p) =>
+      p.id === prefs.provider ? { ...p, model: valid, updatedAt: nowIso() } : p
+    )
+  }
   writePrefs()
 }
 
@@ -281,4 +392,88 @@ export function clearApiKey(provider: string): void {
     encryptedKeys = next
   }
   sessionKeys.delete(cleanProvider)
+}
+
+export function setAppearance(appearance: string): void {
+  prefs = { ...prefs, appearance: normalizeAppearance(appearance) }
+  writePrefs()
+}
+
+export function setPermissionDefaults(input: unknown): PermissionDefaults {
+  const next = normalizePermissionDefaults(input)
+  prefs = { ...prefs, permissionDefaults: next }
+  writePrefs()
+  return { ...next }
+}
+
+export function createCustomProvider(input: {
+  name: string
+  baseUrl: string
+  model: string
+}): CustomProviderProfile {
+  const name = validateProviderName(input.name)
+  const baseUrl = normalizeBaseUrl(input.baseUrl)
+  const model = validateCustomModel(input.model)
+  const now = nowIso()
+  const profile: CustomProviderProfile = {
+    id: `custom:${randomUUID()}`,
+    name,
+    baseUrl,
+    model,
+    createdAt: now,
+    updatedAt: now
+  }
+  prefs = { ...prefs, customProviders: [...prefs.customProviders, profile] }
+  writePrefs()
+  return { ...profile }
+}
+
+export function updateCustomProvider(
+  id: string,
+  input: { name?: string; baseUrl?: string; model?: string }
+): CustomProviderProfile {
+  const cleanId = id.trim()
+  const index = prefs.customProviders.findIndex((p) => p.id === cleanId)
+  if (index === -1) throw new Error('That custom provider no longer exists.')
+  const current = prefs.customProviders[index]
+  const next: CustomProviderProfile = {
+    ...current,
+    name: input.name !== undefined ? validateProviderName(input.name) : current.name,
+    baseUrl: input.baseUrl !== undefined ? normalizeBaseUrl(input.baseUrl) : current.baseUrl,
+    model: input.model !== undefined ? validateCustomModel(input.model) : current.model,
+    updatedAt: nowIso()
+  }
+  const customProviders = prefs.customProviders.map((p, i) => (i === index ? next : p))
+  prefs = {
+    ...prefs,
+    customProviders,
+    // Keep the active model mirror in sync when editing the active profile.
+    model: prefs.provider === next.id ? next.model : prefs.model
+  }
+  writePrefs()
+  return { ...next }
+}
+
+export function deleteCustomProvider(id: string): void {
+  const cleanId = id.trim()
+  if (cleanId === '') throw new Error('Provider is required.')
+  if (prefs.provider === cleanId) {
+    throw new Error(
+      'This provider is currently selected. Pick another provider before removing it.'
+    )
+  }
+  const exists = prefs.customProviders.some((p) => p.id === cleanId)
+  if (!exists) throw new Error('That custom provider no longer exists.')
+  prefs = { ...prefs, customProviders: prefs.customProviders.filter((p) => p.id !== cleanId) }
+  writePrefs()
+  // Removing a profile removes its key too — no orphan secrets. Persisted and
+  // session-only copies both go; a failure writing secrets.bin must not
+  // resurrect the profile, so the profile write above commits first.
+  if (storageAvailable && encryptedKeys[cleanId] !== undefined) {
+    const next = { ...encryptedKeys }
+    delete next[cleanId]
+    writeSecrets(next)
+    encryptedKeys = next
+  }
+  sessionKeys.delete(cleanId)
 }
