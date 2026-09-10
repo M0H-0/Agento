@@ -988,6 +988,12 @@
   gap: 0.9rem;
 }
 
+/* Tab panels stay mounted but hidden (form drafts survive tab switches).
+   The class display:flex overrides the UA [hidden] rule, so re-assert it. */
+.settings-section[hidden] {
+  display: none;
+}
+
 .settings-heading {
   font-size: 0.8rem;
   font-weight: 600;
@@ -1119,10 +1125,33 @@
   color: var(--accent-foreground);
 }
 
-.settings-section + .settings-section {
-  margin-top: 1.25rem;
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--border);
+.settings-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-tab {
+  padding: 0.45rem 0.8rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-tab:hover {
+  color: var(--foreground);
+}
+
+.settings-tab[aria-selected='true'] {
+  border-bottom-color: var(--foreground);
+  color: var(--foreground);
 }
 
 .settings-custom-list {

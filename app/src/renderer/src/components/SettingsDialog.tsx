@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 
-// Settings modal (docs/04 §3.7): Providers (built-ins + custom
-// OpenAI-compatible profiles), Appearance, Permissions, Data. Keys are never
-// rendered back: the dialog shows "•••• <last4>", which is all main ever
-// sends (docs/06 §7). Custom profiles hold an opaque `custom:<uuid>` id —
-// renames never orphan the stored secret.
+// Settings modal (docs/04 §3.7): tabbed by category — Providers (built-ins +
+// custom OpenAI-compatible profiles), Appearance, Permissions, Data. Only the
+// active tab's panel is shown (others stay mounted but hidden, so form drafts
+// survive tab switches). Keys are never rendered back: the dialog shows
+// "•••• <last4>", which is all main ever sends (docs/06 §7). Custom profiles
+// hold an opaque `custom:<uuid>` id — renames never orphan the stored secret.
 
 // Structural mirror of SettingsSnapshot in src/preload/index.d.ts — the
 // renderer consumes window.agento typed globally and doesn't import preload.
@@ -51,6 +52,15 @@ function providerLabel(id: string, customs: CustomProviderSnapshot[]): string {
   return customs.find((p) => p.id === id)?.name ?? id
 }
 
+type SettingsTab = 'providers' | 'appearance' | 'permissions' | 'data'
+
+const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
+  { id: 'providers', label: 'Providers' },
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'permissions', label: 'Permissions' },
+  { id: 'data', label: 'Data' }
+]
+
 interface SettingsDialogProps {
   open: boolean
   onClose: () => void
@@ -75,6 +85,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
   const [formKey, setFormKey] = useState('')
   const [testResult, setTestResult] = useState<string | null>(null)
   const [testing, setTesting] = useState(false)
+  const [activeTab, setActiveTab] = useState<SettingsTab>('providers')
   const dialogRef = useRef<HTMLDivElement | null>(null)
 
   const refresh = (): Promise<void> =>
@@ -109,6 +120,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
         setNotice(null)
         setTestResult(null)
         setEditingId(undefined)
+        setActiveTab('providers')
       })
       .catch(() => {
         if (cancelled) return
@@ -409,11 +421,35 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
           </button>
         </div>
 
+        <div className="settings-tabs" role="tablist" aria-label="Settings categories">
+          {SETTINGS_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              id={`settings-tab-${tab.id}`}
+              aria-selected={activeTab === tab.id}
+              aria-controls={`settings-panel-${tab.id}`}
+              className="settings-tab"
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
         {snapshot === null ? (
           <p className="settings-note">Loading settings…</p>
         ) : (
           <>
-            <section className="settings-section" aria-label="Providers">
+            <section
+              className="settings-section"
+              id="settings-panel-providers"
+              role="tabpanel"
+              aria-labelledby="settings-tab-providers"
+              aria-label="Providers"
+              hidden={activeTab !== 'providers'}
+            >
               <h3 className="settings-heading">Providers</h3>
 
               <div className="settings-field">
@@ -709,7 +745,14 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
               {testResult !== null && <p className="settings-note">{testResult}</p>}
             </section>
 
-            <section className="settings-section" aria-label="Appearance">
+            <section
+              className="settings-section"
+              id="settings-panel-appearance"
+              role="tabpanel"
+              aria-labelledby="settings-tab-appearance"
+              aria-label="Appearance"
+              hidden={activeTab !== 'appearance'}
+            >
               <h3 className="settings-heading">Appearance</h3>
               <div className="settings-field">
                 <span className="settings-label" id="settings-appearance-label">
@@ -729,7 +772,14 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
               </div>
             </section>
 
-            <section className="settings-section" aria-label="Permissions">
+            <section
+              className="settings-section"
+              id="settings-panel-permissions"
+              role="tabpanel"
+              aria-labelledby="settings-tab-permissions"
+              aria-label="Permissions"
+              hidden={activeTab !== 'permissions'}
+            >
               <h3 className="settings-heading">Permissions</h3>
               <div className="settings-field">
                 <span className="settings-label" id="settings-risk1-label">
@@ -781,7 +831,14 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
               </p>
             </section>
 
-            <section className="settings-section" aria-label="Data">
+            <section
+              className="settings-section"
+              id="settings-panel-data"
+              role="tabpanel"
+              aria-labelledby="settings-tab-data"
+              aria-label="Data"
+              hidden={activeTab !== 'data'}
+            >
               <h3 className="settings-heading">Data</h3>
               <p className="settings-note">
                 {dataSummary === null
