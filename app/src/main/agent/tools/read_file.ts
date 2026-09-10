@@ -1,6 +1,7 @@
 import { basename } from 'node:path'
 import { z } from 'zod'
 import type { ToolDefinition } from '../types'
+import { wrapUntrusted } from '../untrusted'
 
 // P0 read-only tool (docs/03 §5): read a text file. Optional startLine/maxLines
 // for large files — without them the wrapper's 8 KB truncation (docs/03 §5
@@ -48,7 +49,7 @@ export const readFileTool: ToolDefinition<
       ok: true,
       output: {
         path: input.path,
-        content: slice,
+        content: wrapUntrusted(`file ${basename(input.path)}`, slice),
         startLine: start,
         endLine: end,
         totalLines: meaningful.length,

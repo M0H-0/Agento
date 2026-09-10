@@ -1,6 +1,7 @@
 import { basename } from 'node:path'
 import { z } from 'zod'
 import type { ToolDefinition } from '../types'
+import { wrapUntrusted } from '../untrusted'
 import { readDocumentText } from '../document-text'
 
 // MVP tool (MVP_PLAN.md): read a document as plain text. Binary formats
@@ -34,7 +35,7 @@ export const readDocumentTool: ToolDefinition<
         ok: true,
         output: {
           path: input.path,
-          text: slice,
+          text: wrapUntrusted(`document ${basename(input.path)}`, slice),
           truncated: sidecarTruncated || slice.length < text.length
         }
       }

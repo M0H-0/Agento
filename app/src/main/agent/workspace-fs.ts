@@ -14,7 +14,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import type { WorkspaceFs } from './types'
-import { worksWithRoot } from './sandbox'
+import { assertAbsoluteInsideWorkspace, worksWithRoot } from './sandbox'
 
 // The registry-injected fs facade (AGENTS.md rule 2): tool bodies never call
 // node:fs directly; every mutation crosses this facade, which re-checks
@@ -47,6 +47,18 @@ function assertInsideWorkspace(root: string, target: string): void {
   }
 }
 
+function revalidate(root: string, target: string, access: 'read' | 'write'): void {
+  assertInsideWorkspace(root, target)
+  try {
+    assertAbsoluteInsideWorkspace(root, target, access)
+  } catch (error) {
+    if (error instanceof Error && 'kind' in error) {
+      throw new WorkspaceFsRefusalError(error.message)
+    }
+    throw error
+  }
+}
+
 // Single shallow entry-type tag — keeps the card-meta line honest without
 // shelling out to `fs.stat` per child (we already need the stat for the
 // isDirectory distinction).
@@ -59,6 +71,31 @@ function tagEntryType(name: string, parent: string): 'file' | 'directory' {
   }
 }
 
+function writeBufferAtomic(workspaceRoot: string, path: string, data: Buffer): number {
+  revalidate(workspaceRoot, path, 'write')
+  mkdirSync(dirname(path), { recursive: true })
+  // Revalidate the parent chain after mkdir: a concurrent swap could have
+  // replaced a parent with a link between the first check and the write.
+  revalidate(workspaceRoot, path, 'write')
+  const tempPath = `${path}.${randomBytes(6).toString('hex')}.agento-tmp`
+  try {
+    writeFileSync(tempPath, data)
+    renameSync(tempPath, path)
+  } catch (error) {
+    try {
+      if (existsSync(tempPath)) unlinkSync(tempPath)
+    } catch {
+      // noop — cleanup is best-effort only
+    }
+    throw new WorkspaceFsRefusalError(
+      `I could not write "${relative(workspaceRoot, path)}" — ${
+        error instanceof Error ? error.message : String(error)
+      }. Nothing was changed.`
+    )
+  }
+  return data.length
+}
+
 export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
   const facade: WorkspaceFs = {
     existsSync(path: string): boolean {
@@ -66,7 +103,7 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
       return existsSync(path)
     },
     readFileSync(path: string): string {
-      assertInsideWorkspace(workspaceRoot, path)
+      revalidate(workspaceRoot, path, 'read')
       try {
         return readFileSync(path, 'utf8')
       } catch (error) {
@@ -77,32 +114,23 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
         )
       }
     },
-    writeFileAtomic(path: string, content: string): number {
-      assertInsideWorkspace(workspaceRoot, path)
-      // Temp file lives NEXT to the target (same directory = same volume, so
-      // the rename is atomic on Windows and POSIX alike). mkdirSync only
-      // creates a missing parent for the target — never outside the workspace
-      // (assertInsideWorkspace already ran on `path`).
-      mkdirSync(dirname(path), { recursive: true })
-      const tempPath = `${path}.${randomBytes(6).toString('hex')}.agento-tmp`
+    readFileBytes(path: string): Buffer {
+      revalidate(workspaceRoot, path, 'read')
       try {
-        writeFileSync(tempPath, content, 'utf8')
-        renameSync(tempPath, path)
+        return readFileSync(path)
       } catch (error) {
-        // Best-effort cleanup of the temp file on failure; the target is
-        // untouched because the rename never happened.
-        try {
-          if (existsSync(tempPath)) unlinkSync(tempPath)
-        } catch {
-          // noop — cleanup is best-effort only
-        }
-        throw new WorkspaceFsRefusalError(
-          `I could not write "${relative(workspaceRoot, path)}" — ${
+        throw new WorkspaceFsReadError(
+          `I could not read "${relative(workspaceRoot, path)}" — ${
             error instanceof Error ? error.message : String(error)
-          }. Nothing was changed.`
+          }.`
         )
       }
-      return Buffer.byteLength(content, 'utf8')
+    },
+    writeFileAtomic(path: string, content: string): number {
+      return writeBufferAtomic(workspaceRoot, path, Buffer.from(content, 'utf8'))
+    },
+    writeFileBytes(path: string, data: Buffer): number {
+      return writeBufferAtomic(workspaceRoot, path, data)
     },
     isDirectory(path: string): boolean {
       assertInsideWorkspace(workspaceRoot, path)
@@ -113,7 +141,7 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
       }
     },
     mkdir(path: string): void {
-      assertInsideWorkspace(workspaceRoot, path)
+      revalidate(workspaceRoot, path, 'write')
       try {
         mkdirSync(path, { recursive: true })
       } catch (error) {
@@ -125,17 +153,16 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
       }
     },
     movePath(from: string, to: string): void {
-      assertInsideWorkspace(workspaceRoot, from)
-      assertInsideWorkspace(workspaceRoot, to)
+      revalidate(workspaceRoot, from, 'write')
+      revalidate(workspaceRoot, to, 'write')
       if (!existsSync(from)) {
         throw new WorkspaceFsRefusalError(
           `I couldn't find "${relative(workspaceRoot, from)}" — it may have been moved or renamed. Nothing was changed.`
         )
       }
-      // Missing dest parents are created (writeFileAtomic doctrine); an
-      // existing dest is replaced — the wrapper snapshots both sides first,
-      // so undo restores each (docs/03 §8).
       mkdirSync(dirname(to), { recursive: true })
+      revalidate(workspaceRoot, from, 'write')
+      revalidate(workspaceRoot, to, 'write')
       try {
         if (existsSync(to)) {
           if (statSync(to).isDirectory()) rmdirSync(to)
@@ -151,8 +178,8 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
       }
     },
     copyPath(from: string, to: string): number {
-      assertInsideWorkspace(workspaceRoot, from)
-      assertInsideWorkspace(workspaceRoot, to)
+      revalidate(workspaceRoot, from, 'read')
+      revalidate(workspaceRoot, to, 'write')
       if (!existsSync(from)) {
         throw new WorkspaceFsRefusalError(
           `I couldn't find "${relative(workspaceRoot, from)}" — it may have been moved or renamed. Nothing was changed.`
@@ -175,9 +202,8 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
         )
       }
       mkdirSync(dirname(to), { recursive: true })
+      revalidate(workspaceRoot, to, 'write')
       try {
-        // Byte-exact (not text) so non-text files survive the copy; the
-        // snapshot layer stays text-oriented by design (write_file doctrine).
         copyFileSync(from, to)
       } catch (error) {
         throw new WorkspaceFsRefusalError(
@@ -189,7 +215,7 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
       return size
     },
     deletePath(path: string): void {
-      assertInsideWorkspace(workspaceRoot, path)
+      revalidate(workspaceRoot, path, 'write')
       if (!existsSync(path)) {
         throw new WorkspaceFsRefusalError(
           `I couldn't find "${relative(workspaceRoot, path)}" — it may already be gone. Nothing was changed.`
@@ -213,7 +239,7 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
       }
     },
     readdir(path: string): { name: string; type: 'file' | 'directory' }[] {
-      assertInsideWorkspace(workspaceRoot, path)
+      revalidate(workspaceRoot, path, 'read')
       let names: string[]
       try {
         names = nodeReaddirSync(path)
@@ -227,13 +253,7 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
       return names.map((name) => ({ name, type: tagEntryType(name, path) }))
     },
     walkFiles(root: string, limit: number): string[] {
-      assertInsideWorkspace(workspaceRoot, root)
-      // Iterative DFS, alphabetical, capped at `limit`. Skips directories
-      // entirely (the caller wants file paths to search) and skips ALL
-      // symbolic links / junctions — a link's target may sit outside the
-      // workspace or be a cycle, and the realpath containment check is the
-      // sandbox resolver's authoritative job, not the walk's (M2.8 review
-      // fix: the walk previously FOLLOWED links into their targets).
+      revalidate(workspaceRoot, root, 'read')
       const out: string[] = []
       const stack: string[] = [root]
       while (stack.length > 0 && out.length < limit) {
@@ -250,9 +270,6 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
           const child = join(dir, name)
           let isDir = false
           try {
-            // lstatSync reports the LINK itself (a junction is a symlink in
-            // Node): links are skipped outright — they may point outside the
-            // workspace or into a cycle.
             const lst = lstatSync(child)
             if (lst.isSymbolicLink()) continue
             isDir = lst.isDirectory()

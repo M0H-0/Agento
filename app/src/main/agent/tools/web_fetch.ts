@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { ToolDefinition } from '../types'
+import { containsAssistantAddressedText, wrapUntrusted } from '../untrusted'
 
 // MVP tool (MVP_PLAN.md): fetch a web page over plain HTTP GET and return
 // readable text. No search engine, no JS rendering. The network call itself
@@ -56,7 +57,13 @@ function failure(
 
 export const webFetchTool: ToolDefinition<
   { url: string },
-  { url: string; title?: string; text: string; truncated: boolean }
+  {
+    url: string
+    title?: string
+    text: string
+    truncated: boolean
+    suspicious?: boolean
+  }
 > = {
   name: 'web_fetch',
   description:
@@ -104,13 +111,15 @@ export const webFetchTool: ToolDefinition<
         ? htmlToText(response.body)
         : { title: undefined, text: response.body }
       const slice = fullText.slice(0, MAX_TEXT_CHARS)
+      const framed = wrapUntrusted(`web page ${input.url}`, slice)
       return {
         ok: true,
         output: {
           url: input.url,
           ...(title !== undefined ? { title } : {}),
-          text: slice,
-          truncated: slice.length < fullText.length
+          text: framed,
+          truncated: slice.length < fullText.length,
+          ...(containsAssistantAddressedText(slice) ? { suspicious: true as const } : {})
         }
       }
     } catch (error) {

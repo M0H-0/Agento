@@ -133,6 +133,8 @@ Never raw in replies: JSON, tool names, stack traces, HTTP codes. Shared `friend
 | provider 401 | "The API key for this provider isn't working. Check it in Settings → Providers." |
 | provider 429 | "The model is rate-limiting us. I'll wait a moment and retry." |
 | plan phase 400 (incl. `tool_use_failed`) | "I couldn't create a plan for that. Try rephrasing the request." |
+| text-only plan answer to a file-changing request | "I couldn't make a plan for that request, so I didn't change anything. Try rephrasing it." (never a dead "Sure!" with no file) |
+| approved plan, zero tool calls | "I prepared the plan but didn't take any actions, so nothing changed. Try saying which file to create and what to put in it." |
 | parse failure | "I couldn't read this document — it may be a scan or password-protected." |
 | sandbox rejection | "That's outside your workspace folder, so I won't touch it." |
 

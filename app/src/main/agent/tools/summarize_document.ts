@@ -1,6 +1,7 @@
 import { basename } from 'node:path'
 import { z } from 'zod'
 import type { ToolDefinition } from '../types'
+import { wrapUntrusted } from '../untrusted'
 import { readDocumentText } from '../document-text'
 
 // MVP tool (MVP_PLAN.md): summarize a document. Extraction rides the same
@@ -43,8 +44,7 @@ export const summarizeDocumentTool: ToolDefinition<
         extract.length < text.length
           ? 'The text below is only the beginning of a longer document — say so briefly.'
           : '',
-        '--- DOCUMENT TEXT ---',
-        extract
+        wrapUntrusted(`document ${basename(input.path)}`, extract)
       ]
         .filter((line) => line !== '')
         .join('\n')

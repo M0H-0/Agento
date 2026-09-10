@@ -129,6 +129,37 @@ describe('registry wrapper — mandatory stage order', () => {
     expect(outcome.message).toContain('nope')
     expect(() => harness.registry.define(writeFileTool)).toThrowError(/Duplicate tool definition/)
   })
+
+  it('snapshot failure refuses the mutation fail-closed (no execute)', async () => {
+    const failingCtx = {
+      ...harness.ctx,
+      snapshot: (): void => {
+        throw new Error('durable snapshot failed')
+      }
+    }
+    const outcome = await harness.registry.run({
+      tool: 'write_file',
+      args: { path: 'new.txt', content: 'hello' },
+      ctx: failingCtx
+    })
+    expect(outcome.ok).toBe(false)
+    expect(outcome.status).toBe('refused')
+    expect(existsSync(join(ws.root, 'new.txt'))).toBe(false)
+  })
+
+  it('publishes sandbox-resolved absolute inputs for verification (not raw model paths)', async () => {
+    const seen: { tool: string; input: unknown }[] = []
+    const outcome = await harness.registry.run({
+      tool: 'write_file',
+      args: { path: 'new.txt', content: 'hello' },
+      ctx: harness.ctx,
+      onOutcome: (entry) => void seen.push({ tool: entry.tool, input: entry.input })
+    })
+    expect(outcome.ok).toBe(true)
+    expect(seen).toHaveLength(1)
+    const published = (seen[0] as { input: { path: string } }).input
+    expect(published.path).toBe(join(ws.root, 'new.txt'))
+  })
 })
 
 describe('wrapper — atomic write + no temp leftovers', () => {

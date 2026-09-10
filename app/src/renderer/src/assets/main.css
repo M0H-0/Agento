@@ -633,6 +633,43 @@
   padding: 0.15rem 0;
 }
 
+/* Keep the user oriented during provider latency and tool execution. The
+   animated mark is supplemental; the text is the accessible source of truth. */
+.run-status {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  align-self: flex-start;
+  margin: 0.25rem 0 0.5rem;
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+  line-height: 1.25;
+}
+
+.run-status__pulse {
+  width: 0.45rem;
+  height: 0.45rem;
+  flex: 0 0 auto;
+  border-radius: 9999px;
+  background: var(--primary);
+  box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 35%, transparent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .run-status__pulse {
+    animation: status-pulse 1.5s ease-out infinite;
+  }
+}
+
+@keyframes status-pulse {
+  70% {
+    box-shadow: 0 0 0 0.35rem transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
 /* docs/04 §8.4 — scroll-to-bottom: ThreadPrimitive.ScrollToBottom renders
    disabled while isAtBottom, so visibility is styled off :disabled. */
 .scroll-to-bottom {
@@ -1655,6 +1692,15 @@
 
 /* M3.2 ApprovalDialog (docs/04 §3.2) — blocking modal, no overlay-click or
    Escape dismiss; the run stays blocked until a decision resolves. */
+.approval-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 0.45);
+}
 .approval-dialog {
   position: fixed;
   top: 50%;

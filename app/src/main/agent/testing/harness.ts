@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type { SnapshotEntry, ToolCallOutcome, ToolExecutionContext } from '../types'
 import { createWorkspaceFs } from '../workspace-fs'
 import { createToolRegistry } from '../registry'
+import { encodeSnapshotContent } from '../snapshots'
 
 // Wrapper test harness (docs/07 §2 Sandbox guard / Registry wrapper rows):
 // builds a real temp workspace, a scriptable approval hook, an in-memory
@@ -69,13 +70,17 @@ export function createHandlerHarness(
     },
     snapshot: (path, meta) => {
       stages.order.push('snapshot')
-      // A directory target has no file content to restore — the checkpoint
-      // records existed + path only (undo deletes the created dir).
+      // Mirrors the real ctx.snapshot (binary-safe + fail-closed).
       const isDir = fs.isDirectory(path)
+      const existed = fs.existsSync(path)
+      let content: string | null = null
+      if (!isDir && existed) {
+        content = encodeSnapshotContent(fs.readFileBytes(path))
+      }
       const entry = {
         path,
-        content: !isDir && fs.existsSync(path) ? fs.readFileSync(path) : null,
-        existed: fs.existsSync(path),
+        content,
+        existed,
         isDir,
         tool: 'write_file',
         destPath: meta?.destPath ?? null,

@@ -152,15 +152,20 @@ export function createToolRegistry(): ToolRegistry {
     }) => void
   }): Promise<ToolCallOutcome> {
     const startedAt = Date.now()
-    // runInner records the classified level here (its own stage-3 result —
-    // never a second classification, which would double-run ctx.exists and
-    // pollute the harness stage log).
-    const audit: { riskLevel: number } = { riskLevel: 0 }
+    // runInner records the classified level + resolved input here (its own
+    // stage-2/3 results — never a second classification/resolution, which
+    // would double-run ctx.exists and pollute the harness stage log).
+    // Resolved (absolute) inputs are what verification checks — raw
+    // model-relative paths would never match a filesystem postcondition.
+    const audit: { riskLevel: number; resolvedInput: unknown } = {
+      riskLevel: 0,
+      resolvedInput: input.args
+    }
     const notify = (ok: boolean, status: ToolCallStatus, message: string): void => {
       input.onOutcome?.({
         tool: status === 'refused' ? input.tool : (tools.get(input.tool)?.name ?? input.tool),
         toolCallId: input.toolCallId ?? null,
-        input: input.args,
+        input: status === 'refused' ? input.args : audit.resolvedInput,
         ok,
         status,
         message,
@@ -188,7 +193,7 @@ export function createToolRegistry(): ToolRegistry {
       ctx: ToolExecutionContext
       toolCallId?: string
     },
-    audit: { riskLevel: number }
+    audit: { riskLevel: number; resolvedInput: unknown }
   ): Promise<ToolCallOutcome> {
     const tool = tools.get(input.tool)
     if (!tool)
@@ -228,6 +233,7 @@ export function createToolRegistry(): ToolRegistry {
 
     // 3 — risk classification (rule-table floor; the sidecar may raise, never
     // lower, from M4 — docs/06 §2).
+    audit.resolvedInput = resolvedInput
     const risk: RiskClassification = tool.risk(resolvedInput as never, input.ctx)
     audit.riskLevel = risk.level
 
@@ -274,18 +280,29 @@ export function createToolRegistry(): ToolRegistry {
       // The snapshot set defaults to every pathField; a tool that does not
       // mutate one of its pathFields (copy_path's `from`) narrows the set via
       // `snapshotFields` so undo can never rewrite an untouched path (M2.8
-      // review fix — docs/03 §5).
+      // review fix — docs/03 §5). Fail-closed: any snapshot throw (read,
+      // cap, or durable persistence) refuses the mutation — no un-undoable
+      // writes (docs/03 §7).
       const snapFields =
         typeof tool.snapshotFields === 'function'
           ? tool.snapshotFields(resolvedInput as never)
           : tool.pathFields
-      snapFields.forEach((field, index) => {
-        input.ctx.snapshot(String(resolvedInput[String(field)]), {
-          tool: tool.name,
-          toolCallId: input.toolCallId,
-          destPath: index === 0 ? (destPath ?? undefined) : undefined
+      try {
+        snapFields.forEach((field, index) => {
+          input.ctx.snapshot(String(resolvedInput[String(field)]), {
+            tool: tool.name,
+            toolCallId: input.toolCallId,
+            destPath: index === 0 ? (destPath ?? undefined) : undefined
+          })
         })
-      })
+      } catch (error) {
+        return refusal(
+          error instanceof Error
+            ? error.message
+            : 'I could not snapshot that change, so I left it untouched. Nothing was changed.',
+          { reason: 'snapshot' }
+        )
+      }
     }
 
     // 6 — execute. The tool body sees only pre-resolved, guarded paths and the

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { WorkspaceFs } from './types'
+import { decodeSnapshotContent, encodeSnapshotContent } from './snapshots'
 import { WorkspaceFsRefusalError } from './workspace-fs'
 
 // Snapshot/undo engine (M2.8; docs/03 §7-8, docs/07 §2 undo matrix).
@@ -49,7 +50,10 @@ export type UndoResult =
   | { ok: false; checkpointId: string; error: string }
 
 function sha256Hex(content: string): string {
-  return createHash('sha256').update(content, 'utf8').digest('hex')
+  const raw = decodeSnapshotContent(content)
+  return createHash('sha256')
+    .update(raw ?? Buffer.from(content, 'utf8'))
+    .digest('hex')
 }
 
 function refusal(checkpointId: string, error: string): UndoResult {
@@ -106,13 +110,14 @@ export function undoCheckpoint(
   }
 
   // Capture the pre-undo state FIRST (the undo's own undo). Directories
-  // carry no content — the row records dir-ness only.
+  // carry no content — the row records dir-ness only. Binary-safe: raw bytes
+  // are re-encoded with the same b64: marker scheme as snapshots.
   const targetIsDir = fs.isDirectory(cp.path)
   const targetExisted = fs.existsSync(cp.path)
   let preContent: string | null = null
   if (targetExisted && !targetIsDir) {
     try {
-      preContent = fs.readFileSync(cp.path)
+      preContent = encodeSnapshotContent(fs.readFileBytes(cp.path))
     } catch {
       return refusal(
         checkpointId,
@@ -157,7 +162,10 @@ export function undoCheckpoint(
     }
     // Existed as a file → restore exact bytes (docs/03 §8). Reachability of
     // this branch implies the pre-check above already verified content + sha.
-    fs.writeFileAtomic(cp.path, cp.content as string)
+    // Binary-safe: b64: rows decode to raw bytes; text rows write UTF-8.
+    const raw =
+      decodeSnapshotContent(cp.content as string) ?? Buffer.from(cp.content as string, 'utf8')
+    fs.writeFileBytes(cp.path, raw)
     return done('Restored the previous content.')
   } catch (error) {
     // The undo row stays (it honestly records the pre-undo state); the

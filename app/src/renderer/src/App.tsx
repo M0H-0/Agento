@@ -62,7 +62,7 @@ function AssistantMessage(): React.JSX.Element {
   )
 }
 
-function Thread({ error }: { error?: Error }): React.JSX.Element {
+function Thread({ error, runStatus }: { error?: Error; runStatus?: string }): React.JSX.Element {
   return (
     <ThreadPrimitive.Root className="thread">
       <ThreadPrimitive.Viewport className="thread-viewport">
@@ -72,6 +72,12 @@ function Thread({ error }: { error?: Error }): React.JSX.Element {
             <p>Say something — the main process echoes it back over IPC.</p>
           </div>
         </ThreadPrimitive.If>
+        {runStatus ? (
+          <div className="run-status" role="status" aria-live="polite">
+            <span className="run-status__pulse" aria-hidden="true" />
+            <span>{runStatus}</span>
+          </div>
+        ) : null}
         <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
         {/* Conversation errors render as an honest sentence in the thread
             (docs/04 §6); useChat carries the friendly text from main's error
@@ -119,6 +125,7 @@ interface ChatViewProps {
   onSettled: () => void
   initialMessages: UIMessage[]
   registerDispose: (dispose: (() => void) | null) => void
+  runStatus?: string
 }
 
 // One conversation view. Remounted (keyed by an epoch that advances only on
@@ -133,7 +140,8 @@ function ChatView({
   onSessionCreated,
   onSettled,
   initialMessages,
-  registerDispose
+  registerDispose,
+  runStatus
 }: ChatViewProps): React.JSX.Element {
   // Created once per mount: the transport carries this view's run state
   // (in-flight guard, active run's session id), so a per-render identity
@@ -143,6 +151,13 @@ function ChatView({
   )
   const chat = useChat({ transport: ipc.transport, messages: initialMessages })
   const runtime = useAISDKRuntime(chat)
+  const liveStatus =
+    runStatus ??
+    (chat.status === 'submitted'
+      ? 'Preparing a safe plan...'
+      : chat.status === 'streaming'
+        ? 'Working...'
+        : undefined)
   // The view is unmounted ONLY by an explicit session switch / New chat, and
   // App runs dispose there (before the remount) rather than in an effect
   // cleanup: StrictMode's simulated mount-unmount cycle would otherwise
@@ -161,6 +176,9 @@ function ChatView({
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
       if (document.querySelector('.settings-overlay')) return
+      // The approval dialog is blocking with no Escape dismiss — Esc must not
+      // stop the run out from under the pending approval promise.
+      if (document.querySelector('.approval-dialog-overlay')) return
       stop()
     }
     document.addEventListener('keydown', onKeyDown)
@@ -169,7 +187,7 @@ function ChatView({
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <ToolUIRegistry />
-      <Thread error={chat.error} />
+      <Thread error={chat.error} runStatus={liveStatus} />
     </AssistantRuntimeProvider>
   )
 }
@@ -192,6 +210,11 @@ function App(): React.JSX.Element {
   const registerDispose = useCallback((dispose: (() => void) | null) => {
     chatDisposeRef.current = dispose
   }, [])
+  // Event ordering: per-session monotonic seq + active run binding. Stale or
+  // cross-run events are discarded so a delayed prior run cannot overwrite a
+  // newer plan or reopen an obsolete approval.
+  const lastSeqRef = useRef(0)
+  const lastRunIdRef = useRef<string | null>(null)
 
   // MVP onboarding gate (MVP_PLAN.md; M6.1 cut): first launch walks one
   // static screen until a workspace AND an API key exist. null = still
@@ -249,43 +272,80 @@ function App(): React.JSX.Element {
   const [planStartRequested, setPlanStartRequested] = useState(false)
 
   const handlePlanStart = useCallback(() => {
-    // Optimistic: the run is blocked on the gate; main resolves it. The
-    // button hides either way — a declined/duplicate start is ok:false and
-    // the panel just stays on its honest pre-execution footer.
-    setPlanStartRequested(true)
-    window.agento.plan.start().catch((error) => console.error('plan:start failed:', error))
-  }, [setPlanStartRequested])
+    // Session/run-bound: the button hides only after main confirms ok:true.
+    // A rejected start keeps the control so the user can retry.
+    const sessionId = activeSessionIdRef.current
+    const runId = plan?.runId
+    window.agento.plan
+      .start({
+        ...(sessionId ? { sessionId } : {}),
+        ...(runId ? { runId } : {})
+      })
+      .then((result) => {
+        if (result.ok) setPlanStartRequested(true)
+        else console.error('plan:start rejected:', result.reason)
+      })
+      .catch((error) => console.error('plan:start failed:', error))
+  }, [plan?.runId])
 
   // M3.2 approval dialog: one at a time, keyed by approvalId, closed on
-  // approval/resolved (or after responding).
+  // approval/resolved (or after main confirms ok:true).
   const [approval, setApproval] = useState<AgentApprovalRequestedEvent | null>(null)
+  const [approvalError, setApprovalError] = useState<string | null>(null)
+  const [approvalPending, setApprovalPending] = useState(false)
+  const [runStatus, setRunStatus] = useState<string | undefined>(undefined)
 
   function handleApprovalRespond(decision: 'approve' | 'skip' | 'cancel'): void {
-    setApproval((current) => {
-      if (current) {
-        window.agento.approval
-          .respond({ approvalId: current.approvalId, decision })
-          .catch((error) => console.error('approval:respond failed:', error))
-      }
-      return null
-    })
+    const current = approval
+    if (!current || approvalPending) return
+    setApprovalPending(true)
+    setApprovalError(null)
+    window.agento.approval
+      .respond({ approvalId: current.approvalId, decision })
+      .then((result) => {
+        if (result.ok) {
+          // Keep mounted until approval/resolved arrives; the event clears it.
+          // Optimistically clear only on confirmed ok to avoid a stuck dialog
+          // when the event is delayed — the resolved handler is idempotent.
+          setApproval(null)
+        } else {
+          setApprovalError(result.reason ?? 'That decision was not accepted. Try again.')
+        }
+      })
+      .catch((error) => {
+        setApprovalError(
+          error instanceof Error ? error.message : 'Could not send that decision. Try again.'
+        )
+      })
+      .finally(() => setApprovalPending(false))
   }
 
   const resetPlan = useCallback(() => {
     setPlan(null)
     setPlanStartRequested(false)
     setApproval(null)
+    setApprovalError(null)
+    setApprovalPending(false)
+    lastSeqRef.current = 0
+    lastRunIdRef.current = null
   }, [])
 
   useEffect(() => {
     const unsubscribe = window.agento.agent.onEvent((raw) => {
       // Validate and drop: invalid events must never reach state. Consumers
       // route on type (M3): plan/created feeds the PlanPanel; step/verify/
-      // approval events join with M3.5/M3.6.
+      // approval events join with M3.5/M3.6. Enforce per-session monotonic
+      // seq and active-run binding — stale/cross-run events are discarded.
       const event = parseAgentEvent(raw)
       if (!event) return
       if (event.sessionId !== activeSessionIdRef.current) return
+      if (typeof event.seq === 'number') {
+        if (event.seq <= lastSeqRef.current) return
+        lastSeqRef.current = event.seq
+      }
       if (event.type === 'plan/created') {
+        lastRunIdRef.current = event.runId
+        setRunStatus('Plan ready. Review it before anything changes.')
         setPlan((prev) =>
           prev !== null && prev.runId === event.runId
             ? {
@@ -306,6 +366,15 @@ function App(): React.JSX.Element {
               }
         )
       } else if (event.type === 'plan/step_updated') {
+        setRunStatus(
+          event.status === 'done'
+            ? 'Checking the result...'
+            : event.status === 'failed'
+              ? 'That step needs attention.'
+              : event.status === 'skipped'
+                ? 'Continuing with the remaining steps...'
+                : 'Working through your plan...'
+        )
         setPlan((prev) => {
           if (!prev || prev.runId !== event.runId) return prev
           return {
@@ -322,6 +391,9 @@ function App(): React.JSX.Element {
           }
         })
       } else if (event.type === 'verification/finished') {
+        setRunStatus(
+          event.isComplete ? 'Verified. Finishing up...' : 'The result could not be fully verified.'
+        )
         setPlan((prev) => {
           if (!prev || prev.runId !== event.runId) return prev
           const key = event.stepId === 'run' ? (prev.steps[0]?.id ?? 'run') : event.stepId
@@ -338,15 +410,21 @@ function App(): React.JSX.Element {
           }
         })
       } else if (event.type === 'approval/requested') {
+        if (lastRunIdRef.current && event.runId !== lastRunIdRef.current) return
+        lastRunIdRef.current = event.runId
+        setRunStatus('Waiting for your approval...')
         setApproval(event)
-        // The owning step (first match) shows the awaiting glyph.
-        setPlan((prev) => {
-          if (!prev || prev.runId !== event.runId || prev.steps.length === 0) return prev
-          const firstId = prev.steps[0]?.id
-          if (!firstId) return prev
-          return { ...prev, statuses: { ...prev.statuses, [firstId]: 'awaiting_approval' } }
-        })
+        setApprovalError(null)
+        // No false owning-step glyph: the approval request carries no
+        // authoritative stepId yet, so the panel must not mark step 0 as
+        // awaiting. The dialog itself is the approval surface.
       } else if (event.type === 'approval/resolved') {
+        if (lastRunIdRef.current && event.runId !== lastRunIdRef.current) return
+        setRunStatus(
+          event.decision === 'approve'
+            ? 'Approved. Starting the next step...'
+            : 'Continuing without that step...'
+        )
         setApproval((current) =>
           current && current.approvalId === event.approvalId ? null : current
         )
@@ -372,6 +450,7 @@ function App(): React.JSX.Element {
   const onSettled = useCallback(() => {
     refreshSessions()
     setChangesRefreshKey((key) => key + 1)
+    setRunStatus(undefined)
   }, [refreshSessions])
 
   const openSession = useCallback(
@@ -443,6 +522,7 @@ function App(): React.JSX.Element {
           onSettled={onSettled}
           initialMessages={pendingMessages}
           registerDispose={registerDispose}
+          runStatus={runStatus}
         />
       </main>
       {/* The rail collapses when there is no plan and no active session
@@ -467,7 +547,12 @@ function App(): React.JSX.Element {
         </div>
       ) : null}
       {approval !== null ? (
-        <ApprovalDialog request={approval} onRespond={handleApprovalRespond} />
+        <ApprovalDialog
+          request={approval}
+          onRespond={handleApprovalRespond}
+          pending={approvalPending}
+          error={approvalError}
+        />
       ) : null}
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </>

@@ -68,6 +68,19 @@ function logProviderError(cause: APICallError): void {
   }
 }
 
+// Heuristic: does the user's request look like it wants files changed?
+// Used ONLY to choose honest copy when planning fails (a text-only reply to
+// "make a txt file" would look like the run silently stopped). Never a safety
+// gate — mutations still require a valid plan + wrapper snapshot + approval.
+export function isLikelyMutatingRequest(text: string): boolean {
+  const lower = text.toLowerCase()
+  const verbs =
+    /\b(create|make|write|add|save|generate|update|edit|change|fix|move|copy|rename|delete|remove|organize|organise|tidy|backup)\b/
+  const markers =
+    /\b(file|files|folder|folders|directory|directories|note|notes|document|report|txt|text file)\b|\.txt\b|\.md\b/
+  return verbs.test(lower) && markers.test(lower)
+}
+
 // Exported for the plan-run tests (copy classification). `phase: 'plan'`
 // narrows the 400 branch: in the plan phase a non-key 400 is the model or
 // provider refusing to plan, not a connectivity problem.
@@ -432,6 +445,33 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
         //    about the connection (M3.8).
         const genuineError = planAttempt.errorText !== null || planAttempt.finish === null
         if (!genuineError && planAttempt.hadText) {
+          // A text-only answer to a file-changing request is NOT a valid
+          // reply — delivering "Sure!" with no file looks exactly like the
+          // run silently stopped. Fail loudly so the user can rephrase/retry.
+          const userText = deps.messages
+            .filter((m) => m.role === 'user')
+            .flatMap((m) => m.parts)
+            .filter((p) => p.type === 'text')
+            .map((p) => (p as { text: string }).text)
+            .join(' ')
+          if (isLikelyMutatingRequest(userText)) {
+            if (!terminalSent) {
+              deps.sendPart({ type: 'error', errorText: PLAN_FAILED_COPY })
+              terminalSent = true
+            }
+            return {
+              aborted,
+              terminalSent,
+              accumulatorFailed: accumulator.isFailed(),
+              assistantMessage: accumulator.toUIMessage(),
+              heldFinish,
+              usage: sumUsage(planUsage, undefined),
+              stepsTaken,
+              stepLimitReached,
+              planEmitted,
+              planApproved
+            }
+          }
           commitAttempt(planAttempt)
           return {
             aborted,
@@ -507,33 +547,74 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
             }
           ]
         : []
-      const executionResult = streamText({
-        model: deps.model,
-        system: deps.system,
-        messages: planResponseMessages
-          ? [...baseModelMessages, ...planResponseMessages, ...approvalHandoff]
-          : baseModelMessages,
-        tools: deps.registry.toAiSdkTools(ctxWithCancel, { onOutcome: deps.onOutcome }),
-        toolChoice: 'auto',
-        abortSignal: deps.signal,
-        stopWhen: [stepCountIs(maxSteps), () => cancelled],
-        // Every step's provider request is scrubbed of reasoning parts (see
-        // stripStepReasoning): without this, step 2+ of any tool turn whose
-        // first step reasoned dies on Groq's reasoning_content rejection.
-        prepareStep: ({ messages: stepMessages }) => ({
-          messages: stripStepReasoning(stepMessages)
-        }),
-        onAbort: () => {
-          aborted = true
-        },
-        onStepFinish: () => {
-          stepsTaken += 1
-        },
-        onFinish: (event) => {
-          capturedUsage = event.totalUsage
+      const baseExecMessages = planResponseMessages
+        ? [...baseModelMessages, ...planResponseMessages, ...approvalHandoff]
+        : baseModelMessages
+      const runExecutionOnce = async (opts: {
+        systemSuffix: string
+        toolChoice: 'auto' | 'required'
+      }): Promise<void> => {
+        const executionResult = streamText({
+          model: deps.model,
+          system: opts.systemSuffix ? `${deps.system}${opts.systemSuffix}` : deps.system,
+          messages: baseExecMessages,
+          tools: deps.registry.toAiSdkTools(ctxWithCancel, { onOutcome: deps.onOutcome }),
+          toolChoice: opts.toolChoice,
+          abortSignal: deps.signal,
+          stopWhen: [stepCountIs(maxSteps), () => cancelled],
+          // Every step's provider request is scrubbed of reasoning parts (see
+          // stripStepReasoning): without this, step 2+ of any tool turn whose
+          // first step reasoned dies on Groq's reasoning_content rejection.
+          prepareStep: ({ messages: stepMessages }) => ({
+            messages: stripStepReasoning(stepMessages)
+          }),
+          onAbort: () => {
+            aborted = true
+          },
+          onStepFinish: () => {
+            stepsTaken += 1
+          },
+          onFinish: (event) => {
+            // Sum across retries — the second attempt must not discard the
+            // first attempt's usage.
+            const next = event.totalUsage
+            if (capturedUsage === undefined) {
+              capturedUsage = next
+            } else if (next !== undefined) {
+              const inT = (capturedUsage.inputTokens ?? 0) + (next.inputTokens ?? 0)
+              const outT = (capturedUsage.outputTokens ?? 0) + (next.outputTokens ?? 0)
+              capturedUsage = { ...capturedUsage, inputTokens: inT, outputTokens: outT }
+            }
+          }
+        })
+        await forwardStream(executionResult)
+      }
+      await runExecutionOnce({ systemSuffix: '', toolChoice: 'auto' })
+      // Execution retry: some providers answer the approved plan with prose
+      // and zero tool calls (looks like "stopped, no file"). Retry once with
+      // toolChoice 'required' + an explicit execute-now suffix — the wrapper
+      // still guards every call, so forcing *a* tool cannot force a mutation.
+      const execToolsRan = stepsTaken > 0
+      if (planApproved && !aborted && !cancelled && !execToolsRan) {
+        await runExecutionOnce({
+          systemSuffix:
+            '\nYou must act now using the file tools to carry out the approved plan. Call the first tool immediately; do not reply in text first.',
+          toolChoice: 'required'
+        })
+      }
+      // Zero-action guard: an approved plan that produced no tool calls and no
+      // assistant text is a silent failure — end loudly instead of with a
+      // success finish, so the user knows nothing changed.
+      if (planApproved && !aborted && stepsTaken === 0 && accumulator.toUIMessage() === null) {
+        if (!terminalSent) {
+          deps.sendPart({
+            type: 'error',
+            errorText:
+              "I prepared the plan but didn't take any actions, so nothing changed. Try saying which file to create and what to put in it."
+          })
+          terminalSent = true
         }
-      })
-      await forwardStream(executionResult)
+      }
       // The step guard's effect: the SDK stops calling tools after the cap,
       // emits a finish part with reason 'tool-calls' or 'length', and never
       // throws. We surface a one-line friendly note so the user can ask
@@ -549,10 +630,13 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
       // contract + skipped-honest path is what the degraded gate needs.
       if (deps.verify && !aborted) {
         try {
-          const firstText = deps.messages.find((m) => m.role === 'user')
+          // Current instruction (last user message), not the first in a
+          // resumed history — verifying against a stale turn fakes the badge.
+          const userMessages = deps.messages.filter((m) => m.role === 'user')
+          const lastText = userMessages[userMessages.length - 1]
           const instructionSegment =
-            firstText && firstText.parts[0] && firstText.parts[0].type === 'text'
-              ? (firstText.parts[0] as { text: string }).text.slice(0, 500)
+            lastText && lastText.parts[0] && lastText.parts[0].type === 'text'
+              ? (lastText.parts[0] as { text: string }).text.slice(0, 500)
               : 'run'
           const verdict = await deps.verify({
             instructionSegment,

@@ -370,6 +370,8 @@ describe('runPlanFirstTurn — the plan-first loop', () => {
     // The doubled greeting: with a single shared accumulator the first
     // attempt's partial text leaked into the final message. The retry is the
     // only attempt that resolves this run, so its text is all we see.
+    // Uses a greeting (non-mutating): text-only answers to file-changing
+    // requests now fail loudly instead (isLikelyMutatingRequest).
     executed = 0
     const run = buildRunContext({
       sender: { emit: () => undefined },
@@ -408,7 +410,9 @@ describe('runPlanFirstTurn — the plan-first loop', () => {
     const outcome = await runPlanFirstTurn({
       model,
       system: 'test system',
-      messages: USER_MESSAGES,
+      messages: [
+        { id: 'u1', role: 'user' as const, parts: [{ type: 'text' as const, text: 'hey there' }] }
+      ],
       registry,
       ctx: run.ctx,
       requestPlanStart: () => {

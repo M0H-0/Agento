@@ -173,8 +173,12 @@ export interface AgentoTool {
 }
 
 export interface AgentoPlan {
-  /** Invoke 'plan:start' — resolves the run's pending plan-start gate (docs/03 §2, M3.1). */
-  start: (payload?: { approved?: boolean }) => Promise<PlanStartResult>
+  /** Invoke 'plan:start' — resolves the matching session/run's pending plan-start gate (docs/03 §2, M3.1). */
+  start: (payload?: {
+    approved?: boolean
+    sessionId?: string
+    runId?: string
+  }) => Promise<PlanStartResult>
 }
 
 export interface ApprovalRespondPayload {

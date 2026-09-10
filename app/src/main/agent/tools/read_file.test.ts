@@ -33,7 +33,9 @@ describe('read_file — read-only', () => {
       totalLines: number
       truncated: boolean
     }
-    expect(result.content).toBe('line one\nline two\nline three')
+    expect(result.content).toContain('BEGIN UNTRUSTED CONTENT')
+    expect(result.content).toContain('line one\nline two\nline three')
+    expect(result.content).toContain('END UNTRUSTED CONTENT')
     expect(result.startLine).toBe(0)
     expect(result.endLine).toBe(3)
     expect(result.totalLines).toBe(3)
@@ -58,7 +60,7 @@ describe('read_file — read-only', () => {
     expect(result.startLine).toBe(10)
     expect(result.endLine).toBe(13)
     expect(result.truncated).toBe(true)
-    expect(result.content).toBe('line 11\nline 12\nline 13')
+    expect(result.content).toContain('line 11\nline 12\nline 13')
   })
 
   it('refuses a workspace escape', async () => {

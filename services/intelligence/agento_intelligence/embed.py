@@ -15,7 +15,9 @@ _MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 MAX_BATCH_TEXTS = 256
 MAX_BATCH_CHARS = 400_000
 
-_lock = threading.Lock()
+# Reentrant: _get_model() takes the lock and embed_texts() holds it across
+# the call — a plain Lock deadlocks on the real (unpatched) path.
+_lock = threading.RLock()
 _model = None
 
 
@@ -53,6 +55,8 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
         raise EmbeddingError(
             f"Too many texts in one batch ({len(texts)} > {MAX_BATCH_TEXTS}).", 422
         )
+    if not texts:
+        return []
     total_chars = sum(len(text) for text in texts)
     if total_chars > MAX_BATCH_CHARS:
         raise EmbeddingError(
@@ -60,8 +64,6 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
         )
     with _lock:
         model = _get_model()
-        if not texts:
-            return []
         try:
             return [vector.tolist() for vector in model.embed(texts)]
         except EmbeddingError:

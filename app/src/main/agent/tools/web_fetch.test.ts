@@ -65,7 +65,8 @@ describe('web_fetch — read-only', () => {
     expect(outcome.ok).toBe(true)
     if (!outcome.ok || !outcome.result) throw new Error('expected result')
     const result = outcome.result as { text: string; truncated: boolean }
-    expect(result.text.length).toBe(6_000)
+    expect(result.text).toContain('BEGIN UNTRUSTED CONTENT')
+    expect(result.text.length).toBeGreaterThan(6_000)
     expect(result.truncated).toBe(true)
   })
 

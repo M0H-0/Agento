@@ -133,4 +133,16 @@ describe('createWorkspaceFs — containment backstop', () => {
       outside.cleanup()
     }
   })
+
+  it('round-trips invalid-UTF-8 bytes without corruption', () => {
+    const ws = createTempWorkspace()
+    try {
+      const fs = createWorkspaceFs(ws.root)
+      const raw = Buffer.from([0xff, 0xfe, 0x00, 0x41, 0x80, 0x81])
+      fs.writeFileBytes(join(ws.root, 'bin.dat'), raw)
+      expect(fs.readFileBytes(join(ws.root, 'bin.dat')).equals(raw)).toBe(true)
+    } finally {
+      ws.cleanup()
+    }
+  })
 })

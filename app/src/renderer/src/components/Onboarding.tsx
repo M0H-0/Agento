@@ -213,6 +213,9 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
                   className="settings-input"
                   value={keyDraft}
                   onChange={(event) => setKeyDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && keyDraft.trim() !== '') saveKey()
+                  }}
                   placeholder="Paste your API key"
                   autoComplete="off"
                   spellCheck={false}
@@ -236,7 +239,11 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
           </div>
         </section>
 
-        {error !== null && <p className="settings-error">{error}</p>}
+        {error !== null && (
+          <p className="settings-error" role="alert">
+            {error}
+          </p>
+        )}
 
         <button
           type="button"

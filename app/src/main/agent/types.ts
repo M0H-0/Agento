@@ -30,6 +30,8 @@ export interface ApprovalRequest {
   riskLevel: 2 | 3
   reason: string
   paths: string[]
+  /** Authoritative plan-step id when the caller knows it (step binding). */
+  stepId?: string
 }
 
 // MVP read-only capability injections (MVP_PLAN.md). All optional — absent in
@@ -70,8 +72,12 @@ export interface WorkspaceFs {
   existsSync(path: string): boolean
   /** Throws if path escapes the workspace (refusal is the wrapper's job upstream, this is the backstop). */
   readFileSync(path: string): string
+  /** Raw bytes (binary-safe); same containment + revalidation as readFileSync. */
+  readFileBytes(path: string): Buffer
   /** Atomic temp+rename; returns the byte size written. */
   writeFileAtomic(path: string, content: string): number
+  /** Binary-safe atomic write; returns the byte size written. */
+  writeFileBytes(path: string, data: Buffer): number
   /** True when the path is a directory (and inside the workspace). */
   isDirectory(path: string): boolean
   /** Create a directory (recursive), inside the workspace only. */

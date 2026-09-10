@@ -1,6 +1,7 @@
 import { relative } from 'node:path'
 import { z } from 'zod'
 import type { ToolDefinition } from '../types'
+import { wrapUntrusted } from '../untrusted'
 
 // P0 read-only tool (docs/03 §5): case-insensitive substring search over text
 // files in a directory. Returns up to N matches with a one-line preview each.
@@ -93,7 +94,7 @@ export const searchFilesTool: ToolDefinition<
         matches.push({
           path: relative(ctx.workspaceRoot, filePath) || filePath,
           line,
-          preview: previewLine(rawLine.trim())
+          preview: wrapUntrusted('file excerpt', previewLine(rawLine.trim()))
         })
         if (matches.length > limit) {
           truncated = true

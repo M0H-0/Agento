@@ -20,6 +20,8 @@ function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    minWidth: 960,
+    minHeight: 640,
     show: false,
     autoHideMenuBar: true,
     title: 'Agento',
@@ -39,6 +41,31 @@ function createWindow(): void {
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
+  })
+
+  // Markdown links must never navigate the privileged renderer window:
+  // open https: externally, block everything else in-window.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    event.preventDefault()
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol === 'https:') {
+        void shell.openExternal(url)
+      }
+    } catch {
+      // noop — navigation already prevented
+    }
+  })
+  mainWindow.webContents.on('will-redirect', (event, url) => {
+    event.preventDefault()
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol === 'https:') {
+        void shell.openExternal(url)
+      }
+    } catch {
+      // noop
+    }
   })
 
   // HMR for renderer base on electron-vite cli.

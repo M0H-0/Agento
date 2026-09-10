@@ -108,6 +108,14 @@ def test_embed_tokenless(server):
     assert body["detail"] == "Forbidden: a valid X-Agento-Token header is required."
 
 
+def test_embed_empty_list_never_touches_model(monkeypatch):
+    def exploding():
+        raise AssertionError("_get_model must not run for an empty batch")
+
+    monkeypatch.setattr(embed_module, "_get_model", exploding)
+    assert embed_module.embed_texts([]) == []
+
+
 def test_embed_model_load_failure_is_503(server, monkeypatch):
     def broken():
         raise embed_module.EmbeddingError("The embedding model could not be loaded.", 503)

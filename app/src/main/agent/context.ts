@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { createApprovalCoalescer, parseCountFromText } from './coalesce'
 import { createWorkspaceFs } from './workspace-fs'
-import { createInMemorySnapshotStore } from './snapshots'
+import {
+  MAX_SNAPSHOT_BYTES_PER_FILE,
+  createInMemorySnapshotStore,
+  encodeSnapshotContent,
+  excerptHeadFromBytes
+} from './snapshots'
 import type {
   ApprovalRequest,
   ApprovalDecision,
@@ -73,6 +78,15 @@ export interface RunContextDeps {
   /** MVP (MVP_PLAN.md step 5): on-device semantic search. IPC-injected;
    * undefined when no workspace is picked (the tool answers honestly). */
   semantic?: SemanticCapabilities
+  /** Approval event sink (Electron-free): the IPC layer routes these through
+   * the central sequenced emitter (agent-events.ts). Absent in tests — the
+   * promise gate still works, only the dialog event is skipped. */
+  onApprovalRequested?: (input: {
+    approvalId: string
+    request: ApprovalRequest
+    count?: number
+  }) => void
+  onApprovalResolved?: (input: { approvalId: string; decision: ApprovalDecision }) => void
 }
 
 export interface PlanStepRef {
@@ -138,14 +152,8 @@ const pendingPlanStarts = new Map<string, PendingPlanStart>()
 
 // Small head excerpt for the checkpoints table's before_excerpt column —
 // the card preview of the pre-mutation content (full content lives in the
-// row's content BLOB; docs/03 §5 excerpt caps).
-function excerptHead(content: string): string {
-  const lines = content.split(/\r?\n/).slice(0, 8)
-  let out = lines.join('\n')
-  if (out.length > 600) out = `${out.slice(0, 600)}…`
-  if (lines.length === 8) out += '\n…'
-  return out
-}
+// row's content BLOB; docs/03 §5 excerpt caps). Bytes are decoded safely;
+// binary content yields replacement chars but never throws.
 
 export function buildRunContext(deps: RunContextDeps): RunContextBundle {
   // The current workspace may be absent (deps.workspaceRoot === ''). Tools
@@ -248,14 +256,22 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
   }
   const pendingApprovals = new Map<string, PendingApproval>()
 
+  const groupKeyFor = (request: ApprovalRequest): string =>
+    `${request.tool}:${request.riskLevel}${request.stepId ? `:${request.stepId}` : ''}`
+
   function emitApprovalRequested(
     approvalId: string,
     request: ApprovalRequest,
     count: number | undefined
   ): void {
-    // Best-effort event for the dialog; the promise is the contract and
-    // works even when no window listens (tests).
+    // Production routes through the IPC layer's sequenced emitter
+    // (validated envelope, monotonic seq). Test fallback keeps the legacy
+    // sender.emit shape so unit tests observe the dialog event.
     try {
+      if (deps.onApprovalRequested) {
+        deps.onApprovalRequested({ approvalId, request, count })
+        return
+      }
       deps.sender.emit('agent:event', {
         type: 'approval/requested',
         sessionId: deps.sessionId,
@@ -285,17 +301,21 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
       pendingApprovals.set(approvalId, { resolve, reject, request })
     })
     approvalDecisions.push({ request, decision })
-    openApprovalIdByTool.delete(request.tool)
+    openApprovalIdByTool.delete(groupKeyFor(request))
     try {
-      deps.sender.emit('agent:event', {
-        type: 'approval/resolved',
-        sessionId: deps.sessionId,
-        runId: deps.runId,
-        ts: Date.now(),
-        seq: 0,
-        approvalId,
-        decision
-      })
+      if (deps.onApprovalResolved) {
+        deps.onApprovalResolved({ approvalId, decision })
+      } else {
+        deps.sender.emit('agent:event', {
+          type: 'approval/resolved',
+          sessionId: deps.sessionId,
+          runId: deps.runId,
+          ts: Date.now(),
+          seq: 0,
+          approvalId,
+          decision
+        })
+      }
     } catch {
       // same doctrine — resolution is recorded above regardless
     }
@@ -331,43 +351,57 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
     return lastEnumeration
   }
 
-  // Open generations (approvalId per tool + generation): buffered calls and
-  // the 25% re-ask re-emit the SAME approvalId with the display count — the
-  // renderer replaces by approvalId so one dialog shows the batch live. A
-  // re-ask generation gets a FRESH approvalId (fresh dialog, real count).
+  // Open generations (approvalId per group key + generation): buffered calls
+  // and the 25% re-ask re-emit the SAME approvalId with the display count —
+  // the renderer replaces by approvalId so one dialog shows the batch live.
+  // A re-ask generation gets a FRESH approvalId (fresh dialog, real count).
+  // Keyed by tool+riskLevel+stepId so unrelated operations never share a
+  // decision (docs/06 §2 trust boundary).
   const openApprovalIdByTool = new Map<string, { approvalId: string; generation: number }>()
 
   const coalescer = createApprovalCoalescer(
     (request: ApprovalRequest, displayCount: number | null) => {
       const approvalId = randomUUID()
-      openApprovalIdByTool.set(request.tool, {
+      const key = groupKeyFor(request)
+      // generation() is legacy tool-scoped; the open map is key-scoped, so
+      // seed from the current key's own entry (0 when fresh).
+      openApprovalIdByTool.set(key, {
         approvalId,
-        generation: coalescer.generation(request.tool)
+        generation: 0
       })
       emitApprovalRequested(approvalId, request, displayCount ?? undefined)
       return requestOneApproval(request, approvalId)
     },
     {
       onBuffered: (tool: string, displayCount: number | null, generation: number) => {
-        // Same dialog, live count: the renderer replaces by approvalId. A
-        // re-ask generation is emitted by requestOne above (fresh id), so
-        // only re-emit when the generation still matches the open one.
-        const open = openApprovalIdByTool.get(tool)
-        if (!open || open.generation !== generation) return
-        const pending = pendingApprovals.get(open.approvalId)
-        if (!pending) return
-        emitApprovalRequested(open.approvalId, pending.request, displayCount ?? undefined)
+        // Same dialog, live count: find the open entry for this tool prefix
+        // (legacy tool-scoped callback). A re-ask generation is emitted by
+        // requestOne above (fresh id), so only re-emit on generation match.
+        for (const [key, open] of openApprovalIdByTool) {
+          if (!key.startsWith(`${tool}:`) && key !== tool) continue
+          if (open.generation !== generation) continue
+          const pending = pendingApprovals.get(open.approvalId)
+          if (!pending) continue
+          emitApprovalRequested(open.approvalId, pending.request, displayCount ?? undefined)
+        }
       }
     }
   )
 
   const requestApproval = async (request: ApprovalRequest): Promise<ApprovalDecision> => {
-    const decision = await coalescer.request(request, projectBatchCount(request))
+    // Bulk escalation (docs/06 §2): any approval group touching > 25 paths
+    // is risk 3 regardless of projection. Enforced before the dialog.
+    const projected = projectBatchCount(request)
+    const escalated: ApprovalRequest =
+      projected !== null && projected > 25 && request.riskLevel !== 3
+        ? { ...request, riskLevel: 3 as const }
+        : request
+    const decision = await coalescer.request(escalated, projected)
     // Buffered/post-decision calls share the group promise without touching
     // the pending map — record each caller's own audit row (M2.5 sink reads
     // this log per tool call).
     if (!approvalDecisions.some((d) => d.request === request)) {
-      approvalDecisions.push({ request, decision })
+      approvalDecisions.push({ request: escalated, decision })
     }
     return decision
   }
@@ -406,11 +440,27 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
     snapshot: (path, meta) => {
       // A directory target has no file content to restore — the checkpoint
       // records existed + path only (undo deletes the created dir).
+      // Binary-safe: raw bytes are encoded (b64: marker for non-UTF-8) so
+      // undo restores exact bytes. Fail-closed: any read, cap, or durable
+      // failure throws — the registry refuses the mutation (docs/03 §7).
       const isDir = fs.isDirectory(path)
+      const existed = fs.existsSync(path)
+      let content: string | null = null
+      let beforeExcerpt: string | null = null
+      if (!isDir && existed) {
+        const raw = fs.readFileBytes(path)
+        if (raw.length > MAX_SNAPSHOT_BYTES_PER_FILE) {
+          throw new Error(
+            'That file is too large to safely snapshot (over 10 MB), so I left it untouched. Nothing was changed.'
+          )
+        }
+        content = encodeSnapshotContent(raw)
+        beforeExcerpt = excerptHeadFromBytes(raw)
+      }
       const entry = {
         path,
-        content: !isDir && fs.existsSync(path) ? fs.readFileSync(path) : null,
-        existed: fs.existsSync(path),
+        content,
+        existed,
         isDir,
         tool: meta?.tool ?? 'agent',
         destPath: meta?.destPath ?? null,
@@ -418,24 +468,19 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
       }
       snapshotStore.remember(entry)
       // Durable write-through (M2.5): the IPC layer's sink lands the
-      // checkpoints table row. Bookkeeping must never break a run — a
-      // storage failure is logged main-side and the mutation proceeds
-      // (the in-memory entry above still holds the snapshot for this run).
+      // checkpoints table row. Fail-closed by design — a storage failure
+      // throws so the registry refuses the mutation instead of creating an
+      // un-undoable change (docs/03 §7).
       if (deps.onSnapshot) {
-        try {
-          deps.onSnapshot({
-            toolCallId: meta?.toolCallId ?? null,
-            path,
-            destPath: entry.destPath,
-            existed: entry.existed,
-            isDir: entry.isDir,
-            content: entry.content,
-            beforeExcerpt:
-              entry.existed && entry.content !== null ? excerptHead(entry.content) : null
-          })
-        } catch (error) {
-          console.error('[checkpoints] durable snapshot failed:', error)
-        }
+        deps.onSnapshot({
+          toolCallId: meta?.toolCallId ?? null,
+          path,
+          destPath: entry.destPath,
+          existed: entry.existed,
+          isDir: entry.isDir,
+          content: entry.content,
+          beforeExcerpt
+        })
       }
     },
     requestApproval,

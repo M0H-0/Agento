@@ -277,8 +277,11 @@ const agento = {
       ipcRenderer.invoke('tool:answer', payload)
   },
   plan: {
-    start: (payload?: { approved?: boolean }): Promise<PlanStartResult> =>
-      ipcRenderer.invoke('plan:start', payload ?? {})
+    start: (payload?: {
+      approved?: boolean
+      sessionId?: string
+      runId?: string
+    }): Promise<PlanStartResult> => ipcRenderer.invoke('plan:start', payload ?? {})
   },
   approval: {
     respond: (payload: ApprovalRespondPayload): Promise<{ ok: boolean; reason?: string }> =>

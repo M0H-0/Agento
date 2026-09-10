@@ -154,3 +154,14 @@ def test_extract_tokenless(server, tmp_path):
     status, body = _post("/document/extract", {"path": str(target)}, token=None)
     assert status == 403
     assert body["detail"] == "Forbidden: a valid X-Agento-Token header is required."
+
+
+def test_extract_oversize_source_is_413(server, tmp_path, monkeypatch):
+    import agento_intelligence.extract as extract_module
+
+    monkeypatch.setattr(extract_module, "MAX_SOURCE_BYTES", 10)
+    target = tmp_path / "notes.txt"
+    target.write_text("x" * 11, encoding="utf-8")
+    status, body = _post("/document/extract", {"path": str(target)})
+    assert status == 413
+    assert "too large" in body["detail"]

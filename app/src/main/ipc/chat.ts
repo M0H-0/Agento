@@ -3,6 +3,7 @@ import { app } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import type { LanguageModel, UIMessage, UIMessageChunk } from 'ai'
 import { generateText } from 'ai'
+import { assertPublicHttpUrl } from '../agent/web-fetch-guard'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { getSettings, resolveProviderKey } from '../settings'
@@ -46,8 +47,10 @@ import {
 } from '../agent'
 import type { PlanStep, RunContextBundle, ToolRegistry } from '../agent'
 import {
+  emitApprovalRequested,
   emitApprovalResolved,
   emitPlanCreated,
+  emitPlanStepUpdated,
   emitUsageEvent,
   emitVerificationFinished
 } from './agent-events'
@@ -79,6 +82,8 @@ interface ToolAnswerPayload {
 interface PlanStartPayload {
   /** Omitted/true = approve (the Start button / "go ahead"); card 05 adds the deny surface. */
   approved?: boolean
+  sessionId?: string
+  runId?: string
 }
 
 interface ApprovalRespondPayload {
@@ -114,9 +119,26 @@ function createToolCallAuditSink(
   sessionId: string,
   checkpointIdsByToolCall: Map<string, string>,
   checkpointContentByToolCall: Map<string, string>,
-  verifyActions: { tool: string; input: unknown; result: unknown }[]
+  verifyActions: { tool: string; input: unknown; result: unknown }[],
+  onStepUpdate?: (input: {
+    tool: string
+    toolCallId: string | null
+    status: 'in_progress' | 'done' | 'failed' | 'skipped'
+    message?: string
+  }) => void
 ): ToolOutcomeEntry {
   return (entry) => {
+    onStepUpdate?.({
+      tool: entry.tool,
+      toolCallId: entry.toolCallId,
+      status:
+        entry.status === 'executed' && entry.ok
+          ? 'done'
+          : entry.status === 'skipped' || entry.status === 'cancelled'
+            ? 'skipped'
+            : 'failed',
+      message: entry.ok ? undefined : entry.message
+    })
     try {
       recordToolCall({
         sessionId,
@@ -236,24 +258,76 @@ function llmCompleter(model: LanguageModel): (prompt: string) => Promise<string>
   }
 }
 
-// MVP (MVP_PLAN.md step 4): plain HTTP GET for web_fetch over Node's global
-// fetch — 10 s timeout, 2 MB body cap, decoded as UTF-8. Network failures
-// throw; the tool catches and answers honestly.
+// MVP (MVP_PLAN.md step 4): SSRF-guarded HTTP GET for web_fetch — 10 s
+// timeout, 2 MB streaming cap, decoded as UTF-8. Loopback / private /
+// link-local / multicast destinations and redirects to them are refused;
+// bodies stream with an enforced byte budget (no unbounded arrayBuffer).
+// Network failures throw; the tool catches and answers honestly.
 const WEB_FETCH_TIMEOUT_MS = 10_000
 const WEB_FETCH_MAX_BYTES = 2_000_000
+const WEB_FETCH_MAX_REDIRECTS = 5
 
 async function webFetch(
   url: string
 ): Promise<{ status: number; body: string; contentType: string }> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(WEB_FETCH_TIMEOUT_MS) })
-  const buffer = await response.arrayBuffer()
-  const capped =
-    buffer.byteLength > WEB_FETCH_MAX_BYTES ? buffer.slice(0, WEB_FETCH_MAX_BYTES) : buffer
-  return {
-    status: response.status,
-    body: new TextDecoder('utf-8').decode(capped),
-    contentType: response.headers.get('content-type') ?? ''
+  let current = url
+  for (let hop = 0; hop <= WEB_FETCH_MAX_REDIRECTS; hop += 1) {
+    const parsed = await assertPublicHttpUrl(current)
+    const response = await fetch(parsed.toString(), {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(WEB_FETCH_TIMEOUT_MS)
+    })
+    const location = response.headers.get('location')
+    if (
+      response.status >= 300 &&
+      response.status < 400 &&
+      location &&
+      hop < WEB_FETCH_MAX_REDIRECTS
+    ) {
+      current = new URL(location, parsed.toString()).toString()
+      await response.body?.cancel().catch(() => undefined)
+      continue
+    }
+    const contentType = response.headers.get('content-type') ?? ''
+    if (!response.body) {
+      const buffer = await response.arrayBuffer()
+      const capped =
+        buffer.byteLength > WEB_FETCH_MAX_BYTES ? buffer.slice(0, WEB_FETCH_MAX_BYTES) : buffer
+      return {
+        status: response.status,
+        body: new TextDecoder('utf-8').decode(capped),
+        contentType
+      }
+    }
+    const reader = response.body.getReader()
+    const chunks: Uint8Array[] = []
+    let total = 0
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (value) {
+          total += value.byteLength
+          if (total > WEB_FETCH_MAX_BYTES) {
+            const allowed = value.byteLength - (total - WEB_FETCH_MAX_BYTES)
+            if (allowed > 0) chunks.push(value.slice(0, allowed))
+            break
+          }
+          chunks.push(value)
+        }
+      }
+    } finally {
+      reader.releaseLock()
+      await response.body.cancel().catch(() => undefined)
+    }
+    const combined = Buffer.concat(chunks.map((c) => Buffer.from(c)))
+    return {
+      status: response.status,
+      body: new TextDecoder('utf-8').decode(combined),
+      contentType
+    }
   }
+  throw new Error('That page redirected too many times.')
 }
 
 // Per-run active context. The run ctx exposes the ask_user answer resolver
@@ -344,13 +418,21 @@ export function registerChatIpc(): void {
   })
 
   // M3.1 plan-start gate (docs/03 §2): resolves the pending plan-start
-  // promise of the session's active run — the loop is blocked on it between
-  // `plan/created` and execution. Mirrors tool:answer: walk every active run
-  // (in practice only one plan is ever waiting), return ok:false when no
-  // plan is waiting (a stale Start click after the run settled).
+  // promise of the matching session/run only. Bound to sessionId+runId so a
+  // Start click in one session can never approve another session's plan.
   ipcMain.handle('plan:start', (_event: IpcMainInvokeEvent, payload: PlanStartPayload) => {
     const approved = payload?.approved !== false
+    const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId : undefined
+    const runId = typeof payload?.runId === 'string' ? payload.runId : undefined
+    if (sessionId !== undefined) {
+      const active = activeRuns.get(sessionId)
+      if (active && (runId === undefined || active.runId === runId)) {
+        if (active.run.resolvePlanStart(approved)) return { ok: true }
+      }
+      return { ok: false, reason: 'No plan is waiting to start.' }
+    }
     for (const active of activeRuns.values()) {
+      if (runId !== undefined && active.runId !== runId) continue
       if (active.run.resolvePlanStart(approved)) {
         return { ok: true }
       }
@@ -359,7 +441,9 @@ export function registerChatIpc(): void {
   })
 
   // M3.2 approval response (docs/03 §4): resolves the pending approval
-  // promise — the registry wrapper is blocked on it for risk ≥ 2.
+  // promise — the registry wrapper is blocked on it for risk ≥ 2. The
+  // approval/resolved event is emitted once by the run's onApprovalResolved
+  // callback (central sequenced emitter) — never here, to avoid duplicates.
   ipcMain.handle(
     'approval:respond',
     (_event: IpcMainInvokeEvent, payload: ApprovalRespondPayload) => {
@@ -369,13 +453,8 @@ export function registerChatIpc(): void {
       if (decision !== 'approve' && decision !== 'skip' && decision !== 'cancel') {
         return { ok: false, reason: 'decision must be approve, skip, or cancel' }
       }
-      for (const [sessionId, entry] of activeRuns.entries()) {
+      for (const entry of activeRuns.values()) {
         if (entry.run.resolveApproval(approvalId, decision)) {
-          try {
-            emitApprovalResolved({ sessionId, runId: entry.runId, approvalId, decision })
-          } catch {
-            // resolution above is the contract; event failures never break it
-          }
           return { ok: true }
         }
       }
@@ -452,14 +531,17 @@ export function registerChatIpc(): void {
       )
     }
 
-    // Build the per-run ctx now (so the workspaceRoot reflects the current
-    // pick). The Sender wraps webContents.send — `src/main/agent/` is
-    // Electron-free by contract (AGENTS.md rule 1), so the wrapping happens
-    // here in the main side. The durable sinks (M2.5) write the checkpoints
-    // + tool_calls rows through the storage repos; bookkeeping failures are
-    // logged and never break the run (same doctrine as usage recording).
+    // Build the per-run ctx now. Workspace is session-bound (not global):
+    // a resumed session runs in the workspace it was created in. Fall back
+    // to the current pick only for legacy rows with the '' placeholder.
+    // The Sender wraps webContents.send — `src/main/agent/` is Electron-free
+    // by contract (AGENTS.md rule 1), so the wrapping happens here in the
+    // main side. The durable sinks (M2.5) write the checkpoints + tool_calls
+    // rows through the storage repos; bookkeeping failures are logged and
+    // never break the run (same doctrine as usage recording).
     const runId = newRunId()
-    const workspaceRoot = getCurrentWorkspace() ?? ''
+    const sessionWorkspace = session.workspacePath?.trim() ? session.workspacePath : null
+    const workspaceRoot = sessionWorkspace ?? getCurrentWorkspace() ?? ''
     // MVP (MVP_PLAN.md step 5): the semantic index cache lives in the app's
     // own userData — never inside the user's workspace (a risk-0 tool must
     // not write there; it would bypass the snapshot pipeline). Undefined
@@ -489,6 +571,32 @@ export function registerChatIpc(): void {
       sessionId,
       runId,
       workspaceRoot,
+      onApprovalRequested: ({ approvalId, request, count }) => {
+        try {
+          emitApprovalRequested({
+            sessionId,
+            runId,
+            approvalId,
+            title: request.title,
+            body:
+              count !== undefined && count > 1
+                ? `${request.reason} (batch of ${count})`
+                : request.reason,
+            riskLevel: request.riskLevel,
+            ...(count !== undefined && count > 1 ? { count } : {})
+          })
+        } catch (error) {
+          console.error('[approval] emitting request failed:', error)
+        }
+      },
+      onApprovalResolved: ({ approvalId, decision }) => {
+        // Single sequenced emission (the handler no longer emits).
+        try {
+          emitApprovalResolved({ sessionId, runId, approvalId, decision })
+        } catch (error) {
+          console.error('[approval] emitting resolution failed:', error)
+        }
+      },
       // MVP (MVP_PLAN.md step 2): .pdf/.docx extraction rides the sidecar.
       // Failures throw plain-language errors the tool answers honestly.
       documents: { extract: extractDocument },
@@ -500,6 +608,9 @@ export function registerChatIpc(): void {
       // without a workspace pick).
       semantic,
       onSnapshot: (entry) => {
+        // Fail-closed: recordCheckpoint throws on oversize/storage failure —
+        // let it bubble so the registry refuses the mutation (docs/03 §7).
+        // Size is recomputed from raw bytes in the repository (b64-aware).
         const row = recordCheckpoint({
           sessionId,
           toolCallId: entry.toolCallId,
@@ -508,7 +619,7 @@ export function registerChatIpc(): void {
           existed: entry.existed,
           isDir: entry.isDir,
           content: entry.content,
-          size: entry.content !== null ? Buffer.byteLength(entry.content, 'utf8') : null,
+          size: null,
           beforeExcerpt: entry.beforeExcerpt ?? null
         })
         // The snapshot fires BEFORE execution, so the after-excerpt backfill
@@ -533,6 +644,9 @@ export function registerChatIpc(): void {
     // MVP step 7: the run's executed actions, fed by the audit sink and
     // consumed by the verify dep below (verify.ts is the contract client).
     const verifyActions: { tool: string; input: unknown; result: unknown }[] = []
+    let currentPlanSteps: PlanStep[] = []
+    const toolCallToStepId = new Map<string, string>()
+    const doneStepIds = new Set<string>()
     activeRuns.set(sessionId, { controller, run, runId })
 
     // M3.1 plan persistence + event: the loop calls this exactly once per
@@ -541,6 +655,7 @@ export function registerChatIpc(): void {
     // the standard envelope (Zod-validated in agent-events.ts). Bookkeeping
     // failures are logged and never break the run.
     const onPlanCreated = (steps: PlanStep[]): void => {
+      currentPlanSteps = steps
       // M3.3: the run's coalescer projects batch counts from these steps —
       // set even if persistence/emission below throws (projection must not
       // depend on bookkeeping).
@@ -559,72 +674,148 @@ export function registerChatIpc(): void {
     }
 
     // The two-phase loop (plan-first, docs/03 §2) — extracted into the
-    // plain-Node agent tree (src/main/agent/plan-run.ts). It never throws:
-    // every failure becomes the terminal handling below (outcome.terminalSent
-    // / accumulatorFailed), and a stop lands as outcome.aborted.
-    const outcome = await runPlanFirstTurn({
-      model: languageModel,
-      system: buildSystemPrompt(workspaceRoot || null),
-      messages,
-      registry: globalRegistry,
-      ctx: run.ctx,
-      requestPlanStart: (stepIds) => run.requestPlanStart(stepIds),
-      sendPart: (part) => sendPart(event.sender, sessionId, part),
-      onOutcome: createToolCallAuditSink(
-        sessionId,
-        checkpointIdsByToolCall,
-        checkpointContentByToolCall,
-        verifyActions
-      ),
-      onPlanCreated,
-      signal: controller.signal,
-      // MVP step 7: the real sidecar verifier replaces M3.5's degraded stub.
-      // The audit sink accumulates every executed action; verification
-      // re-checks the FULL set on both the first call and the one retry (no
-      // drain — the retry must see the same targets). Read-only-only runs
-      // skip honestly (badges are never faked in either direction), and any
-      // sidecar failure degrades to skipped inside verifyStep.
-      verify: (input: { instructionSegment: string; stepDescription: string }) => {
-        if (!hasMutatingActions(verifyActions)) {
-          return Promise.resolve({ verdict: 'skipped' } as const)
-        }
-        return verifyStep(
-          {
-            sidecarHealth: () => getSidecarStatus().status,
-            fetchVerify: (body: unknown) =>
-              sidecarFetch('/completion/verify', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-                signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS)
+    // plain-Node agent tree (src/main/agent/plan-run.ts). Unexpected throws
+    // (malformed history, sender failure) must never lock the session:
+    // activeRuns cleanup lives in the finally below.
+    let outcome: Awaited<ReturnType<typeof runPlanFirstTurn>>
+    try {
+      outcome = await runPlanFirstTurn({
+        model: languageModel,
+        system: buildSystemPrompt(workspaceRoot || null),
+        messages,
+        registry: globalRegistry,
+        ctx: run.ctx,
+        requestPlanStart: (stepIds) => run.requestPlanStart(stepIds),
+        sendPart: (part) => sendPart(event.sender, sessionId, part),
+        onOutcome: createToolCallAuditSink(
+          sessionId,
+          checkpointIdsByToolCall,
+          checkpointContentByToolCall,
+          verifyActions,
+          ({ tool, toolCallId, status, message }) => {
+            // Step binding: prefer an explicit toolCallId mapping, else the
+            // first *pending* fuzzy match. Never fall back to step 0 for an
+            // unmatched tool — a false badge is worse than no badge.
+            const normalize = (value: string): string => value.toLowerCase().replace(/[^a-z]/g, '')
+            const matches = (candidateTool: string): boolean => {
+              const a = normalize(candidateTool)
+              const b = normalize(tool)
+              return a === b || a.startsWith(b) || b.startsWith(a)
+            }
+            let step: PlanStep | undefined
+            if (toolCallId) {
+              const mappedId = toolCallToStepId.get(toolCallId)
+              if (mappedId) step = currentPlanSteps.find((s) => s.id === mappedId)
+            }
+            if (!step) {
+              const pending = currentPlanSteps.filter(
+                (s) => !doneStepIds.has(s.id) && matches(s.tool)
+              )
+              step = pending[0] ?? currentPlanSteps.find((s) => matches(s.tool))
+            }
+            if (!step) return
+            if (toolCallId && !toolCallToStepId.has(toolCallId)) {
+              toolCallToStepId.set(toolCallId, step.id)
+            }
+            if (status === 'done' || status === 'failed' || status === 'skipped') {
+              doneStepIds.add(step.id)
+            }
+            try {
+              emitPlanStepUpdated({
+                sessionId,
+                runId,
+                stepId: step.id,
+                status,
+                ...(message !== undefined ? { error: message } : {})
               })
-          },
-          {
-            instructionSegment: input.instructionSegment,
-            stepDescription: input.stepDescription,
-            actions: verifyActions,
-            beforeAfter: { before: null, after: null }
+            } catch (error) {
+              console.error('[plan] step status event failed:', error)
+            }
           }
-        )
-      },
-      onVerification: (result) => {
+        ),
+        onPlanCreated,
+        signal: controller.signal,
+        // MVP step 7: the real sidecar verifier replaces M3.5's degraded stub.
+        // The audit sink accumulates every executed action; verification
+        // re-checks the FULL set on both the first call and the one retry (no
+        // drain — the retry must see the same targets). Read-only-only runs
+        // skip honestly (badges are never faked in either direction), and any
+        // sidecar failure degrades to skipped inside verifyStep.
+        verify: (input: { instructionSegment: string; stepDescription: string }) => {
+          if (!hasMutatingActions(verifyActions)) {
+            return Promise.resolve({ verdict: 'skipped' } as const)
+          }
+          return verifyStep(
+            {
+              sidecarHealth: () => getSidecarStatus().status,
+              fetchVerify: (body: unknown) =>
+                sidecarFetch('/completion/verify', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(body),
+                  signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS)
+                })
+            },
+            {
+              instructionSegment: input.instructionSegment,
+              stepDescription: input.stepDescription,
+              actions: verifyActions,
+              beforeAfter: { before: null, after: null }
+            }
+          )
+        },
+        onVerification: (result) => {
+          try {
+            emitVerificationFinished({
+              sessionId,
+              runId,
+              stepId: result.stepId,
+              isComplete: result.isComplete,
+              score: result.score,
+              ...(result.missedSegments !== undefined
+                ? { missedSegments: result.missedSegments }
+                : {})
+            })
+          } catch (error) {
+            console.error('[verify] emitting verification failed:', error)
+          }
+        }
+      })
+    } catch (error) {
+      // Unexpected loop throw (malformed history, sender failure): the
+      // session stays usable — surface an honest error part, never a hang.
+      console.error('[chat] run failed:', error)
+      try {
+        sendPart(event.sender, sessionId, {
+          type: 'error',
+          errorText: 'Something went wrong running that request. Try again.'
+        })
+      } catch {
+        // noop — sender gone
+      }
+      return
+    } finally {
+      activeRuns.delete(sessionId)
+      // An unexpected throw above must not leave plan/approval/ask_user
+      // promises hanging — settle them so a retry can start cleanly.
+      try {
+        run.rejectPlanStart('Run stopped before the user replied.')
+      } catch {
+        // noop — no pending gate is the common case
+      }
+      try {
+        run.rejectApprovals('Run ended before you decided.')
+      } catch {
+        // noop
+      }
+      for (const pending of collectPendingAnswerIds(run)) {
         try {
-          emitVerificationFinished({
-            sessionId,
-            runId,
-            stepId: result.stepId,
-            isComplete: result.isComplete,
-            score: result.score,
-            ...(result.missedSegments !== undefined
-              ? { missedSegments: result.missedSegments }
-              : {})
-          })
-        } catch (error) {
-          console.error('[verify] emitting verification failed:', error)
+          run.rejectAskUserAnswer(pending, 'Run stopped before the user replied.')
+        } catch {
+          // noop
         }
       }
-    })
-    activeRuns.delete(sessionId)
+    }
 
     // Token usage rides the settle point (docs/03 §2 token guard, §8
     // usage_events): recorded only when the run's usage actually resolved

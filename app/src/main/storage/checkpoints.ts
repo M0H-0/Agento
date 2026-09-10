@@ -75,8 +75,17 @@ export interface RecordCheckpointInput {
   afterExcerpt?: string | null
 }
 
-function sha256Hex(content: string): string {
-  return createHash('sha256').update(content, 'utf8').digest('hex')
+const BINARY_PREFIX = 'b64:'
+
+function rawBytesForStored(content: string): Buffer {
+  if (content.startsWith(BINARY_PREFIX)) {
+    return Buffer.from(content.slice(BINARY_PREFIX.length), 'base64')
+  }
+  return Buffer.from(content, 'utf8')
+}
+
+function sha256ForStored(content: string): string {
+  return createHash('sha256').update(rawBytesForStored(content)).digest('hex')
 }
 
 // Evict-oldest to keep the session under the byte budget (docs/03 §7). Only
@@ -118,8 +127,17 @@ function evictToBudget(sessionId: string): string[] {
 // One row per (mutation, path). The `after*` fields are backfilled by the
 // tool's own result (write through) — M2.5 tools pass them in directly.
 export function recordCheckpoint(input: RecordCheckpointInput): CheckpointRow {
-  const oversized =
-    input.content !== null && Buffer.byteLength(input.content, 'utf8') > MAX_SNAPSHOT_BYTES_PER_FILE
+  // The agent layer already enforces the per-file cap fail-closed; this is
+  // the durable backstop (never store an oversized snapshot, never execute
+  // on the caller's behalf — the caller throws before execute).
+  const rawSize =
+    input.content !== null ? rawBytesForStored(input.content).length : (input.size ?? null)
+  const oversized = rawSize !== null && rawSize > MAX_SNAPSHOT_BYTES_PER_FILE
+  if (oversized) {
+    throw new Error(
+      'That file is too large to safely snapshot (over 10 MB), so I left it untouched. Nothing was changed.'
+    )
+  }
   const storedContent = input.existed && input.content !== null && !oversized ? input.content : null
   const row = getDrizzle()
     .insert(checkpoints)
@@ -132,9 +150,8 @@ export function recordCheckpoint(input: RecordCheckpointInput): CheckpointRow {
       existed: input.existed ? 1 : 0,
       isDir: input.isDir ? 1 : 0,
       content: storedContent,
-      size:
-        input.content !== null ? Buffer.byteLength(input.content, 'utf8') : (input.size ?? null),
-      sha256: storedContent !== null ? sha256Hex(storedContent) : null,
+      size: input.content !== null ? rawSize : (input.size ?? null),
+      sha256: storedContent !== null ? sha256ForStored(storedContent) : null,
       beforeExcerpt: input.beforeExcerpt ?? null,
       afterExcerpt: input.afterExcerpt ?? null,
       createdAt: nowIso()
@@ -222,8 +239,8 @@ export function appendUndoRow(input: AppendUndoRowInput): CheckpointRow {
       existed: input.existed ? 1 : 0,
       isDir: input.isDir ? 1 : 0,
       content: stored,
-      size: input.content !== null ? Buffer.byteLength(input.content, 'utf8') : null,
-      sha256: stored !== null ? sha256Hex(stored) : null,
+      size: input.content !== null ? rawBytesForStored(input.content).length : null,
+      sha256: stored !== null ? sha256ForStored(stored) : null,
       beforeExcerpt: null,
       afterExcerpt: null,
       createdAt: nowIso()

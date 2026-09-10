@@ -98,8 +98,11 @@ export function createApprovalCoalescer(
     return state.count > 1 ? state.count : null
   }
 
+  const groupKeyFor = (req: ApprovalRequest): string =>
+    `${req.tool}:${req.riskLevel}${req.stepId ? `:${req.stepId}` : ''}`
+
   const request = (req: ApprovalRequest, projected?: number | null): Promise<ApprovalDecision> => {
-    const key = req.tool
+    const key = groupKeyFor(req)
     const existing = groups.get(key)
     if (existing) {
       // 25% re-ask: past the threshold with a decision already recorded,
@@ -134,7 +137,7 @@ export function createApprovalCoalescer(
         existing.projected = projected
       }
       try {
-        hooks?.onBuffered?.(key, displayCountFor(existing), existing.generation)
+        hooks?.onBuffered?.(req.tool, displayCountFor(existing), existing.generation)
       } catch {
         // count projection is best-effort — the shared decision is the contract
       }
@@ -161,7 +164,23 @@ export function createApprovalCoalescer(
 
   return {
     request,
-    groupCount: (tool: string) => groups.get(tool)?.count ?? 0,
-    generation: (tool: string) => groups.get(tool)?.generation ?? 0
+    groupCount: (tool: string) => {
+      let total = 0
+      for (const [k, v] of groups) {
+        if (k === tool || k.startsWith(`${tool}:`)) total += v.count
+      }
+      return total
+    },
+    generation: (tool: string) => {
+      let max = 0
+      let found = false
+      for (const [k, v] of groups) {
+        if (k === tool || k.startsWith(`${tool}:`)) {
+          found = true
+          if (v.generation > max) max = v.generation
+        }
+      }
+      return found ? max : 0
+    }
   }
 }

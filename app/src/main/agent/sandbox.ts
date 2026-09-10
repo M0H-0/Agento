@@ -105,6 +105,82 @@ function refusal(message: string): never {
 }
 
 /**
+ * Revalidate an already-resolved absolute path immediately before touching
+ * the disk (TOCTOU backstop for the wrapper's pre-resolved paths).
+ *
+ * Mirrors resolveWorkspacePath's realpath walk + protected-name + mode policy,
+ * but starts from an absolute path instead of model-relative intent. Every
+ * WorkspaceFs mutation calls this first so a concurrently swapped
+ * junction/symlink cannot redirect a checked path outside the workspace.
+ */
+export function assertAbsoluteInsideWorkspace(
+  workspaceRoot: string,
+  absolutePath: string,
+  access: ToolAccess = 'write',
+  options: SandboxOptions = {}
+): void {
+  if (!workspaceRoot) {
+    throw new ToolRefusalError('sandbox', 'I need a workspace folder before I can touch files.')
+  }
+  if (!worksWithRoot(absolutePath, workspaceRoot)) {
+    throw new ToolRefusalError(
+      'sandbox',
+      'I can only read and write inside your workspace folder (the filesystem guard refused this path).'
+    )
+  }
+  let rootReal: string
+  try {
+    rootReal = realpathSync(workspaceRoot)
+  } catch {
+    throw new ToolRefusalError('sandbox', "Your workspace folder isn't accessible right now.")
+  }
+  const relFromRoot = relative(workspaceRoot, absolutePath)
+  if (isProtected(relFromRoot, options.protectedPathOverrides)) {
+    throw new ToolRefusalError(
+      'sandbox',
+      "That path is on the protected list (private keys and credential stores), so I won't touch it. You can allow this specific path in Settings if you really mean it."
+    )
+  }
+  const segments = relFromRoot.split(sep).filter(Boolean)
+  let walked = workspaceRoot
+  let traversedOutside = false
+  for (const segment of segments) {
+    walked = join(walked, segment)
+    let stat: ReturnType<typeof lstatSync>
+    try {
+      stat = lstatSync(walked)
+    } catch {
+      break
+    }
+    const link = stat.isSymbolicLink()
+    let inside: boolean | undefined
+    try {
+      inside = realInsideRoot(walked, rootReal)
+    } catch (error) {
+      throw new ToolRefusalError(
+        'sandbox',
+        `I couldn't follow that path safely (${
+          error instanceof Error ? error.message : "the folder link can't be resolved"
+        }).`
+      )
+    }
+    if (inside === undefined) break
+    if (!inside) {
+      if (access === 'read' && (link || traversedOutside)) {
+        traversedOutside = true
+        continue
+      }
+      throw new ToolRefusalError(
+        'sandbox',
+        access === 'read'
+          ? "That path sits outside your workspace (or its folder link points outside it), so I can't work with it."
+          : "That path would follow a folder link outside your workspace, and I won't write, move, or delete through it."
+      )
+    }
+  }
+}
+
+/**
  * Resolve a model-provided relative path inside the workspace.
  *
  * `access` selects the link policy (docs/06 §4.3): 'read' may follow an

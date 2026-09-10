@@ -7,6 +7,7 @@ import {
   listCheckpoints,
   markCheckpointReverted
 } from '../storage/checkpoints'
+import { getSession } from '../storage/sessions'
 import type { CheckpointRow } from '../storage/checkpoints'
 import { createWorkspaceFs } from '../agent/workspace-fs'
 import { undoAllCheckpoints, undoCheckpoint } from '../agent/undo'
@@ -29,9 +30,8 @@ export interface ChangeEntry {
    * a source row + a dest row) — the panel groups these into one item. Null
    * for harness rows that carry none. */
   groupKey: string | null
-  path: string
   // workspace-relative display path, computed main-side (the renderer never
-  // sees the absolute root).
+  // sees the absolute root — no absolute `path` crosses IPC).
   relativePath: string
   /** Move destination, relative for display (M2.7 `dest_path`). */
   relativeDestPath: string | null
@@ -151,20 +151,31 @@ export function registerChangesIpc(
   isSessionRunActive: (sessionId: string) => boolean
 ): void {
   const store = durableStore()
-  const fsFor = (): ReturnType<typeof createWorkspaceFs> =>
-    createWorkspaceFs(getCurrentWorkspace() ?? '')
+  // Session-bound workspace: undo/list operate in the workspace the session
+  // was created in, not the globally selected one. Falls back to current
+  // only for legacy '' rows.
+  const rootForSession = (sessionId: string): string => {
+    try {
+      const row = getSession(sessionId)
+      const stored = row?.workspacePath?.trim() ? row.workspacePath : null
+      return stored ?? getCurrentWorkspace() ?? ''
+    } catch {
+      return getCurrentWorkspace() ?? ''
+    }
+  }
+  const fsForSession = (sessionId: string): ReturnType<typeof createWorkspaceFs> =>
+    createWorkspaceFs(rootForSession(sessionId))
 
   ipcMain.handle(
     'changes:list',
     (_event: IpcMainInvokeEvent, payload: ChangesListPayload): ChangesListResult => {
       const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId : ''
       if (!sessionId.trim()) throw new Error('Session id is required.')
-      const root = getCurrentWorkspace() ?? ''
+      const root = rootForSession(sessionId)
       const rows = listCheckpoints(sessionId).map((row) => ({
         id: row.id,
         tool: row.tool,
         groupKey: row.toolCallId,
-        path: row.path,
         relativePath: relativeTo(row.path, root),
         relativeDestPath: row.destPath ? relativeTo(row.destPath, root) : null,
         existed: row.existed === 1,
@@ -202,7 +213,9 @@ export function registerChangesIpc(
       }
       // Serialized behind any undo already in flight (no interleaved restores).
       return enqueueUndo(async () => ({
-        results: [toItem(checkpointId, undoCheckpoint(store, fsFor(), checkpointId))]
+        results: [
+          toItem(checkpointId, undoCheckpoint(store, fsForSession(row.sessionId), checkpointId))
+        ]
       }))
     }
   )
@@ -220,7 +233,7 @@ export function registerChangesIpc(
       }
       // Serialized behind any undo already in flight (no interleaved restores).
       return enqueueUndo(async () => {
-        const results = undoAllCheckpoints(store, fsFor(), sessionId)
+        const results = undoAllCheckpoints(store, fsForSession(sessionId), sessionId)
         return { results: results.map((result) => toItem(result.checkpointId, result)) }
       })
     }

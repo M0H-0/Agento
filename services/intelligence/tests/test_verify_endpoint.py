@@ -124,8 +124,11 @@ class TestVerifyStepHeuristic:
             "anything", "execution",
             [{"tool": "write_file", "input": {"path": "relative.md"}, "result": None}], {},
         )
-        # Only absolute (sandbox-resolved) paths are verifiable from here.
-        assert (score, is_complete, missed) == (1.0, True, [])
+        # Only absolute (sandbox-resolved) paths are verifiable — a mutating
+        # step with no checkable target is incomplete, never a false badge.
+        assert is_complete is False
+        assert score == 0.0
+        assert missed
 
     def test_read_only_step_has_nothing_to_check(self):
         score, is_complete, missed = verify_step(

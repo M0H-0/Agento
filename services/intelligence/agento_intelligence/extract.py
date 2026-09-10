@@ -14,6 +14,12 @@ from pathlib import Path
 # ~200k chars ≈ a 200+ page text PDF; past this the caller's own cap makes
 # more extraction pointless for MVP-sized files.
 MAX_EXTRACT_CHARS = 200_000
+# Source guards: extraction never reads unbounded input into memory.
+# 20 MB covers real MVP documents; past it the caller gets an honest 413
+# instead of an OOM or a multi-minute parse.
+MAX_SOURCE_BYTES = 20_000_000
+MAX_PDF_PAGES = 500
+MAX_DOCX_BLOCKS = 20_000
 
 _TEXT_SUFFIXES = {".txt", ".md", ".markdown"}
 
@@ -31,6 +37,16 @@ def extract_text(path: str) -> tuple[str, bool]:
     target = Path(path)
     if not target.is_file():
         raise ExtractionError(f'No document at "{path}".', 404)
+
+    try:
+        if target.stat().st_size > MAX_SOURCE_BYTES:
+            raise ExtractionError(
+                f'"{target.name}" is too large to extract '
+                f"({target.stat().st_size} bytes > {MAX_SOURCE_BYTES}).",
+                413,
+            )
+    except OSError as error:
+        raise ExtractionError(f'No document at "{path}" — {error}.', 404) from error
 
     suffix = target.suffix.lower()
     if suffix == ".pdf":
@@ -57,12 +73,31 @@ def _extract_pdf(target: Path) -> str:
 
     try:
         reader = PdfReader(str(target))
-        pages = [(page.extract_text() or "") for page in reader.pages]
+        if len(reader.pages) > MAX_PDF_PAGES:
+            raise ExtractionError(
+                f'"{target.name}" has too many pages '
+                f"({len(reader.pages)} > {MAX_PDF_PAGES}).",
+                413,
+            )
+        collected: list[str] = []
+        total = 0
+        for page in reader.pages:
+            chunk = page.extract_text() or ""
+            if not chunk:
+                continue
+            collected.append(chunk)
+            total += len(chunk)
+            # Stop early past the char cap — no point parsing 500 pages
+            # when the caller only keeps the first 200k chars.
+            if total > MAX_EXTRACT_CHARS:
+                break
+    except ExtractionError:
+        raise
     except Exception as error:  # pypdf raises a zoo of parse exceptions
         raise ExtractionError(
             f'"{target.name}" could not be read as a PDF — {error}.', 422
         ) from error
-    return "\n".join(page for page in pages if page)
+    return "\n".join(collected)
 
 
 def _extract_docx(target: Path) -> str:
@@ -77,6 +112,20 @@ def _extract_docx(target: Path) -> str:
         for table in document.tables:
             for row in table.rows:
                 paragraphs.append("\t".join(cell.text for cell in row.cells))
+                if len(paragraphs) > MAX_DOCX_BLOCKS:
+                    raise ExtractionError(
+                        f'"{target.name}" has too many text blocks '
+                        f"(> {MAX_DOCX_BLOCKS}).",
+                        413,
+                    )
+        if len(paragraphs) > MAX_DOCX_BLOCKS:
+            raise ExtractionError(
+                f'"{target.name}" has too many text blocks '
+                f"(> {MAX_DOCX_BLOCKS}).",
+                413,
+            )
+    except ExtractionError:
+        raise
     except Exception as error:  # python-docx raises on malformed packages
         raise ExtractionError(
             f'"{target.name}" could not be read as a Word document — {error}.', 422

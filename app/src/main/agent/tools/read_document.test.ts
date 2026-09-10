@@ -27,7 +27,8 @@ describe('read_document — read-only', () => {
     expect(outcome.ok).toBe(true)
     if (!outcome.ok || !outcome.result) throw new Error('expected result')
     const result = outcome.result as { text: string; truncated: boolean }
-    expect(result.text).toBe('# Notes\n\nBody text.')
+    expect(result.text).toContain('BEGIN UNTRUSTED CONTENT')
+    expect(result.text).toContain('# Notes\n\nBody text.')
     expect(result.truncated).toBe(false)
   })
 
@@ -41,7 +42,8 @@ describe('read_document — read-only', () => {
     expect(outcome.ok).toBe(true)
     if (!outcome.ok || !outcome.result) throw new Error('expected result')
     const result = outcome.result as { text: string; truncated: boolean }
-    expect(result.text.length).toBe(6_000)
+    expect(result.text).toContain('BEGIN UNTRUSTED CONTENT')
+    expect(result.text.length).toBeGreaterThan(6_000)
     expect(result.truncated).toBe(true)
   })
 
@@ -60,7 +62,7 @@ describe('read_document — read-only', () => {
     expect(outcome.ok).toBe(true)
     if (!outcome.ok || !outcome.result) throw new Error('expected result')
     const result = outcome.result as { text: string; truncated: boolean }
-    expect(result.text).toBe('PDF BODY TEXT')
+    expect(result.text).toContain('PDF BODY TEXT')
   })
 
   it('answers honestly for binary documents when no sidecar capability is injected', async () => {

@@ -86,8 +86,23 @@ def verify_step(
         # Read-only / unknown tools carry no filesystem postcondition to check.
 
     if checked == 0:
-        # Nothing verifiable — the TS adapter skips read-only steps before
-        # calling, so reaching here means the step genuinely mutated nothing.
+        # Honest no-check: a mutating action with no verifiable target must
+        # never earn a verified badge. The TS adapter skips pure read-only
+        # runs before calling, so reaching here with actions means the paths
+        # were unresolvable — report incomplete, not success.
+        mutating = {
+            "create_dir",
+            "write_file",
+            "edit_file",
+            "move_path",
+            "copy_path",
+            "delete_path",
+        }
+        has_mutating = any(
+            isinstance(a, dict) and a.get("tool") in mutating for a in (actions or [])
+        )
+        if has_mutating:
+            return 0.0, False, ["Nothing verifiable was found for the mutating step."]
         return 1.0, True, []
     score = round((checked - len(missed)) / checked, 3)
     return score, len(missed) == 0, missed
