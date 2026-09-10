@@ -132,6 +132,7 @@ Never raw in replies: JSON, tool names, stack traces, HTTP codes. Shared `friend
 | `ENOENT` | "I couldn't find that file — it may have been moved or renamed." |
 | provider 401 | "The API key for this provider isn't working. Check it in Settings → Providers." |
 | provider 429 | "The model is rate-limiting us. I'll wait a moment and retry." |
+| plan phase 400 (incl. `tool_use_failed`) | "I couldn't create a plan for that. Try rephrasing the request." |
 | parse failure | "I couldn't read this document — it may be a scan or password-protected." |
 | sandbox rejection | "That's outside your workspace folder, so I won't touch it." |
 

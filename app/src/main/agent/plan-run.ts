@@ -42,19 +42,47 @@ const MAX_STEPS = 25
 const KEY_REJECTED_COPY =
   "The API key for this provider isn't working. Check it in Settings → Providers."
 const RATE_LIMITED_COPY = "The model is rate-limiting us. I'll wait a moment and retry."
+// M3.8 copy classification: a 400 in the plan phase is almost always the
+// provider refusing the forced tool choice (Groq gpt-oss-120b live:
+// `tool_use_failed`) — "check your connection" would be a flat-out lie for
+// it, so the plan phase maps non-key 400s to an honest plan-specific copy.
+const PLAN_REFUSED_COPY = "I couldn't create a plan for that. Try rephrasing the request."
 const GENERIC_PROVIDER_COPY =
   'Something went wrong talking to the model provider. Check your connection and try again.'
 
-function friendlyProviderError(error: unknown): string {
+// M3.8 diagnosability: friendlyProviderError used to classify and then
+// discard the raw error, so any confusing user-facing copy was impossible to
+// trace (PROGRESS Devlog 2026-09-11). Log the status + provider message +
+// response body to the main-process console only — the RESPONSE headers carry
+// the API key and requestBodyValues may echo conversation content, so neither
+// ever gets logged. A provider's responseBody is its own payload. Logging is
+// wrapped: it is diagnostic-only and must never break the run.
+function logProviderError(cause: APICallError): void {
+  try {
+    console.error(
+      `[provider] ${cause.statusCode ?? 'unknown'}: ${cause.message}` +
+        (cause.responseBody ? ` body=${cause.responseBody}` : '')
+    )
+  } catch {
+    // Diagnostic only — never throw into the stream path.
+  }
+}
+
+// Exported for the plan-run tests (copy classification). `phase: 'plan'`
+// narrows the 400 branch: in the plan phase a non-key 400 is the model or
+// provider refusing to plan, not a connectivity problem.
+export function friendlyProviderError(error: unknown, phase?: 'plan'): string {
   // streamText retries transient failures and surfaces them as a RetryError
   // wrapping the provider's own APICallError — unwrap before classifying, or
   // a rate limit (429) falls through to the generic copy (docs/04 §5).
   const cause = RetryError.isInstance(error) ? error.lastError : error
   if (APICallError.isInstance(cause)) {
+    logProviderError(cause)
     const body = `${cause.message} ${cause.responseBody ?? ''}`
     if (cause.statusCode === 401 || cause.statusCode === 403) return KEY_REJECTED_COPY
     if (cause.statusCode === 400 && /api key/i.test(body)) return KEY_REJECTED_COPY
     if (cause.statusCode === 429) return RATE_LIMITED_COPY
+    if (phase === 'plan' && cause.statusCode === 400) return PLAN_REFUSED_COPY
   }
   return GENERIC_PROVIDER_COPY
 }
@@ -234,19 +262,41 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
     // Attempt 2 is the M3.7 gate-driven fallback: some providers (Groq
     // gpt-oss-120b live) refuse forced tool choice with `tool_use_failed`,
     // so we retry once with `toolChoice: 'auto'` over the SAME single-tool
-    // set — the model can only plan or answer in text. Both attempts hold
-    // error parts (the first attempt's failure must not pollute the thread
-    // when the retry succeeds); only the final failure forwards one.
+    // set — the model can only plan or answer in text.
+    //
+    // M3.8: EVERY plan-phase part is HELD per attempt (text, reasoning, step
+    // markers — not just errors) and committed — forwarded to the thread and
+    // accumulated for persistence — only for the ONE attempt that resolves
+    // the run. A failed attempt's partial text used to stream live AND into
+    // the shared accumulator, so when Groq refused the forced call mid
+    // preamble the retry's greeting doubled in the bubble and in the reply.
     const emitPlanWrapped = deps.registry.toAiSdkTool('emit_plan', deps.ctx, {
       onOutcome: deps.onOutcome
     })
-    let planErrorText: string | null = null
+    interface PlanAttemptResult {
+      /** Parsed plan steps — non-null only when the attempt actually planned. */
+      steps: PlanStep[] | null
+      /** The plan phase's response messages (kept for the execution call). */
+      messages: ModelMessage[] | null
+      /** Non-tool parts the attempt produced (forwarded only on commit). */
+      heldParts: UIMessageChunk[]
+      /** The attempt's natural finish (null when it ended without one). */
+      finish: UIMessageChunk | null
+      /** First held provider-error copy (null when no error part arrived). */
+      errorText: string | null
+      /** True when the attempt streamed text (a text-only reply is possible). */
+      hadText: boolean
+    }
     const attemptPlanCall = async (opts: {
       toolChoice: { type: 'tool'; toolName: 'emit_plan' } | 'auto'
       system: string
       tool: NonNullable<typeof emitPlanWrapped>
-    }): Promise<{ steps: PlanStep[]; messages: ModelMessage[] } | null> => {
-      const holdErrors: UIMessageChunk[] = []
+    }): Promise<PlanAttemptResult> => {
+      const heldParts: UIMessageChunk[] = []
+      const heldErrors: UIMessageChunk[] = []
+      let finish: UIMessageChunk | null = null
+      let hadText = false
+      let errorText: string | null = null
       const planResult = streamText({
         model: deps.model,
         system: opts.system,
@@ -266,14 +316,16 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
         }
       })
       try {
-        // Same forwarding as the shared stream path, but error parts are
-        // HELD (not sent): a first-attempt provider refusal must not land in
-        // the thread when the retry succeeds.
+        // Same forwarding shape as the shared stream path, but every part is
+        // held — error parts and text alike — so the caller can drop the
+        // attempt wholesale if it fails and is going to be retried.
         for await (const part of planResult.toUIMessageStream({
-          onError: friendlyProviderError
+          // Plan-phase 400s (the provider refusing the forced tool choice)
+          // get the honest plan copy, never "check your connection" (M3.8).
+          onError: (error) => friendlyProviderError(error, 'plan')
         })) {
-          accumulator.addChunk(part)
           if (part.type === 'finish') {
+            finish = part
             heldFinish = part
             continue
           }
@@ -286,7 +338,7 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
             continue
           }
           if (part.type === 'error') {
-            holdErrors.push(part)
+            heldErrors.push(part)
             continue
           }
           if (part.type === 'tool-input-start' || part.type === 'tool-input-delta') continue
@@ -297,7 +349,17 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
           if (part.type === 'tool-output-available' && emitPlanCallIds.has(part.toolCallId)) {
             continue
           }
-          deps.sendPart(part)
+          if (part.type === 'text-start' || part.type === 'text-delta') hadText = true
+          heldParts.push(part)
+        }
+        // An error part marks the attempt failed; remember its copy for the
+        // final failure (a retry that succeeds discards it via the caller).
+        const firstError = heldErrors[0]
+        if (firstError && firstError.type === 'error') {
+          errorText = firstError.errorText
+        }
+        if (aborted) {
+          return { steps: null, messages: null, heldParts, finish, errorText, hadText }
         }
         // Extract the parsed steps from the emit_plan tool call.
         const steps = await planResult.steps
@@ -317,50 +379,78 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
           // Keep the plan phase's own messages (the tool call + its result)
           // so the execution phase starts with the plan already in context.
           const messages = (await planResult.response).messages
-          return { steps: found, messages }
+          return { steps: found, messages, heldParts, finish, errorText, hadText }
         }
+        return { steps: null, messages: null, heldParts, finish, errorText, hadText }
       } catch {
         // Provider refusal (e.g. forced-toolChoice 400) or unsettled steps:
-        // hold the error for a possible retry; the caller decides.
-        const first = holdErrors[0]
-        if (first && first.type === 'error' && planErrorText === null) {
-          planErrorText = first.errorText
-        }
-        return null
+        // the attempt produced no plan and its held parts (if any) are dropped
+        // — the caller decides whether a final error copy surfaces.
+        return { steps: null, messages: null, heldParts, finish, errorText, hadText }
       }
-      if (holdErrors.length > 0 && planErrorText === null) {
-        const first = holdErrors[0]
-        if (first && first.type === 'error') planErrorText = first.errorText
-      }
-      return null
     }
-    let planResult2: { steps: PlanStep[]; messages: ModelMessage[] } | null = null
+    let planAttempt: PlanAttemptResult | null = null
     if (emitPlanWrapped) {
-      const forced = await attemptPlanCall({
+      // The run's user-facing surface is exactly ONE plan attempt: the one
+      // that resolves the run. Its held parts (preamble text, step markers)
+      // are committed — forwarded to the thread AND accumulated for
+      // persistence — at this point; failed attempts never reach either
+      // (M3.8, the doubled-greeting fix).
+      const commitAttempt = (attempt: PlanAttemptResult): void => {
+        for (const part of attempt.heldParts) {
+          accumulator.addChunk(part)
+          deps.sendPart(part)
+        }
+      }
+      planAttempt = await attemptPlanCall({
         toolChoice: { type: 'tool', toolName: 'emit_plan' },
         system: deps.system,
         tool: emitPlanWrapped
       })
-      planResult2 = forced
-      if (!planResult2 && !deps.signal.aborted) {
-        planResult2 = await attemptPlanCall({
+      if (!planAttempt.steps && !deps.signal.aborted) {
+        planAttempt = await attemptPlanCall({
           toolChoice: 'auto',
           system: `${deps.system}\nFirst, respond ONLY by calling the emit_plan tool with the step-by-step plan.`,
           tool: emitPlanWrapped
         })
       }
-      if (planResult2) {
-        planResponseMessages = planResult2.messages
-      }
-      if (!planResult2 && !deps.signal.aborted) {
-        // The tool exists but the model produced no plan twice: refuse
-        // honestly instead of mutating without a plan. (Plan-less execution
-        // below stays reserved for the no-emit_plan-tool case — tests/dev.)
+      if (planAttempt.steps) {
+        // The plan landed — commit the attempt and keep its response messages
+        // so the execution phase starts with the plan already in context.
+        commitAttempt(planAttempt)
+        planResponseMessages = planAttempt.messages
+      } else if (!deps.signal.aborted) {
+        // No plan after both attempts. The plan-first guarantee still holds —
+        // nothing below can execute — but what the user SEES must be honest:
+        //  - a naturally completed text-only attempt IS a valid reply ("hey"
+        //    → the model answers in text; no provider error happened). The
+        //    forced attempt's held 400 is discarded, and the reply is
+        //    delivered through the normal settle point (persisted + finish).
+        //  - a genuine failure (a stream error part, or no natural finish at
+        //    all) keeps the honest refusal — now with plan-appropriate copy
+        //    for the common non-key 400 (tool_use_failed) instead of a lie
+        //    about the connection (M3.8).
+        const genuineError = planAttempt.errorText !== null || planAttempt.finish === null
+        if (!genuineError && planAttempt.hadText) {
+          commitAttempt(planAttempt)
+          return {
+            aborted,
+            terminalSent,
+            accumulatorFailed: accumulator.isFailed(),
+            assistantMessage: accumulator.toUIMessage(),
+            heldFinish,
+            usage: sumUsage(planUsage, undefined),
+            stepsTaken,
+            stepLimitReached,
+            planEmitted,
+            planApproved
+          }
+        }
         // Gate is `!terminalSent` ONLY (not `!accumulator.isFailed()`): plan
         // attempts HOLD error parts, so a failed accumulator here means the
         // terminal never went out — without this the run ends silent.
         if (!terminalSent) {
-          deps.sendPart({ type: 'error', errorText: planErrorText ?? PLAN_FAILED_COPY })
+          deps.sendPart({ type: 'error', errorText: planAttempt.errorText ?? PLAN_FAILED_COPY })
           terminalSent = true
         }
         return {
@@ -378,7 +468,7 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
       }
     }
 
-    const planSteps: PlanStep[] | null = planResult2 ? planResult2.steps : null
+    const planSteps: PlanStep[] | null = planAttempt ? planAttempt.steps : null
     if (planSteps) {
       planEmitted = true
       deps.onPlanCreated(planSteps)

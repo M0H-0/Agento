@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { UIMessageChunk } from 'ai'
+import { APICallError, RetryError } from 'ai'
 import { MockLanguageModelV2, simulateReadableStream } from 'ai/test'
 import type { LanguageModelV2StreamPart } from '@ai-sdk/provider'
 import { z } from 'zod'
 import { createToolRegistry } from './registry'
 import { buildRunContext, newRunId } from './context'
-import { runPlanFirstTurn } from './plan-run'
+import { friendlyProviderError, runPlanFirstTurn } from './plan-run'
 import type { PlanRunDeps, PlanRunOutcome } from './plan-run'
 import { emitPlanTool } from './tools/emit_plan'
 import type { PlanStep } from './tools/emit_plan'
@@ -298,6 +299,141 @@ describe('runPlanFirstTurn — the plan-first loop', () => {
     expect(executed).toBe(1)
   })
 
+  it('M3.8: forced refusal then a TEXT-ONLY retry → the reply is delivered as a normal reply', async () => {
+    // The live "hey" failure (PROGRESS Devlog 2026-09-11): attempt 1 is
+    // refused (forced tool choice), attempt 2 answers "hey" in text and never
+    // calls emit_plan. That is a valid outcome — no provider error happened —
+    // so the reply must reach the user and be persisted, NOT be replaced by
+    // the held 400 copy, and NOTHING may execute without a plan.
+    executed = 0
+    const run = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-textreply',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    const registry = createToolRegistry()
+    registry.define(emitPlanTool)
+    registry.define(stubAction)
+    const replyChunks: LanguageModelV2StreamPart[] = [
+      { type: 'stream-start', warnings: [] },
+      { type: 'text-start', id: 'hey-1' },
+      { type: 'text-delta', id: 'hey-1', delta: 'Hi there!' },
+      { type: 'text-end', id: 'hey-1' },
+      {
+        type: 'finish',
+        finishReason: 'stop',
+        usage: { inputTokens: 3, outputTokens: 6, totalTokens: 9 }
+      }
+    ]
+    let calls = 0
+    const model = new MockLanguageModelV2({
+      provider: 'mock',
+      modelId: 'plan-run-test-textreply',
+      doStream: async () => {
+        calls += 1
+        if (calls === 1) throw new Error('Tool choice is required, but model did not call a tool')
+        return { stream: simulateReadableStream({ chunks: replyChunks }) } as never
+      }
+    })
+    const sentParts: UIMessageChunk[] = []
+    const outcome = await runPlanFirstTurn({
+      model,
+      system: 'test system',
+      messages: [
+        { id: 'u1', role: 'user' as const, parts: [{ type: 'text' as const, text: 'hey' }] }
+      ],
+      registry,
+      ctx: run.ctx,
+      requestPlanStart: () => {
+        throw new Error('the gate must never be reached without a plan')
+      },
+      sendPart: (part) => sentParts.push(part),
+      onPlanCreated: () => {
+        throw new Error('no plan must be emitted')
+      },
+      signal: new AbortController().signal
+    })
+    expect(outcome.planEmitted).toBe(false)
+    expect(outcome.planApproved).toBe(false)
+    expect(executed).toBe(0)
+    expect(model.doStreamCalls.length).toBe(2) // forced + one auto retry
+    // No error copy, no silent run: the text is the reply, kept for the
+    // settle point to persist + finish (chat.ts sends the held finish).
+    expect(outcome.terminalSent).toBe(false)
+    expect(sentParts.some((p) => p.type === 'error')).toBe(false)
+    expect(outcome.assistantMessage?.parts).toEqual([{ type: 'text', text: 'Hi there!' }])
+    expect(outcome.heldFinish?.type).toBe('finish')
+  })
+
+  it('M3.8: both attempts answer in text → only the RETRY is delivered, never doubled', async () => {
+    // The doubled greeting: with a single shared accumulator the first
+    // attempt's partial text leaked into the final message. The retry is the
+    // only attempt that resolves this run, so its text is all we see.
+    executed = 0
+    const run = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-textretry',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    const registry = createToolRegistry()
+    registry.define(emitPlanTool)
+    registry.define(stubAction)
+    const greeting = (id: string, word: string): LanguageModelV2StreamPart[] => [
+      { type: 'stream-start', warnings: [] },
+      { type: 'text-start', id },
+      { type: 'text-delta', id, delta: word },
+      { type: 'text-end', id },
+      {
+        type: 'finish',
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
+      }
+    ]
+    const streams = [
+      { stream: simulateReadableStream({ chunks: greeting('g1', 'first attempt') }) },
+      { stream: simulateReadableStream({ chunks: greeting('g2', 'second attempt') }) }
+    ]
+    const model = new MockLanguageModelV2({
+      provider: 'mock',
+      modelId: 'plan-run-test-textretry',
+      doStream: async () => {
+        const next = streams.shift()
+        if (!next) throw new Error('unexpected extra doStream call')
+        return next as never
+      }
+    })
+    const sentParts: UIMessageChunk[] = []
+    const outcome = await runPlanFirstTurn({
+      model,
+      system: 'test system',
+      messages: USER_MESSAGES,
+      registry,
+      ctx: run.ctx,
+      requestPlanStart: () => {
+        throw new Error('the gate must never be reached without a plan')
+      },
+      sendPart: (part) => sentParts.push(part),
+      onPlanCreated: () => {
+        throw new Error('no plan must be emitted')
+      },
+      signal: new AbortController().signal
+    })
+    expect(outcome.planEmitted).toBe(false)
+    expect(executed).toBe(0)
+    expect(model.doStreamCalls.length).toBe(2)
+    // Exactly ONE reply — the retry's — never a concatenation of both.
+    expect(outcome.assistantMessage?.parts).toEqual([{ type: 'text', text: 'second attempt' }])
+    // And only that one text ever reached the wire.
+    const wireText = sentParts
+      .filter((p) => p.type === 'text-delta')
+      .map((p) => (p as { delta: string }).delta)
+      .join('')
+    expect(wireText).toBe('second attempt')
+    expect(outcome.terminalSent).toBe(false)
+  })
+
   it('double refusal → honest error, NO execution without a plan', async () => {
     executed = 0
     const run = buildRunContext({
@@ -383,5 +519,55 @@ describe('runPlanFirstTurn — the plan-first loop', () => {
     expect(model.doStreamCalls.length).toBe(2)
     // The execution text gives the persisted reply.
     expect(outcome.assistantMessage?.parts).toEqual([{ type: 'text', text: 'done' }])
+  })
+})
+
+describe('friendlyProviderError — copy classification + diagnosability (M3.8)', () => {
+  const apiCall = (statusCode: number, responseBody?: string): APICallError =>
+    new APICallError({
+      message: `mock provider error ${statusCode}`,
+      url: 'https://mock.invalid/v1/chat/completions',
+      requestBodyValues: undefined,
+      statusCode,
+      responseBody
+    })
+
+  it('logs the raw status + response body to the console (never the request)', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      friendlyProviderError(apiCall(400, 'tool_use_failed: Tool choice is required'), 'plan')
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(spy.mock.calls[0]?.[0]).toContain('[provider] 400')
+      expect(spy.mock.calls[0]?.[0]).toContain('tool_use_failed')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('a non-key 400 in the plan phase is a refusal to plan, not a connection problem', () => {
+    const copy = friendlyProviderError(apiCall(400, '{"error":{"code":"tool_use_failed"}}'), 'plan')
+    expect(copy).toContain("couldn't create a plan")
+    expect(copy).not.toContain('connection')
+  })
+
+  it('the same 400 outside the plan phase keeps the generic provider copy', () => {
+    expect(friendlyProviderError(apiCall(400, 'tool_use_failed'))).toContain('connection')
+  })
+
+  it('key, rate-limit, and non-API errors still classify first', () => {
+    expect(friendlyProviderError(apiCall(401), 'plan')).toContain('API key')
+    expect(friendlyProviderError(apiCall(403, 'forbidden'), 'plan')).toContain('API key')
+    expect(friendlyProviderError(apiCall(400, 'API key not valid'), 'plan')).toContain('API key')
+    expect(friendlyProviderError(apiCall(429, 'rate limit'), 'plan')).toContain('rate-limiting')
+    expect(friendlyProviderError(new Error('network down'), 'plan')).toContain('connection')
+  })
+
+  it('unwraps RetryError before classifying (a wrapped 429 stays a 429)', () => {
+    const wrapped = new RetryError({
+      message: 'retries exhausted',
+      reason: 'maxRetriesExceeded',
+      errors: [apiCall(429, 'rate limit')]
+    })
+    expect(friendlyProviderError(wrapped, 'plan')).toContain('rate-limiting')
   })
 })
