@@ -12,7 +12,7 @@ export const sessions = sqliteTable('sessions', {
   // NOT NULL per docs/03 §8 — the workspace picker lands in M2.2; repositories
   // store an empty-string placeholder until then.
   workspacePath: text('workspace_path').notNull(),
-  mode: text('mode').notNull().default('auto'),
+  mode: text('mode').notNull().default('act'),
   status: text('status').notNull().default('idle'), // idle|running|error
   provider: text('provider'),
   model: text('model'),

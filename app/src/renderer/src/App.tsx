@@ -9,7 +9,7 @@ import {
 } from '@assistant-ui/react'
 import type { UIMessage } from 'ai'
 import { createIpcChatTransport } from './chat/transport'
-import type { SessionSummary } from './chat/transport'
+import type { SessionMode, SessionSummary } from './chat/transport'
 import { parseAgentEvent } from './chat/agent-events'
 import type { PlanStep } from './chat/agent-events'
 import type { AgentApprovalRequestedEvent } from '../../preload/index'
@@ -62,7 +62,19 @@ function AssistantMessage(): React.JSX.Element {
   )
 }
 
-function Thread({ error, runStatus }: { error?: Error; runStatus?: string }): React.JSX.Element {
+function Thread({
+  error,
+  runStatus,
+  mode,
+  onModeChange,
+  modeDisabled
+}: {
+  error?: Error
+  runStatus?: string
+  mode: SessionMode
+  onModeChange: (mode: SessionMode) => void
+  modeDisabled: boolean
+}): React.JSX.Element {
   return (
     <ThreadPrimitive.Root className="thread">
       <ThreadPrimitive.Viewport className="thread-viewport">
@@ -95,9 +107,39 @@ function Thread({ error, runStatus }: { error?: Error; runStatus?: string }): Re
       </ThreadPrimitive.Viewport>
       <ThreadPrimitive.ViewportFooter className="thread-footer">
         <ComposerPrimitive.Root className="composer">
+          {/* Execution mode tabs (docs/04 §3.5): session-owned, persisted via
+              session:set-mode. Plan is structurally read-only; Act may mutate
+              through the normal approval/snapshot pipeline. */}
+          <div className="mode-tabs" role="tablist" aria-label="Execution mode">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'plan'}
+              className={mode === 'plan' ? 'mode-tab mode-tab--active' : 'mode-tab'}
+              disabled={modeDisabled}
+              onClick={() => onModeChange('plan')}
+              title="Read files and prepare a plan. Nothing will be changed."
+            >
+              Plan
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'act'}
+              className={mode === 'act' ? 'mode-tab mode-tab--active' : 'mode-tab'}
+              disabled={modeDisabled}
+              onClick={() => onModeChange('act')}
+              title="Carry out work. Agento asks before risky changes."
+            >
+              Act
+            </button>
+            <span className="mode-hint">
+              {mode === 'plan' ? 'Read-only — nothing will change.' : 'Carries out work.'}
+            </span>
+          </div>
           <ComposerPrimitive.Input
             className="composer-input"
-            placeholder="Message Agento…"
+            placeholder={mode === 'plan' ? 'Ask for a read-only plan…' : 'Message Agento…'}
             rows={1}
             autoFocus
           />
@@ -121,6 +163,10 @@ function Thread({ error, runStatus }: { error?: Error; runStatus?: string }): Re
 
 interface ChatViewProps {
   getSessionId: () => string | null
+  getMode: () => SessionMode
+  mode: SessionMode
+  onModeChange: (mode: SessionMode) => void
+  modeDisabled?: boolean
   onSessionCreated: (session: SessionSummary) => void
   onSettled: () => void
   initialMessages: UIMessage[]
@@ -137,6 +183,10 @@ interface ChatViewProps {
 // history; verified against @ai-sdk/react 2.0.253's UseChatOptions.
 function ChatView({
   getSessionId,
+  getMode,
+  mode,
+  onModeChange,
+  modeDisabled,
   onSessionCreated,
   onSettled,
   initialMessages,
@@ -145,18 +195,24 @@ function ChatView({
 }: ChatViewProps): React.JSX.Element {
   // Created once per mount: the transport carries this view's run state
   // (in-flight guard, active run's session id), so a per-render identity
-  // would be a lie.
+  // would be a lie. getMode is App-stable (useCallback over a ref), so it can
+  // be handed to the transport directly — a tab switch before the first send
+  // still stamps the lazy-created session correctly.
   const [ipc] = useState(() =>
-    createIpcChatTransport({ getSessionId, onSessionCreated, onSettled })
+    createIpcChatTransport({ getSessionId, getMode, onSessionCreated, onSettled })
   )
   const chat = useChat({ transport: ipc.transport, messages: initialMessages })
   const runtime = useAISDKRuntime(chat)
   const liveStatus =
     runStatus ??
     (chat.status === 'submitted'
-      ? 'Preparing a safe plan...'
+      ? mode === 'plan'
+        ? 'Reading and preparing your plan...'
+        : 'Getting ready...'
       : chat.status === 'streaming'
-        ? 'Working...'
+        ? mode === 'plan'
+          ? 'Reading and preparing your plan...'
+          : 'Working...'
         : undefined)
   // The view is unmounted ONLY by an explicit session switch / New chat, and
   // App runs dispose there (before the remount) rather than in an effect
@@ -187,7 +243,13 @@ function ChatView({
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <ToolUIRegistry />
-      <Thread error={chat.error} runStatus={liveStatus} />
+      <Thread
+        error={chat.error}
+        runStatus={liveStatus}
+        mode={mode}
+        onModeChange={onModeChange}
+        modeDisabled={runActive || (modeDisabled ?? false)}
+      />
     </AssistantRuntimeProvider>
   )
 }
@@ -267,26 +329,58 @@ function App(): React.JSX.Element {
   // StrictMode-safe because resubscription is complete and non-destructive
   // — the registerDispose ref pattern stays reserved for the transport's
   // destructive dispose (M1.4 rule).
-  // ── Plan panel (M3.1) ────────────────────────────────────────────────────
+  // ── Plan panel ─────────────────────────────────────────────────────────
+  // Plan-mode runs are read-only: the panel is review-only, never a Start
+  // gate. Act's "go ahead" executes the latest SAVED plan (session:plan),
+  // which is also restored on session open so a reviewed plan survives a
+  // restart.
   const [plan, setPlan] = useState<PlanPanelState | null>(null)
-  const [planStartRequested, setPlanStartRequested] = useState(false)
 
-  const handlePlanStart = useCallback(() => {
-    // Session/run-bound: the button hides only after main confirms ok:true.
-    // A rejected start keeps the control so the user can retry.
-    const sessionId = activeSessionIdRef.current
-    const runId = plan?.runId
-    window.agento.plan
-      .start({
-        ...(sessionId ? { sessionId } : {}),
-        ...(runId ? { runId } : {})
-      })
-      .then((result) => {
-        if (result.ok) setPlanStartRequested(true)
-        else console.error('plan:start rejected:', result.reason)
-      })
-      .catch((error) => console.error('plan:start failed:', error))
-  }, [plan?.runId])
+  // ── Execution mode tabs (docs/03 §2, docs/04 §3.5) ─────────────────────────
+  // Session-owned: new chats start in Act; opening a session restores its
+  // persisted mode; switching with an active session persists immediately.
+  const [mode, setMode] = useState<SessionMode>('act')
+  const [modeSaving, setModeSaving] = useState(false)
+  const modeRef = useRef<SessionMode>('act')
+  const setModeBoth = useCallback((next: SessionMode) => {
+    modeRef.current = next
+    setMode(next)
+  }, [])
+  const getMode = useCallback(() => modeRef.current, [])
+
+  const handleModeChange = useCallback(
+    (next: SessionMode) => {
+      if (next === modeRef.current || modeSaving) return
+      const sessionId = activeSessionIdRef.current
+      setModeBoth(next)
+      // No session row yet (new chat before first send): the mode rides the
+      // lazy session:create via the transport's getMode — nothing to persist.
+      if (!sessionId) return
+      setModeSaving(true)
+      window.agento.sessions
+        .setMode({ sessionId, mode: next })
+        .then((updated) => {
+          setModeBoth(updated.mode === 'plan' ? 'plan' : 'act')
+          setSessions((prev) =>
+            prev.map((s) => (s.id === updated.id ? { ...s, mode: updated.mode } : s))
+          )
+        })
+        .catch((error) => {
+          console.error('session:set-mode failed:', error)
+          // Revert the optimistic switch so the tabs never lie about the
+          // persisted mode that chat:send will route on.
+          window.agento.sessions
+            .list()
+            .then((rows) => {
+              const row = rows.find((s) => s.id === sessionId)
+              if (row) setModeBoth(row.mode === 'plan' ? 'plan' : 'act')
+            })
+            .catch(() => undefined)
+        })
+        .finally(() => setModeSaving(false))
+    },
+    [modeSaving, setModeBoth]
+  )
 
   // M3.2 approval dialog: one at a time, keyed by approvalId, closed on
   // approval/resolved (or after main confirms ok:true).
@@ -322,7 +416,6 @@ function App(): React.JSX.Element {
 
   const resetPlan = useCallback(() => {
     setPlan(null)
-    setPlanStartRequested(false)
     setApproval(null)
     setApprovalError(null)
     setApprovalPending(false)
@@ -345,7 +438,7 @@ function App(): React.JSX.Element {
       }
       if (event.type === 'plan/created') {
         lastRunIdRef.current = event.runId
-        setRunStatus('Plan ready. Review it before anything changes.')
+        setRunStatus('Plan ready — nothing was changed.')
         setPlan((prev) =>
           prev !== null && prev.runId === event.runId
             ? {
@@ -439,9 +532,10 @@ function App(): React.JSX.Element {
     (session: SessionSummary) => {
       activeSessionIdRef.current = session.id
       setActiveSessionId(session.id)
+      setModeBoth(session.mode === 'plan' ? 'plan' : 'act')
       refreshSessions()
     },
-    [refreshSessions]
+    [refreshSessions, setModeBoth]
   )
 
   // M2.5: the Changes stub re-reads its checkpoint feed when a run settles
@@ -459,16 +553,32 @@ function App(): React.JSX.Element {
       chatDisposeRef.current?.()
       resetPlan()
       try {
-        const messages = await window.agento.sessions.messages({ sessionId: session.id })
+        const [messages, savedPlan] = await Promise.all([
+          window.agento.sessions.messages({ sessionId: session.id }),
+          window.agento.sessions.plan({ sessionId: session.id }).catch(() => [])
+        ])
         activeSessionIdRef.current = session.id
         setActiveSessionId(session.id)
+        setModeBoth(session.mode === 'plan' ? 'plan' : 'act')
+        // Restore the reviewed plan so it survives restarts (docs/03 §2);
+        // statuses stay pending until a new run traces them.
+        if (savedPlan.length > 0) {
+          setPlan({
+            runId: `restored-${session.id}`,
+            steps: savedPlan,
+            updated: false,
+            statuses: {},
+            verification: {},
+            errors: {}
+          })
+        }
         setPendingMessages(messages)
         setThreadEpoch((epoch) => epoch + 1)
       } catch (error) {
         console.error('session:messages failed:', error)
       }
     },
-    [resetPlan]
+    [resetPlan, setModeBoth]
   )
 
   const startNewChat = useCallback(() => {
@@ -476,9 +586,10 @@ function App(): React.JSX.Element {
     resetPlan()
     activeSessionIdRef.current = null
     setActiveSessionId(null)
+    setModeBoth('act')
     setPendingMessages([])
     setThreadEpoch((epoch) => epoch + 1)
-  }, [resetPlan])
+  }, [resetPlan, setModeBoth])
 
   // ⌘/Ctrl+, opens Settings (docs/04 §7). Renderer-side keydown rather than an
   // Electron Menu accelerator: no Menu exists (autoHideMenuBar) and pure UI
@@ -518,6 +629,10 @@ function App(): React.JSX.Element {
         <ChatView
           key={threadEpoch}
           getSessionId={getSessionId}
+          getMode={getMode}
+          mode={mode}
+          onModeChange={handleModeChange}
+          modeDisabled={modeSaving}
           onSessionCreated={onSessionCreated}
           onSettled={onSettled}
           initialMessages={pendingMessages}
@@ -536,8 +651,7 @@ function App(): React.JSX.Element {
             <PlanPanel
               steps={plan.steps}
               updated={plan.updated}
-              awaitingStart={!planStartRequested}
-              onStart={handlePlanStart}
+              readOnly
               statuses={plan.statuses}
               verification={plan.verification}
               errors={plan.errors}

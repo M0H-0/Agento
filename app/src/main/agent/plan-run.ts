@@ -47,6 +47,11 @@ const RATE_LIMITED_COPY = "The model is rate-limiting us. I'll wait a moment and
 // `tool_use_failed`) — "check your connection" would be a flat-out lie for
 // it, so the plan phase maps non-key 400s to an honest plan-specific copy.
 const PLAN_REFUSED_COPY = "I couldn't create a plan for that. Try rephrasing the request."
+// A mutating request with no usable plan is an honest refusal, never a
+// silent unplanned mutation (docs/04 §5 copy rules — plain language). Shared
+// by the legacy plan-first path and the explicit Plan mode turn.
+const PLAN_FAILED_COPY =
+  "I couldn't make a plan for that request, so I didn't change anything. Try rephrasing it."
 const GENERIC_PROVIDER_COPY =
   'Something went wrong talking to the model provider. Check your connection and try again.'
 
@@ -100,6 +105,15 @@ export function friendlyProviderError(error: unknown, phase?: 'plan'): string {
   return GENERIC_PROVIDER_COPY
 }
 
+export type PlanRunMode = 'plan' | 'act'
+
+/** Affirmative continuations that execute the session's saved plan in Act mode. */
+export function isGoAheadMessage(text: string): boolean {
+  return /^\s*(go ahead|go-ahead|yes[,\s]+go ahead|execute the plan|carry out the plan|do the plan|start)\s*[.!]*\s*$/i.test(
+    text
+  )
+}
+
 export interface PlanRunDeps {
   model: LanguageModel
   system: string
@@ -107,7 +121,7 @@ export interface PlanRunDeps {
   registry: ToolRegistry
   ctx: ToolExecutionContext
   /** The run's plan-start gate (context.ts). Resolves { approved } on decision. */
-  requestPlanStart: (stepIds: string[]) => Promise<{ approved: boolean }>
+  requestPlanStart?: (stepIds: string[]) => Promise<{ approved: boolean }>
   /** Stream sink — chat.ts wraps webContents.send. */
   sendPart: (part: UIMessageChunk) => void
   /** M2.5 audit sink, threaded into every registry tool wrapper. */
@@ -263,11 +277,6 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
   }
 
   const baseModelMessages = convertToModelMessagesSafe(replayable(deps.messages))
-
-  // A mutating request with no usable plan is an honest refusal, never a
-  // silent unplanned mutation (docs/04 §5 copy rules — plain language).
-  const PLAN_FAILED_COPY =
-    "I couldn't make a plan for that request, so I didn't change anything. Try rephrasing it."
 
   try {
     // ── Phase 1: the plan call ─────────────────────────────────────────────
@@ -512,10 +521,13 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
     if (planSteps) {
       planEmitted = true
       deps.onPlanCreated(planSteps)
-      // THE GATE: nothing below runs until the user presses Start (or a stop
-      // rejects this promise — chat:stop unwinds it like a paused ask_user).
-      const decision = await deps.requestPlanStart(planSteps.map((s) => s.id))
-      planApproved = decision.approved
+      // THE GATE (legacy plan-first path only — new Plan mode never blocks
+      // and Act mode never plans; both bypass this). Nothing below runs until
+      // the user presses Start (or a stop rejects this promise).
+      if (deps.requestPlanStart) {
+        const decision = await deps.requestPlanStart(planSteps.map((s) => s.id))
+        planApproved = decision.approved
+      }
     }
 
     // ── Phase 2: the full-tool execution call ─────────────────────────────
@@ -703,5 +715,589 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
     stepLimitReached,
     planEmitted,
     planApproved
+  }
+}
+
+// ── Explicit Plan/Act modes (composer tabs, docs/03 §2) ─────────────────────
+// The legacy runPlanFirstTurn above stays as the tested plan-first-with-gate
+// path. Production now routes on the session's persisted mode instead:
+//
+// - Plan mode (runPlanModeTurn): STRUCTURALLY read-only. Discovery exposes
+//   only access==='read' tools, then a forced emit_plan call produces the
+//   structured plan. Write-access tools are never in any tool set handed to
+//   the model, so the model cannot mutate even if prompted. The plan is
+//   persisted/emitted via onPlanCreated and the run settles — no plan-start
+//   gate exists, so nothing can ever execute from a Plan run.
+// - Act mode (runActTurn): direct execution with the full registry MINUS
+//   emit_plan. Every mutation still flows through the registry wrapper
+//   (validate → sandbox → risk → approval → snapshot → execute), so all
+//   trust guarantees hold; there is simply no planning phase.
+
+const MAX_DISCOVERY_STEPS = 5
+
+export interface ModeTurnDeps {
+  model: LanguageModel
+  system: string
+  messages: UIMessage[]
+  registry: ToolRegistry
+  ctx: ToolExecutionContext
+  onOutcome?: Parameters<ToolRegistry['run']>[0]['onOutcome']
+  sendPart: (part: UIMessageChunk) => void
+  signal: AbortSignal
+  maxSteps?: number
+  verify?: PlanRunDeps['verify']
+  onVerification?: PlanRunDeps['onVerification']
+}
+
+function readToolNames(registry: ToolRegistry): string[] {
+  return registry
+    .names()
+    .filter((name) => name !== 'emit_plan' && registry.get(name)?.access === 'read')
+}
+
+export async function runPlanModeTurn(
+  deps: ModeTurnDeps & { onPlanCreated: (steps: PlanStep[]) => void }
+): Promise<PlanRunOutcome> {
+  const maxSteps = deps.maxSteps ?? MAX_STEPS
+  const accumulator = new AssistantMessageAccumulator()
+  let heldFinish: UIMessageChunk | null = null
+  let aborted = false
+  let terminalSent = false
+  let planUsage: LanguageModelUsage | undefined
+  let discoveryUsage: LanguageModelUsage | undefined
+  let discoveryMessages: ModelMessage[] = []
+  const emitPlanCallIds = new Set<string>()
+  const baseModelMessages = convertToModelMessagesSafe(replayable(deps.messages))
+
+  const forwardLive = async (result: {
+    toUIMessageStream: (opts: { onError: (e: unknown) => string }) => AsyncIterable<UIMessageChunk>
+  }): Promise<void> => {
+    for await (const part of result.toUIMessageStream({ onError: friendlyProviderError })) {
+      accumulator.addChunk(part)
+      if (part.type === 'finish') {
+        heldFinish = part
+        continue
+      }
+      if (part.type === 'abort') {
+        aborted = true
+        continue
+      }
+      if (part.type === 'error' && deps.signal.aborted) {
+        aborted = true
+        continue
+      }
+      if (part.type === 'error') {
+        deps.sendPart(part)
+        terminalSent = true
+        continue
+      }
+      if (part.type === 'tool-input-start' || part.type === 'tool-input-delta') continue
+      if (part.type === 'tool-input-available' && part.toolName === 'emit_plan') {
+        emitPlanCallIds.add(part.toolCallId)
+        continue
+      }
+      if (part.type === 'tool-output-available' && emitPlanCallIds.has(part.toolCallId)) continue
+      deps.sendPart(part)
+    }
+  }
+
+  try {
+    // Discovery: read-only tools only (structurally — write tools are never
+    // in this set). Renders as normal cards so the user sees what was read.
+    const readNames = readToolNames(deps.registry)
+    if (readNames.length > 0 && !deps.signal.aborted) {
+      try {
+        const discoveryResult = streamText({
+          model: deps.model,
+          system: `${deps.system}\nYou are in read-only planning mode. Inspect what you need with the available tools, then answer briefly in text: what you found and what you will put in the plan. Do not claim to change anything.`,
+          messages: baseModelMessages,
+          tools: deps.registry.toAiSdkTools(
+            { ...deps.ctx },
+            { onOutcome: deps.onOutcome },
+            { include: readNames }
+          ),
+          toolChoice: 'auto',
+          stopWhen: [stepCountIs(Math.min(MAX_DISCOVERY_STEPS, maxSteps))],
+          abortSignal: deps.signal,
+          prepareStep: ({ messages: stepMessages }) => ({
+            messages: stripStepReasoning(stepMessages)
+          }),
+          onAbort: () => {
+            aborted = true
+          },
+          onFinish: (event) => {
+            discoveryUsage = event.totalUsage
+          }
+        })
+        await forwardLive(discoveryResult)
+        if (!aborted && !terminalSent) {
+          try {
+            discoveryMessages = (await discoveryResult.response).messages
+          } catch {
+            discoveryMessages = []
+          }
+        }
+      } catch {
+        // Discovery is best-effort context — the forced plan attempt below
+        // produces the honest outcome (plan or plan-phase error copy).
+        if (deps.signal.aborted) aborted = true
+      }
+    }
+    if (deps.signal.aborted || aborted) {
+      return {
+        aborted: true,
+        terminalSent,
+        accumulatorFailed: accumulator.isFailed(),
+        assistantMessage: accumulator.toUIMessage(),
+        heldFinish,
+        usage: sumUsage(discoveryUsage, planUsage),
+        stepsTaken: 0,
+        stepLimitReached: false,
+        planEmitted: false,
+        planApproved: false
+      }
+    }
+    if (terminalSent) {
+      return {
+        aborted,
+        terminalSent,
+        accumulatorFailed: accumulator.isFailed(),
+        assistantMessage: accumulator.toUIMessage(),
+        heldFinish,
+        usage: sumUsage(discoveryUsage, planUsage),
+        stepsTaken: 0,
+        stepLimitReached: false,
+        planEmitted: false,
+        planApproved: false
+      }
+    }
+
+    // Forced plan: ONLY emit_plan is available — the model must plan.
+    const emitPlanWrapped = deps.registry.toAiSdkTool('emit_plan', deps.ctx, {
+      onOutcome: deps.onOutcome
+    })
+    if (!emitPlanWrapped) {
+      if (!terminalSent) {
+        deps.sendPart({ type: 'error', errorText: PLAN_FAILED_COPY })
+        terminalSent = true
+      }
+      return {
+        aborted,
+        terminalSent,
+        accumulatorFailed: accumulator.isFailed(),
+        assistantMessage: accumulator.toUIMessage(),
+        heldFinish,
+        usage: sumUsage(discoveryUsage, planUsage),
+        stepsTaken: 0,
+        stepLimitReached: false,
+        planEmitted: false,
+        planApproved: false
+      }
+    }
+    const planMessages: ModelMessage[] = [...baseModelMessages, ...discoveryMessages]
+    interface HeldAttempt {
+      steps: PlanStep[] | null
+      heldParts: UIMessageChunk[]
+      finish: UIMessageChunk | null
+      errorText: string | null
+      hadText: boolean
+    }
+    const attemptPlan = async (opts: {
+      toolChoice: { type: 'tool'; toolName: 'emit_plan' } | 'auto'
+      systemSuffix: string
+    }): Promise<HeldAttempt> => {
+      const heldParts: UIMessageChunk[] = []
+      const heldErrors: UIMessageChunk[] = []
+      let finish: UIMessageChunk | null = null
+      let hadText = false
+      let errorText: string | null = null
+      const planResult = streamText({
+        model: deps.model,
+        system: opts.systemSuffix ? `${deps.system}${opts.systemSuffix}` : deps.system,
+        messages: planMessages,
+        tools: { emit_plan: emitPlanWrapped },
+        toolChoice: opts.toolChoice,
+        stopWhen: [stepCountIs(1)],
+        abortSignal: deps.signal,
+        prepareStep: ({ messages: stepMessages }) => ({
+          messages: stripStepReasoning(stepMessages)
+        }),
+        onAbort: () => {
+          aborted = true
+        },
+        onFinish: (event) => {
+          planUsage = event.totalUsage
+        }
+      })
+      try {
+        for await (const part of planResult.toUIMessageStream({
+          onError: (error) => friendlyProviderError(error, 'plan')
+        })) {
+          if (part.type === 'finish') {
+            finish = part
+            heldFinish = part
+            continue
+          }
+          if (part.type === 'abort') {
+            aborted = true
+            continue
+          }
+          if (part.type === 'error' && deps.signal.aborted) {
+            aborted = true
+            continue
+          }
+          if (part.type === 'error') {
+            heldErrors.push(part)
+            continue
+          }
+          if (part.type === 'tool-input-start' || part.type === 'tool-input-delta') continue
+          if (part.type === 'tool-input-available' && part.toolName === 'emit_plan') {
+            emitPlanCallIds.add(part.toolCallId)
+            continue
+          }
+          if (part.type === 'tool-output-available' && emitPlanCallIds.has(part.toolCallId)) {
+            continue
+          }
+          if (part.type === 'text-start' || part.type === 'text-delta') hadText = true
+          heldParts.push(part)
+        }
+        const firstError = heldErrors[0]
+        if (firstError && firstError.type === 'error') errorText = firstError.errorText
+        if (aborted) return { steps: null, heldParts, finish, errorText, hadText }
+        const steps = await planResult.steps
+        let found: PlanStep[] | null = null
+        for (const step of steps) {
+          for (const toolCall of step.toolCalls) {
+            if (toolCall.toolName !== 'emit_plan') continue
+            const parsed = planStepsSchema.safeParse(toolCall.input)
+            if (parsed.success) {
+              found = parsed.data.steps
+              break
+            }
+          }
+          if (found) break
+        }
+        return { steps: found, heldParts, finish, errorText, hadText }
+      } catch {
+        return { steps: null, heldParts, finish, errorText, hadText }
+      }
+    }
+    let attempt = await attemptPlan({
+      toolChoice: { type: 'tool', toolName: 'emit_plan' },
+      systemSuffix: ''
+    })
+    if (!attempt.steps && !deps.signal.aborted && !aborted) {
+      attempt = await attemptPlan({
+        toolChoice: 'auto',
+        systemSuffix: '\nRespond ONLY by calling the emit_plan tool with the step-by-step plan.'
+      })
+    }
+    if (attempt.steps) {
+      for (const part of attempt.heldParts) {
+        accumulator.addChunk(part)
+        deps.sendPart(part)
+      }
+      deps.onPlanCreated(attempt.steps)
+      return {
+        aborted,
+        terminalSent,
+        accumulatorFailed: accumulator.isFailed(),
+        assistantMessage: accumulator.toUIMessage(),
+        heldFinish,
+        usage: sumUsage(discoveryUsage, planUsage),
+        stepsTaken: 0,
+        stepLimitReached: false,
+        planEmitted: true,
+        planApproved: false
+      }
+    }
+    if (deps.signal.aborted || aborted) {
+      return {
+        aborted: true,
+        terminalSent,
+        accumulatorFailed: accumulator.isFailed(),
+        assistantMessage: accumulator.toUIMessage(),
+        heldFinish,
+        usage: sumUsage(discoveryUsage, planUsage),
+        stepsTaken: 0,
+        stepLimitReached: false,
+        planEmitted: false,
+        planApproved: false
+      }
+    }
+    const genuineError = attempt.errorText !== null || attempt.finish === null
+    if (!genuineError && attempt.hadText) {
+      const userText = deps.messages
+        .filter((m) => m.role === 'user')
+        .flatMap((m) => m.parts)
+        .filter((p) => p.type === 'text')
+        .map((p) => (p as { text: string }).text)
+        .join(' ')
+      if (isLikelyMutatingRequest(userText)) {
+        if (!terminalSent) {
+          deps.sendPart({ type: 'error', errorText: PLAN_FAILED_COPY })
+          terminalSent = true
+        }
+        return {
+          aborted,
+          terminalSent,
+          accumulatorFailed: accumulator.isFailed(),
+          assistantMessage: accumulator.toUIMessage(),
+          heldFinish,
+          usage: sumUsage(discoveryUsage, planUsage),
+          stepsTaken: 0,
+          stepLimitReached: false,
+          planEmitted: false,
+          planApproved: false
+        }
+      }
+      for (const part of attempt.heldParts) {
+        accumulator.addChunk(part)
+        deps.sendPart(part)
+      }
+      return {
+        aborted,
+        terminalSent,
+        accumulatorFailed: accumulator.isFailed(),
+        assistantMessage: accumulator.toUIMessage(),
+        heldFinish,
+        usage: sumUsage(discoveryUsage, planUsage),
+        stepsTaken: 0,
+        stepLimitReached: false,
+        planEmitted: false,
+        planApproved: false
+      }
+    }
+    if (!terminalSent) {
+      deps.sendPart({ type: 'error', errorText: attempt.errorText ?? PLAN_FAILED_COPY })
+      terminalSent = true
+    }
+    return {
+      aborted,
+      terminalSent,
+      accumulatorFailed: accumulator.isFailed(),
+      assistantMessage: accumulator.toUIMessage(),
+      heldFinish,
+      usage: sumUsage(discoveryUsage, planUsage),
+      stepsTaken: 0,
+      stepLimitReached: false,
+      planEmitted: false,
+      planApproved: false
+    }
+  } catch (error) {
+    if (deps.signal.aborted) {
+      aborted = true
+    } else if (!accumulator.isFailed() && !terminalSent) {
+      const message = isStopRejection(error)
+        ? 'Stopped before the reply was sent.'
+        : friendlyProviderError(error)
+      deps.sendPart({ type: 'error', errorText: message })
+      terminalSent = true
+    }
+    return {
+      aborted,
+      terminalSent,
+      accumulatorFailed: accumulator.isFailed(),
+      assistantMessage: accumulator.toUIMessage(),
+      heldFinish,
+      usage: sumUsage(discoveryUsage, planUsage),
+      stepsTaken: 0,
+      stepLimitReached: false,
+      planEmitted: false,
+      planApproved: false
+    }
+  }
+}
+
+export async function runActTurn(
+  deps: ModeTurnDeps & { planHandoff?: PlanStep[] }
+): Promise<PlanRunOutcome> {
+  const maxSteps = deps.maxSteps ?? MAX_STEPS
+  const accumulator = new AssistantMessageAccumulator()
+  let heldFinish: UIMessageChunk | null = null
+  let aborted = false
+  let terminalSent = false
+  let stepsTaken = 0
+  let stepLimitReached = false
+  let capturedUsage: LanguageModelUsage | undefined
+  const emitPlanCallIds = new Set<string>()
+  let cancelled = false
+  const ctxWithCancel: ToolExecutionContext = {
+    ...deps.ctx,
+    requestApproval: async (request) => {
+      const decision = await deps.ctx.requestApproval(request)
+      if (decision === 'cancel') cancelled = true
+      return decision
+    }
+  }
+
+  const forwardLive = async (result: {
+    toUIMessageStream: (opts: { onError: (e: unknown) => string }) => AsyncIterable<UIMessageChunk>
+  }): Promise<void> => {
+    for await (const part of result.toUIMessageStream({ onError: friendlyProviderError })) {
+      accumulator.addChunk(part)
+      if (part.type === 'finish') {
+        heldFinish = part
+        continue
+      }
+      if (part.type === 'abort') {
+        aborted = true
+        continue
+      }
+      if (part.type === 'error' && deps.signal.aborted) {
+        aborted = true
+        continue
+      }
+      if (part.type === 'tool-input-start' || part.type === 'tool-input-delta') continue
+      if (part.type === 'tool-input-available' && part.toolName === 'emit_plan') {
+        emitPlanCallIds.add(part.toolCallId)
+        continue
+      }
+      if (part.type === 'tool-output-available' && emitPlanCallIds.has(part.toolCallId)) continue
+      deps.sendPart(part)
+    }
+  }
+
+  try {
+    // The reviewed plan is advisory context, never privileged execution data:
+    // every resulting tool call still passes the registry wrapper. Only added
+    // for an explicit go-ahead (chat.ts decides); a normal Act message runs
+    // on the conversation alone.
+    const handoff: ModelMessage[] =
+      deps.planHandoff && deps.planHandoff.length > 0
+        ? [
+            {
+              role: 'user',
+              content: `The plan we reviewed:\n${deps.planHandoff.map((s, i) => `${i + 1}. ${s.description} (tool: ${s.tool})`).join('\n')}\nCarry it out now with the file tools; follow the existing approval behavior for anything risky.`
+            }
+          ]
+        : []
+    const baseExecMessages = [...convertToModelMessagesSafe(replayable(deps.messages)), ...handoff]
+    const runOnce = async (opts: {
+      systemSuffix: string
+      toolChoice: 'auto' | 'required'
+    }): Promise<void> => {
+      const executionResult = streamText({
+        model: deps.model,
+        system: opts.systemSuffix ? `${deps.system}${opts.systemSuffix}` : deps.system,
+        messages: baseExecMessages,
+        tools: deps.registry.toAiSdkTools(
+          ctxWithCancel,
+          { onOutcome: deps.onOutcome },
+          { exclude: ['emit_plan'] }
+        ),
+        toolChoice: opts.toolChoice,
+        abortSignal: deps.signal,
+        stopWhen: [stepCountIs(maxSteps), () => cancelled],
+        prepareStep: ({ messages: stepMessages }) => ({
+          messages: stripStepReasoning(stepMessages)
+        }),
+        onAbort: () => {
+          aborted = true
+        },
+        onStepFinish: () => {
+          stepsTaken += 1
+        },
+        onFinish: (event) => {
+          const next = event.totalUsage
+          if (capturedUsage === undefined) {
+            capturedUsage = next
+          } else if (next !== undefined) {
+            const inT = (capturedUsage.inputTokens ?? 0) + (next.inputTokens ?? 0)
+            const outT = (capturedUsage.outputTokens ?? 0) + (next.outputTokens ?? 0)
+            capturedUsage = { ...capturedUsage, inputTokens: inT, outputTokens: outT }
+          }
+        }
+      })
+      await forwardLive(executionResult)
+    }
+    await runOnce({ systemSuffix: '', toolChoice: 'auto' })
+    // A go-ahead that produced prose and zero tool calls looks like the run
+    // silently stopped — retry once with a tool call required. The wrapper
+    // still guards every call, so forcing *a* tool cannot force a mutation.
+    if (
+      deps.planHandoff &&
+      deps.planHandoff.length > 0 &&
+      !aborted &&
+      !cancelled &&
+      stepsTaken === 0
+    ) {
+      await runOnce({
+        systemSuffix:
+          '\nAct now using the file tools to carry out the reviewed plan. Call the first tool immediately; do not reply in text first.',
+        toolChoice: 'required'
+      })
+    }
+    if (!aborted && !cancelled && stepsTaken === 0 && accumulator.toUIMessage() === null) {
+      if (!terminalSent) {
+        deps.sendPart({
+          type: 'error',
+          errorText:
+            "I didn't take any actions, so nothing changed. Try saying which file to work on and what to do with it."
+        })
+        terminalSent = true
+      }
+    }
+    if (!aborted && stepsTaken >= maxSteps) stepLimitReached = true
+    if (deps.verify && !aborted) {
+      try {
+        const userMessages = deps.messages.filter((m) => m.role === 'user')
+        const lastText = userMessages[userMessages.length - 1]
+        const instructionSegment =
+          lastText && lastText.parts[0] && lastText.parts[0].type === 'text'
+            ? (lastText.parts[0] as { text: string }).text.slice(0, 500)
+            : 'run'
+        const verdict = await deps.verify({
+          instructionSegment,
+          stepDescription: 'execution'
+        })
+        if (verdict.verdict === 'complete') {
+          deps.onVerification?.({ stepId: 'run', isComplete: true, score: verdict.score })
+        } else if (verdict.verdict === 'incomplete') {
+          const retry = await deps.verify({
+            instructionSegment: `${instructionSegment}\nMissed: ${verdict.missedSegments.join('; ')}`,
+            stepDescription: 'execution-retry'
+          })
+          if (retry.verdict === 'complete') {
+            deps.onVerification?.({ stepId: 'run', isComplete: true, score: retry.score })
+          } else if (retry.verdict === 'incomplete') {
+            deps.onVerification?.({
+              stepId: 'run',
+              isComplete: false,
+              score: retry.score,
+              missedSegments: retry.missedSegments
+            })
+          } else {
+            deps.onVerification?.({ stepId: 'run', isComplete: false, score: null })
+          }
+        } else {
+          deps.onVerification?.({ stepId: 'run', isComplete: false, score: null })
+        }
+      } catch {
+        deps.onVerification?.({ stepId: 'run', isComplete: false, score: null })
+      }
+    }
+  } catch (error) {
+    if (deps.signal.aborted) {
+      aborted = true
+    } else if (!accumulator.isFailed() && !terminalSent) {
+      const message = isStopRejection(error)
+        ? 'Stopped before the reply was sent.'
+        : friendlyProviderError(error)
+      deps.sendPart({ type: 'error', errorText: message })
+      terminalSent = true
+    }
+  }
+  return {
+    aborted,
+    terminalSent,
+    accumulatorFailed: accumulator.isFailed(),
+    assistantMessage: accumulator.toUIMessage(),
+    heldFinish,
+    usage: sumUsage(capturedUsage, undefined),
+    stepsTaken,
+    stepLimitReached,
+    planEmitted: false,
+    planApproved: false
   }
 }

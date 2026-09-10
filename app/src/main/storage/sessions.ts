@@ -7,11 +7,17 @@ import { messages, sessions } from './schema'
 // Session repository — the only code that touches the sessions/messages tables
 // (docs/02 §2.5, docs/03-agent-core.md §8). Plain Node, no Electron imports.
 
+export type SessionMode = 'plan' | 'act'
+
+export function normalizeSessionMode(value: unknown): SessionMode {
+  return value === 'plan' ? 'plan' : 'act'
+}
+
 export interface SessionRow {
   id: string
   title: string
   workspacePath: string
-  mode: string
+  mode: SessionMode
   status: string
   provider: string | null
   model: string | null
@@ -38,29 +44,57 @@ export function createSession(input: {
   provider?: string
   model?: string
   workspacePath?: string
+  mode?: unknown
 }): SessionRow {
   const now = nowIso()
-  return getDrizzle()
-    .insert(sessions)
-    .values({
-      id: randomUUID(),
-      title: input.title?.trim() ? input.title.trim() : DEFAULT_TITLE,
-      workspacePath: input.workspacePath ?? WORKSPACE_PLACEHOLDER,
-      provider: input.provider ?? null,
-      model: input.model ?? null,
-      createdAt: now,
-      updatedAt: now
-    })
+  // The drizzle row types `mode` as string — normalize on the way out so the
+  // repository's SessionRow contract (SessionMode) always holds.
+  return withNormalizedMode(
+    getDrizzle()
+      .insert(sessions)
+      .values({
+        id: randomUUID(),
+        title: input.title?.trim() ? input.title.trim() : DEFAULT_TITLE,
+        workspacePath: input.workspacePath ?? WORKSPACE_PLACEHOLDER,
+        mode: normalizeSessionMode(input.mode),
+        provider: input.provider ?? null,
+        model: input.model ?? null,
+        createdAt: now,
+        updatedAt: now
+      })
+      .returning()
+      .get()
+  )
+}
+
+export function setSessionMode(sessionId: string, mode: unknown): SessionRow | undefined {
+  const next = normalizeSessionMode(mode)
+  const now = nowIso()
+  const row = getDrizzle()
+    .update(sessions)
+    .set({ mode: next, updatedAt: now })
+    .where(eq(sessions.id, sessionId))
     .returning()
     .get()
+  return row === undefined ? undefined : withNormalizedMode(row)
+}
+
+function withNormalizedMode<T extends { mode: string }>(row: T): T & { mode: SessionMode } {
+  return { ...row, mode: normalizeSessionMode(row.mode) }
 }
 
 export function listSessions(): SessionRow[] {
-  return getDrizzle().select().from(sessions).orderBy(desc(sessions.updatedAt)).all()
+  return getDrizzle()
+    .select()
+    .from(sessions)
+    .orderBy(desc(sessions.updatedAt))
+    .all()
+    .map((row) => withNormalizedMode(row))
 }
 
 export function getSession(id: string): SessionRow | undefined {
-  return getDrizzle().select().from(sessions).where(eq(sessions.id, id)).get()
+  const row = getDrizzle().select().from(sessions).where(eq(sessions.id, id)).get()
+  return row ? withNormalizedMode(row) : undefined
 }
 
 // content stores the full serialized UIMessage JSON (M1.3 Devlog): parse back

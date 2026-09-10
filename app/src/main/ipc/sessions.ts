@@ -2,18 +2,31 @@ import { ipcMain } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import { getSettings } from '../settings'
 import { getCurrentWorkspace } from '../workspaces'
-import { createSession, getSessionMessages, listSessions } from '../storage/sessions'
-import type { SessionRow } from '../storage/sessions'
+import {
+  createSession,
+  getSessionMessages,
+  listSessions,
+  normalizeSessionMode,
+  setSessionMode
+} from '../storage/sessions'
+import type { SessionMode, SessionRow } from '../storage/sessions'
+import { getLatestPlan } from '../storage/plan-steps'
 import { getUsageTotalsBySession } from '../storage/usage'
 
 // Sessions contract (docs/03 §4 renderer→main; storage in docs/03 §8): plain
 // invokes over the preload bridge; the DB is touched only by the storage
 // repositories. Throwing keeps the established error path: the renderer's
 // invoke promise rejects. The bridge carries the minimal SessionInfo shape —
-// storage-only columns (workspace_path, mode, …) stay main-side until a
-// feature needs them.
+// workspace_path stays display-only upstream; mode is exposed because the
+// composer tabs own it per session.
 export interface CreateSessionPayload {
   title?: string
+  mode?: SessionMode
+}
+
+export interface SetSessionModePayload {
+  sessionId: string
+  mode: SessionMode
 }
 
 export interface SessionMessagesPayload {
@@ -41,6 +54,7 @@ function toSessionInfo(
   id: string
   title: string
   workspacePath: string
+  mode: SessionMode
   createdAt: string
   updatedAt: string
   usage: SessionUsage | null
@@ -49,6 +63,7 @@ function toSessionInfo(
     id: row.id,
     title: row.title,
     workspacePath: row.workspacePath,
+    mode: normalizeSessionMode(row.mode),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     usage: usage ?? null
@@ -65,10 +80,27 @@ export function registerSessionsIpc(): void {
     const title =
       typeof payload?.title === 'string' && payload.title.trim() !== '' ? payload.title : undefined
     return toSessionInfo(
-      createSession({ title, provider, model, workspacePath: getCurrentWorkspace() ?? undefined }),
+      createSession({
+        title,
+        provider,
+        model,
+        workspacePath: getCurrentWorkspace() ?? undefined,
+        mode: normalizeSessionMode(payload?.mode)
+      }),
       undefined
     )
   })
+  ipcMain.handle(
+    'session:set-mode',
+    (_event: IpcMainInvokeEvent, payload: SetSessionModePayload) => {
+      if (typeof payload?.sessionId !== 'string' || payload.sessionId.trim() === '') {
+        throw new Error('Session id is required.')
+      }
+      const row = setSessionMode(payload.sessionId, payload?.mode)
+      if (!row) throw new Error('The session for this conversation no longer exists.')
+      return toSessionInfo(row, undefined)
+    }
+  )
   ipcMain.handle('session:list', () => {
     const totals = getUsageTotalsBySession()
     return listSessions().map((row) => toSessionInfo(row, totals.get(row.id)))
@@ -78,4 +110,16 @@ export function registerSessionsIpc(): void {
     (_event: IpcMainInvokeEvent, payload: SessionMessagesPayload) =>
       getSessionMessages(requireString(payload?.sessionId, 'Session id'))
   )
+  ipcMain.handle('session:plan', (_event: IpcMainInvokeEvent, payload: SessionMessagesPayload) => {
+    // Latest saved plan for the PlanPanel restore (docs/03 §2): the reviewed
+    // plan survives restarts; Act's "go ahead" executes it from this same
+    // source. Empty array when no plan was ever saved.
+    const sessionId = requireString(payload?.sessionId, 'Session id')
+    try {
+      return getLatestPlan(sessionId)
+    } catch (error) {
+      console.error('[plan] loading saved plan failed:', error)
+      return []
+    }
+  })
 }

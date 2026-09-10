@@ -8,9 +8,8 @@ export interface PlanPanelProps {
   steps: AgentPlanStep[]
   /** True when this plan replaced an earlier one in the same run. */
   updated: boolean
-  /** True while the run is blocked on the plan-start gate (Start visible). */
-  awaitingStart: boolean
-  onStart: () => void
+  /** True when the plan came from a read-only Plan-mode run (no execution path). */
+  readOnly?: boolean
   statuses?: Record<string, string>
   verification?: Record<string, { score: number | null; verified: boolean }>
   errors?: Record<string, string>
@@ -43,8 +42,7 @@ function statusOf(statuses: Record<string, string> | undefined, id: string): Pla
 export function PlanPanel({
   steps,
   updated,
-  awaitingStart,
-  onStart,
+  readOnly,
   statuses,
   verification,
   errors
@@ -55,11 +53,7 @@ export function PlanPanel({
       <h2 className="plan-panel__title">
         Plan
         {updated ? <span className="plan-panel__updated">updated</span> : null}
-        {awaitingStart ? (
-          <button type="button" className="plan-panel__start" onClick={onStart}>
-            Start ▶
-          </button>
-        ) : null}
+        {readOnly ? <span className="plan-panel__readonly">read-only</span> : null}
       </h2>
       <ul className="plan-panel__list">
         {steps.map((step) => {
@@ -90,8 +84,8 @@ export function PlanPanel({
         })}
       </ul>
       <div className="plan-panel__footer">
-        {awaitingStart
-          ? `${steps.length} ${steps.length === 1 ? 'step' : 'steps'} planned — nothing runs until you press Start.`
+        {readOnly
+          ? 'Read-only plan — nothing was changed. Switch to Act and say “go ahead” to carry it out.'
           : `${doneCount} of ${steps.length} steps done`}
       </div>
     </aside>

@@ -29,6 +29,8 @@ export const MAX_TOOL_OUTPUT_BYTES = 8 * 1024
 export interface ToolRegistry {
   define<TInput, TOutput>(tool: ToolDefinition<TInput, TOutput>): void
   get(name: string): ToolDefinition | undefined
+  /** All defined tool names in definition order (mode filtering reads this). */
+  names(): string[]
   /** The wrapper entry point — the loop (M2.4 slot) calls this per model tool call. */
   run(input: {
     tool: string
@@ -72,7 +74,8 @@ export interface ToolRegistry {
         riskLevel: number
         durationMs: number
       }) => void
-    }
+    },
+    filter?: { include?: string[]; exclude?: string[] }
   ): Record<string, ReturnType<typeof aiTool>>
   /**
    * Build ONE tool's AI SDK wrapper by name (M3.1): the plan phase calls this
@@ -393,15 +396,27 @@ export function createToolRegistry(): ToolRegistry {
     hooks?: {
       /** M2.5 audit sink — one notification per wrapper run (every status). */
       onOutcome?: Parameters<ToolRegistry['run']>[0]['onOutcome']
-    }
+    },
+    filter?: { include?: string[]; exclude?: string[] }
   ): Record<string, ReturnType<typeof aiTool>> {
     const out: Record<string, ReturnType<typeof aiTool>> = {}
+    const include = filter?.include ? new Set(filter.include) : null
+    const exclude = filter?.exclude ? new Set(filter.exclude) : null
     for (const name of tools.keys()) {
+      if (include && !include.has(name)) continue
+      if (exclude?.has(name)) continue
       const wrapped = toAiSdkTool(name, ctx, hooks)
       if (wrapped) out[name] = wrapped
     }
     return out
   }
 
-  return { define, get: (name) => tools.get(name), run, toAiSdkTools, toAiSdkTool }
+  return {
+    define,
+    get: (name) => tools.get(name),
+    names: () => Array.from(tools.keys()),
+    run,
+    toAiSdkTools,
+    toAiSdkTool
+  }
 }

@@ -73,11 +73,15 @@ export interface SessionUsage {
   outputTokens: number
 }
 
+export type SessionMode = 'plan' | 'act'
+
 export interface SessionInfo {
   id: string
   title: string
   /** The workspace this session was created under ('' — empty placeholder — until M2.2 picks one; docs/03 §8). */
   workspacePath: string
+  /** Composer execution mode owned by this session (docs/03 §2): plan is read-only, act may mutate. */
+  mode: SessionMode
   createdAt: string
   updatedAt: string
   /** Token totals from usage_events; null until the first settled run. */
@@ -86,6 +90,7 @@ export interface SessionInfo {
 
 export interface CreateSessionPayload {
   title?: string
+  mode?: SessionMode
 }
 
 export interface SessionMessagesPayload {
@@ -321,7 +326,11 @@ const agento = {
       ipcRenderer.invoke('session:create', payload),
     list: (): Promise<SessionInfo[]> => ipcRenderer.invoke('session:list'),
     messages: (payload: SessionMessagesPayload): Promise<UIMessage[]> =>
-      ipcRenderer.invoke('session:messages', payload)
+      ipcRenderer.invoke('session:messages', payload),
+    setMode: (payload: { sessionId: string; mode: SessionMode }): Promise<SessionInfo> =>
+      ipcRenderer.invoke('session:set-mode', payload),
+    plan: (payload: SessionMessagesPayload): Promise<AgentPlanStep[]> =>
+      ipcRenderer.invoke('session:plan', payload)
   },
   workspaces: {
     get: (): Promise<WorkspaceSnapshotPayload> => ipcRenderer.invoke('workspace:get'),

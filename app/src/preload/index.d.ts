@@ -24,11 +24,15 @@ export interface SessionUsage {
   outputTokens: number
 }
 
+export type SessionMode = 'plan' | 'act'
+
 export interface SessionInfo {
   id: string
   title: string
   /** Workspace the session was created under — '' placeholder until the picker (M2.2, docs/03 §8). */
   workspacePath: string
+  /** Composer execution mode owned by this session (docs/03 §2): plan is read-only, act may mutate. */
+  mode: SessionMode
   createdAt: string
   updatedAt: string
   /** Token totals from usage_events; null until the first settled run. */
@@ -37,6 +41,7 @@ export interface SessionInfo {
 
 export interface CreateSessionPayload {
   title?: string
+  mode?: SessionMode
 }
 
 export interface SessionMessagesPayload {
@@ -243,6 +248,10 @@ export interface AgentoSessions {
   list: () => Promise<SessionInfo[]>
   /** Invoke 'session:messages' — the session's UIMessages in seq order. */
   messages: (payload: SessionMessagesPayload) => Promise<UIMessage[]>
+  /** Invoke 'session:set-mode' — persists the composer's Plan/Act tab (docs/03 §2). */
+  setMode: (payload: { sessionId: string; mode: SessionMode }) => Promise<SessionInfo>
+  /** Invoke 'session:plan' — the session's latest saved plan (empty when none). */
+  plan: (payload: SessionMessagesPayload) => Promise<AgentPlanStep[]>
 }
 
 export interface AgentoWorkspaces {

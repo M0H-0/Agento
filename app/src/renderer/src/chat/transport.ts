@@ -2,11 +2,15 @@ import type { ChatTransport, TextUIPart, UIMessage, UIMessageChunk } from 'ai'
 
 // Structural mirror of SessionInfo in src/preload/index.d.ts — the renderer
 // consumes window.agento typed globally and doesn't import preload.
+export type SessionMode = 'plan' | 'act'
+
 export interface SessionSummary {
   id: string
   title: string
   /** Workspace the session was created under — '' placeholder until M2.2's picker stamps it. */
   workspacePath: string
+  /** Composer execution mode owned by this session (docs/03 §2). */
+  mode: SessionMode
   createdAt: string
   updatedAt: string
   /** Token totals from usage_events; null until the first settled run. */
@@ -51,6 +55,7 @@ function deriveTitle(messages: UIMessage[]): string | undefined {
 // new chat makes exactly one row.
 export interface IpcChatTransportHooks {
   getSessionId: () => string | null
+  getMode?: () => SessionMode
   onSessionCreated?: (session: SessionSummary) => void
   onSettled?: () => void
 }
@@ -135,7 +140,10 @@ export function createIpcChatTransport(hooks: IpcChatTransportHooks): IpcChatTra
                   // the first message is actually sent, so empty sessions never
                   // reach the sidebar. The in-flight create is shared, so two
                   // racing sends cannot make two rows.
-                  createPromise ??= window.agento.sessions.create({ title: deriveTitle(messages) })
+                  createPromise ??= window.agento.sessions.create({
+                    title: deriveTitle(messages),
+                    mode: hooks.getMode?.() ?? 'act'
+                  })
                   const session = await createPromise
                   if (closed || disposed) return // abandoned mid-create; keep the promise for reuse
                   createPromise = null

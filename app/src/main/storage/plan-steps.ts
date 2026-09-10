@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { eq, sql } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import { getDrizzle } from './db'
 import { planSteps } from './schema'
 
@@ -64,4 +64,36 @@ export function recordPlanSteps(input: {
   }))
   if (rows.length === 0) return []
   return getDrizzle().insert(planSteps).values(rows).returning().all()
+}
+
+// Latest emitted plan version for a session, oldest-position first. Used by
+// Act mode's "go ahead" handoff and by session reopen (the PlanPanel restores
+// what was reviewed even after a restart). Empty when no plan was ever saved.
+export function getLatestPlan(sessionId: string): PlanStepInput[] {
+  const versionRow = getDrizzle()
+    .select({ max: sql<number | null>`max(${planSteps.planVersion})` })
+    .from(planSteps)
+    .where(eq(planSteps.sessionId, sessionId))
+    .get()
+  const version = versionRow?.max ?? null
+  if (version === null) return []
+  // The model-supplied wire step id has no column (docs/03 §8) — synthesize a
+  // stable per-position id so Act's step binding and the panel keep working.
+  return getDrizzle()
+    .select({
+      description: planSteps.description,
+      tool: planSteps.tool,
+      riskLevel: planSteps.riskLevel
+    })
+    .from(planSteps)
+    .where(and(eq(planSteps.sessionId, sessionId), eq(planSteps.planVersion, version)))
+    .orderBy(asc(planSteps.position))
+    .all()
+    .map((row, index) => ({
+      id: `plan-v${version}-s${index + 1}`,
+      description: row.description,
+      tool: row.tool ?? 'unknown',
+      riskLevel: typeof row.riskLevel === 'number' ? row.riskLevel : 0,
+      requiresApproval: (row.riskLevel ?? 0) >= 2
+    }))
 }

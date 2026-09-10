@@ -7,9 +7,9 @@ import { assertPublicHttpUrl } from '../agent/web-fetch-guard'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { getSettings, resolveProviderKey } from '../settings'
-import { appendMessage, getSession } from '../storage/sessions'
+import { appendMessage, getSession, normalizeSessionMode } from '../storage/sessions'
 import { insertUsage } from '../storage/usage'
-import { nextPlanVersion, recordPlanSteps } from '../storage/plan-steps'
+import { getLatestPlan, nextPlanVersion, recordPlanSteps } from '../storage/plan-steps'
 import {
   recordCheckpoint,
   recordToolCall,
@@ -36,7 +36,9 @@ import {
   newRunId,
   readFileTool,
   readDocumentTool,
-  runPlanFirstTurn,
+  isGoAheadMessage,
+  runActTurn,
+  runPlanModeTurn,
   searchFilesTool,
   semanticSearch,
   semanticSearchTool,
@@ -57,11 +59,11 @@ import {
 import { buildSystemPrompt } from './system-prompt'
 import { classifyIntent, classifySafety, embedTexts, extractDocument } from './sidecar-calls'
 
-// M3.1: the run loop itself (streamText calls, stream forwarding, provider
-// error classification, step guard) lives in src/main/agent/plan-run.ts —
-// this module is the thin IPC adapter: it builds the deps (Electron sender,
-// storage sinks, the plan-start gate), calls the loop, and owns the settle
-// point (persistence + terminal parts + usage recording).
+// The run loop itself (streamText calls, stream forwarding, provider error
+// classification, step guard) lives in src/main/agent/plan-run.ts — this
+// module is the thin IPC adapter: it builds the deps (Electron sender,
+// storage sinks), routes on the session's persisted Plan/Act mode, calls the
+// loop, and owns the settle point (persistence + terminal parts + usage).
 
 type ToolOutcomeEntry = Parameters<ToolRegistry['run']>[0]['onOutcome']
 
@@ -417,9 +419,10 @@ export function registerChatIpc(): void {
     return { ok: false, reason: 'No active ask_user matches that toolCallId.' }
   })
 
-  // M3.1 plan-start gate (docs/03 §2): resolves the pending plan-start
-  // promise of the matching session/run only. Bound to sessionId+runId so a
-  // Start click in one session can never approve another session's plan.
+  // Legacy plan-start gate (docs/03 §2): Plan mode is now read-only with no
+  // gate and Act mode executes directly, so no run ever pends here in
+  // production. Kept resolving any legacy pending promise; otherwise an
+  // honest no-op so stale callers never hang.
   ipcMain.handle('plan:start', (_event: IpcMainInvokeEvent, payload: PlanStartPayload) => {
     const approved = payload?.approved !== false
     const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId : undefined
@@ -673,114 +676,165 @@ export function registerChatIpc(): void {
       }
     }
 
-    // The two-phase loop (plan-first, docs/03 §2) — extracted into the
-    // plain-Node agent tree (src/main/agent/plan-run.ts). Unexpected throws
-    // (malformed history, sender failure) must never lock the session:
-    // activeRuns cleanup lives in the finally below.
-    let outcome: Awaited<ReturnType<typeof runPlanFirstTurn>>
-    try {
-      outcome = await runPlanFirstTurn({
-        model: languageModel,
-        system: buildSystemPrompt(workspaceRoot || null),
-        messages,
-        registry: globalRegistry,
-        ctx: run.ctx,
-        requestPlanStart: (stepIds) => run.requestPlanStart(stepIds),
-        sendPart: (part) => sendPart(event.sender, sessionId, part),
-        onOutcome: createToolCallAuditSink(
-          sessionId,
-          checkpointIdsByToolCall,
-          checkpointContentByToolCall,
-          verifyActions,
-          ({ tool, toolCallId, status, message }) => {
-            // Step binding: prefer an explicit toolCallId mapping, else the
-            // first *pending* fuzzy match. Never fall back to step 0 for an
-            // unmatched tool — a false badge is worse than no badge.
-            const normalize = (value: string): string => value.toLowerCase().replace(/[^a-z]/g, '')
-            const matches = (candidateTool: string): boolean => {
-              const a = normalize(candidateTool)
-              const b = normalize(tool)
-              return a === b || a.startsWith(b) || b.startsWith(a)
-            }
-            let step: PlanStep | undefined
-            if (toolCallId) {
-              const mappedId = toolCallToStepId.get(toolCallId)
-              if (mappedId) step = currentPlanSteps.find((s) => s.id === mappedId)
-            }
-            if (!step) {
-              const pending = currentPlanSteps.filter(
-                (s) => !doneStepIds.has(s.id) && matches(s.tool)
-              )
-              step = pending[0] ?? currentPlanSteps.find((s) => matches(s.tool))
-            }
-            if (!step) return
-            if (toolCallId && !toolCallToStepId.has(toolCallId)) {
-              toolCallToStepId.set(toolCallId, step.id)
-            }
-            if (status === 'done' || status === 'failed' || status === 'skipped') {
-              doneStepIds.add(step.id)
-            }
-            try {
-              emitPlanStepUpdated({
-                sessionId,
-                runId,
-                stepId: step.id,
-                status,
-                ...(message !== undefined ? { error: message } : {})
-              })
-            } catch (error) {
-              console.error('[plan] step status event failed:', error)
-            }
-          }
-        ),
-        onPlanCreated,
-        signal: controller.signal,
-        // MVP step 7: the real sidecar verifier replaces M3.5's degraded stub.
-        // The audit sink accumulates every executed action; verification
-        // re-checks the FULL set on both the first call and the one retry (no
-        // drain — the retry must see the same targets). Read-only-only runs
-        // skip honestly (badges are never faked in either direction), and any
-        // sidecar failure degrades to skipped inside verifyStep.
-        verify: (input: { instructionSegment: string; stepDescription: string }) => {
-          if (!hasMutatingActions(verifyActions)) {
-            return Promise.resolve({ verdict: 'skipped' } as const)
-          }
-          return verifyStep(
-            {
-              sidecarHealth: () => getSidecarStatus().status,
-              fetchVerify: (body: unknown) =>
-                sidecarFetch('/completion/verify', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(body),
-                  signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS)
-                })
-            },
-            {
-              instructionSegment: input.instructionSegment,
-              stepDescription: input.stepDescription,
-              actions: verifyActions,
-              beforeAfter: { before: null, after: null }
-            }
-          )
-        },
-        onVerification: (result) => {
+    // Explicit Plan/Act routing (docs/03 §2): the session's persisted mode
+    // owns execution — never a renderer-supplied flag. Plan runs read-only
+    // with no gate; Act runs execute directly. An Act "go ahead" carries the
+    // session's latest saved plan as advisory context (still fully guarded).
+    // Unexpected throws must never lock the session: activeRuns cleanup lives
+    // in the finally below.
+    const sessionMode = normalizeSessionMode(session.mode)
+    let savedPlan: PlanStep[] = []
+    if (sessionMode === 'act' && isGoAheadMessage(lastUserText)) {
+      try {
+        const latest = getLatestPlan(sessionId)
+        if (latest.length > 0) {
+          savedPlan = latest
+          currentPlanSteps = latest
           try {
-            emitVerificationFinished({
-              sessionId,
-              runId,
-              stepId: result.stepId,
-              isComplete: result.isComplete,
-              score: result.score,
-              ...(result.missedSegments !== undefined
-                ? { missedSegments: result.missedSegments }
-                : {})
-            })
+            run.setPlanSteps(latest)
           } catch (error) {
-            console.error('[verify] emitting verification failed:', error)
+            console.error('[plan] run plan-steps handoff failed:', error)
           }
         }
-      })
+      } catch (error) {
+        console.error('[plan] loading saved plan failed:', error)
+      }
+    }
+    const onOutcome = createToolCallAuditSink(
+      sessionId,
+      checkpointIdsByToolCall,
+      checkpointContentByToolCall,
+      verifyActions,
+      ({ tool, toolCallId, status, message }) => {
+        // Step binding: prefer an explicit toolCallId mapping, else the
+        // first *pending* fuzzy match. Never fall back to step 0 for an
+        // unmatched tool — a false badge is worse than no badge.
+        const normalize = (value: string): string => value.toLowerCase().replace(/[^a-z]/g, '')
+        const matches = (candidateTool: string): boolean => {
+          const a = normalize(candidateTool)
+          const b = normalize(tool)
+          return a === b || a.startsWith(b) || b.startsWith(a)
+        }
+        let step: PlanStep | undefined
+        if (toolCallId) {
+          const mappedId = toolCallToStepId.get(toolCallId)
+          if (mappedId) step = currentPlanSteps.find((s) => s.id === mappedId)
+        }
+        if (!step) {
+          const pending = currentPlanSteps.filter((s) => !doneStepIds.has(s.id) && matches(s.tool))
+          step = pending[0] ?? currentPlanSteps.find((s) => matches(s.tool))
+        }
+        if (!step) return
+        if (toolCallId && !toolCallToStepId.has(toolCallId)) {
+          toolCallToStepId.set(toolCallId, step.id)
+        }
+        if (status === 'done' || status === 'failed' || status === 'skipped') {
+          doneStepIds.add(step.id)
+        }
+        try {
+          emitPlanStepUpdated({
+            sessionId,
+            runId,
+            stepId: step.id,
+            status,
+            ...(message !== undefined ? { error: message } : {})
+          })
+        } catch (error) {
+          console.error('[plan] step status event failed:', error)
+        }
+      }
+    )
+    let outcome: Awaited<ReturnType<typeof runActTurn>>
+    try {
+      const system = buildSystemPrompt(workspaceRoot || null)
+      const send = (part: Parameters<typeof sendPart>[2]): void =>
+        sendPart(event.sender, sessionId, part)
+      // MVP step 7: the real sidecar verifier replaces M3.5's degraded stub.
+      // The audit sink accumulates every executed action; verification
+      // re-checks the FULL set on both the first call and the one retry (no
+      // drain — the retry must see the same targets). Read-only-only runs
+      // skip honestly (badges are never faked in either direction), and any
+      // sidecar failure degrades to skipped inside verifyStep.
+      const verify = (input: {
+        instructionSegment: string
+        stepDescription: string
+      }): Promise<
+        | { verdict: 'skipped' }
+        | { verdict: 'complete'; score: number }
+        | { verdict: 'incomplete'; score: number; missedSegments: string[] }
+      > => {
+        if (!hasMutatingActions(verifyActions)) {
+          return Promise.resolve({ verdict: 'skipped' } as const)
+        }
+        return verifyStep(
+          {
+            sidecarHealth: () => getSidecarStatus().status,
+            fetchVerify: (body: unknown) =>
+              sidecarFetch('/completion/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+                signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS)
+              })
+          },
+          {
+            instructionSegment: input.instructionSegment,
+            stepDescription: input.stepDescription,
+            actions: verifyActions,
+            beforeAfter: { before: null, after: null }
+          }
+        )
+      }
+      const onVerification = (result: {
+        stepId: string
+        isComplete: boolean
+        score: number | null
+        missedSegments?: string[]
+      }): void => {
+        try {
+          emitVerificationFinished({
+            sessionId,
+            runId,
+            stepId: result.stepId,
+            isComplete: result.isComplete,
+            score: result.score,
+            ...(result.missedSegments !== undefined
+              ? { missedSegments: result.missedSegments }
+              : {})
+          })
+        } catch (error) {
+          console.error('[verify] emitting verification failed:', error)
+        }
+      }
+      if (sessionMode === 'plan') {
+        outcome = await runPlanModeTurn({
+          model: languageModel,
+          system,
+          messages,
+          registry: globalRegistry,
+          ctx: run.ctx,
+          sendPart: send,
+          onOutcome,
+          onPlanCreated,
+          signal: controller.signal,
+          verify,
+          onVerification
+        })
+      } else {
+        outcome = await runActTurn({
+          model: languageModel,
+          system,
+          messages,
+          registry: globalRegistry,
+          ctx: run.ctx,
+          sendPart: send,
+          onOutcome,
+          signal: controller.signal,
+          ...(savedPlan.length > 0 ? { planHandoff: savedPlan } : {}),
+          verify,
+          onVerification
+        })
+      }
     } catch (error) {
       // Unexpected loop throw (malformed history, sender failure): the
       // session stays usable — surface an honest error part, never a hang.

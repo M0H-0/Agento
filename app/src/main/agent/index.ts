@@ -7,8 +7,14 @@ export { AssistantMessageAccumulator } from './assistant-accumulator'
 export { buildRunContext, newRunId } from './context'
 export type { PlanStepRef, RunContextBundle, RunContextDeps, Sender } from './context'
 export { stripStepReasoning } from './prepare-step'
-export { isLikelyMutatingRequest, runPlanFirstTurn } from './plan-run'
-export type { PlanRunDeps, PlanRunOutcome } from './plan-run'
+export {
+  isGoAheadMessage,
+  isLikelyMutatingRequest,
+  runActTurn,
+  runPlanFirstTurn,
+  runPlanModeTurn
+} from './plan-run'
+export type { ModeTurnDeps, PlanRunDeps, PlanRunMode, PlanRunOutcome } from './plan-run'
 export { emitPlanTool, planStepsSchema } from './tools/emit_plan'
 export type { PlanStep } from './tools/emit_plan'
 export { listDirTool } from './tools/list_dir'

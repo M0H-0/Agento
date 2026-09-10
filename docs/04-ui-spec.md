@@ -45,7 +45,7 @@ Fixed three-column shell; collapsible sidebars; min window 960×640.
 - **Left — Sessions sidebar:** workspace chip, new task, chronological sessions, small-caps "Conversations" label; **Settings** + sidecar status dot pinned in a hairline-bordered footer (image-2-style app chrome; was floating top-right).
 - **Center — Thread:** assistant-ui's transcript in its own flex column (`.chat-main`), centered at ~760px — messages can never render under a panel.
 - **Right — Right rail:** one in-flow column (`.right-rail`) holding the **Plan** panel above the **Changes** panel (with undo). Plan caps at half the rail height and scrolls internally; Changes fills the rest and scrolls. Plan renders only while a plan is live, Changes only once a session exists (until then the rail shows whichever is available); the rail collapses entirely when unused.
-- **Bottom — Composer:** assistant-ui composer, autosize, mode chip (`Auto`/`Plan`), model chip, send/stop.
+- **Bottom — Composer:** assistant-ui composer, autosize, Plan/Act mode tabs (§3.5), model chip, send/stop.
 
 ## 3. Components
 
@@ -71,7 +71,7 @@ Blocking modal; only an explicit decision closes it (no overlay-click, no Escape
 
 ### 3.3 PlanPanel
 
-Step rows: status glyph (○ / spinner / ✓ / ✗ / ⚠ awaiting approval), plain description, risk accent ≥ 2; verification badge when done ("verified ✓" / "not verified"); failed → missed requirements in one sentence + retry. Header: `Start ▶` pre-execution, "updated" chip on plan revisions. Footer: "3 of 5 steps done"; per-step `undo ↩`.
+Step rows: status glyph (○ / spinner / ✓ / ✗ / ⚠ awaiting approval), plain description, risk accent ≥ 2; verification badge when done ("verified ✓" / "not verified"); failed → missed requirements in one sentence + retry. Header: `Start ▶` pre-execution (legacy plan-first path only), "updated" chip on plan revisions, "read-only" chip on plans from a Plan-mode run. Footer: "3 of 5 steps done" — or, for read-only plans, "Read-only plan — nothing was changed. Switch to Act and say “go ahead” to carry it out."; per-step `undo ↩`.
 
 ### 3.4 ChangesPanel
 
@@ -79,7 +79,7 @@ Session checkpoints: file, friendly action ("created/edited/moved/deleted"), tim
 
 ### 3.5 Composer & QuickActions
 
-assistant-ui composer: Enter sends, Shift+Enter newlines, stop replaces send mid-run, disabled-with-reason when no key/workspace. QuickActions chips (P1) fill the composer; never auto-send.
+assistant-ui composer: Enter sends, Shift+Enter newlines, stop replaces send mid-run, disabled-with-reason when no key/workspace. A **Plan / Act tablist** sits above the input (session-owned, `session:set-mode`; new chats start in Act; tabs disable mid-run): Plan is read-only ("Read-only — nothing will change."), Act carries out work. QuickActions chips (P1) fill the composer; never auto-send.
 
 ### 3.6 Document preview (P1)
 
