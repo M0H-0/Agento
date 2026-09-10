@@ -9,6 +9,9 @@ import { integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlit
 export const sessions = sqliteTable('sessions', {
   id: text('id').primaryKey(),
   title: text('title').notNull().default('New task'),
+  // 1 once the user renames the chat themselves (sidebar rename): the
+  // background auto-title (docs/03 §4) checks this and never overwrites it.
+  titleRenamed: integer('title_renamed').notNull().default(0),
   // NOT NULL per docs/03 §8 — the workspace picker lands in M2.2; repositories
   // store an empty-string placeholder until then.
   workspacePath: text('workspace_path').notNull(),

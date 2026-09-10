@@ -409,6 +409,10 @@ const agento = {
       ipcRenderer.invoke('session:messages', payload),
     setMode: (payload: { sessionId: string; mode: SessionMode }): Promise<SessionInfo> =>
       ipcRenderer.invoke('session:set-mode', payload),
+    rename: (payload: { sessionId: string; title: string }): Promise<SessionInfo> =>
+      ipcRenderer.invoke('session:rename', payload),
+    delete: (payload: SessionMessagesPayload): Promise<{ deleted: boolean }> =>
+      ipcRenderer.invoke('session:delete', payload),
     plan: (payload: SessionMessagesPayload): Promise<AgentPlanStep[]> =>
       ipcRenderer.invoke('session:plan', payload)
   },

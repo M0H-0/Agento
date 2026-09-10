@@ -52,6 +52,23 @@ Scenario exercises every headline claim on a prepared messy folder (42 files: PD
 7. **Privacy + architecture (60s):** the egress table (doc 06 §8) — four destinations, that's all; then the architecture slide: three processes, trust layer as a swappable, *evaluated* service.
 8. **Numbers (30s):** eval table — intent macro-F1, safety over-permissiveness, verification agreement. "Measured, reproducible, and the logs that produced them are the app's own."
 
+### 4.1 Video variant (~12–15 minutes)
+
+Same scenario, stretched for a recorded walkthrough and shot order. Beats 1–9 use shipped features; nothing here requires the eval harness (beat 10 replaces the defense script's "Numbers" with architecture narration until M4.6/M6.7 land).
+
+1. **Cold open — onboarding (60–90s):** full-screen welcome, pick the messy demo folder, paste the API key. "One folder, one key — that's the whole setup."
+2. **Home + QuickActions (30s):** the centered composer-first home; folder chip, one example-prompt chip click fills the composer (never auto-sends) — then type the real ask instead: *"Organize this folder by file type, and make me a one-page summary of every PDF."*
+3. **Plan-first (90s):** Plan mode → plan panel with live steps. "A coding-agent interaction model — for someone's grandmother."
+4. **Approval (60–90s):** ONE modal for the whole move batch ("I'm about to touch N items in one batch"); deny once to show the graceful skip, then approve. "'No' is a normal answer."
+5. **Execution (90s):** action cards stream by; expand one before/after excerpt; show a verified ✓ badge; narrate that every mutation was snapshotted BEFORE it ran.
+6. **The reversal (90s):** Changes panel → undo one item → **Ctrl+Z** (newest change, live) → Undo all → folder is byte-identical again. "Nothing it does is permanent — one shortcut undoes the agent."
+7. **Semantic search (60–90s):** *"Where did I write about pricing?"* — narrate the on-device MiniLM embedding model: "that's a neural network running on your machine; nothing left this folder."
+8. **Documents (60s):** summarize one PDF; show the extracted-text card and the answer.
+9. **Model & settings tour (90s):** switch provider/model from the composer chip live; Settings tabs — appearance dark/light flip, permission defaults (risk 3 always-ask), data actions.
+10. **Close — the invisible safety net (60s):** narrate over a plan run: sandbox path checks, risk classification, snapshot-or-refuse, sidecar audit trail, and the four-destination egress table (docs/06 §8).
+
+**Recording prep:** build the fixture folder with `demo/make_fixture.py` (see below), pre-warm the semantic index and sidecar model cache (parse any PDF once), then run the §2 manual checklist before recording.
+
 ## 5. Keeping the docs alive
 
 A change to any contract (IPC events, endpoint schemas, rule table, SQL schema) updates the doc **in the same commit** (AGENTS.md rule 6); new dependencies update STACK.md; deviations get a Devlog line in PROGRESS.md and, where architectural, an ADR row in doc 02 §6. Outdated-but-authoritative docs are worse than no docs — `docs/archive/` exists so superseded material is labeled, not lurking.

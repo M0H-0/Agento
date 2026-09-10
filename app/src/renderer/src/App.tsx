@@ -23,6 +23,8 @@ import SidecarStatusDot from './components/SidecarStatusDot'
 import ThinkingIndicator from './components/ThinkingIndicator'
 import { ChangesPanel } from './components/ChangesPanel'
 import { Onboarding } from './components/Onboarding'
+import ModelChip from './components/ModelChip'
+import QuickActions from './components/QuickActions'
 import { ToolUIRegistry } from './components/cards/ToolUIRegistry'
 
 // Plan panel state (M3.1 + M3.6 live): fed by the agent:event subscription
@@ -70,12 +72,12 @@ function formatFolderTail(path: string): string {
   return `…\\${segments.slice(-2).join('\\')}`
 }
 
-// Empty-thread welcome (docs/04 §2). Grounded, not template copy: the eyebrow
-// names the folder this new chat will actually work in (the picker's current
-// pick — the same state session:create stamps), and the lede states the two
-// things this product really promises: plans before big changes, undo for
-// everything. Plain useState fetch, state lands in the promise callback
-// (StrictMode rule); a failed read degrades to the no-folder copy.
+// Empty-thread welcome (docs/04 §2). Deliberately two quiet elements — the
+// folder chip and, below the composer, the QuickActions chips — matching the
+// centered composer-first home layout. The eyebrow names the folder this new
+// chat will actually work in (the picker's current pick — the same state
+// session:create stamps). Plain useState fetch, state lands in the promise
+// callback (StrictMode rule); a failed read degrades to the no-folder copy.
 function ThreadWelcome(): React.JSX.Element {
   const [workspace, setWorkspace] = useState<string | null>(null)
   useEffect(() => {
@@ -95,12 +97,21 @@ function ThreadWelcome(): React.JSX.Element {
   return (
     <div className="thread-welcome">
       <p className="thread-welcome-eyebrow">
-        {workspace ? `Working in ${formatFolderTail(workspace)}` : 'Pick a folder to work in'}
-      </p>
-      <h1>Agento</h1>
-      <p className="thread-welcome-lede">
-        Ask for anything in this folder — find, read, fix, or reorganize. Bigger changes come back
-        as a plan to approve, and every change can be undone.
+        {/* Inline folder glyph (no icon dep — STACK.md): 16px grid, stroke
+            follows the text color. */}
+        <svg
+          className="thread-welcome-foldericon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+        </svg>
+        {workspace ? formatFolderTail(workspace) : 'Pick a folder to work in'}
       </p>
     </div>
   )
@@ -178,6 +189,10 @@ function Thread({
               {mode === 'plan' ? 'Read-only — nothing will change.' : 'Carries out work.'}
             </span>
           </div>
+          {/* Model chip (docs/04 §2): a sibling of the tablist (a non-tab
+              control must not sit inside role="tablist"), absolutely
+              positioned over the tabs row's right end. */}
+          <ModelChip />
           <ComposerPrimitive.Input
             className="composer-input"
             placeholder={mode === 'plan' ? 'Ask for a read-only plan…' : 'Message Agento…'}
@@ -197,6 +212,12 @@ function Thread({
             <ComposerPrimitive.Cancel className="composer-cancel">Stop</ComposerPrimitive.Cancel>
           </ThreadPrimitive.If>
         </ComposerPrimitive.Root>
+        {/* QuickActions chips (docs/04 §3.5) sit UNDER the composer on the
+            empty thread — part of the centered home group, fill-only, never
+            auto-send. */}
+        <ThreadPrimitive.If empty>
+          <QuickActions />
+        </ThreadPrimitive.If>
       </ThreadPrimitive.ViewportFooter>
     </ThreadPrimitive.Root>
   )
@@ -636,6 +657,30 @@ function App(): React.JSX.Element {
     setRunStatus(undefined)
   }, [refreshSessions])
 
+  // Ctrl+Z (docs/04 §7): undo the NEWEST change group — the same unit the
+  // Changes panel's per-item undo restores (a move's two rows fan out
+  // oldest-first, exactly like undoGroup there). Text-field undo is left
+  // alone: keystrokes inside inputs/textareas/contenteditable fall through.
+  const undoLastChange = useCallback(async (): Promise<void> => {
+    const sessionId = activeSessionIdRef.current
+    if (!sessionId) return
+    try {
+      const { entries } = await window.agento.changes.list({ sessionId })
+      const newest = entries.find((entry) => entry.revertedAt === null)
+      if (!newest) return
+      const newestKey = newest.groupKey ?? `solo:${newest.id}`
+      const groupRows = entries.filter(
+        (entry) => entry.revertedAt === null && (entry.groupKey ?? `solo:${entry.id}`) === newestKey
+      )
+      for (const row of [...groupRows].reverse()) {
+        await window.agento.changes.undo({ checkpointId: row.id })
+      }
+      setChangesRefreshKey((key) => key + 1)
+    } catch (error) {
+      console.error('Ctrl+Z undo failed:', error)
+    }
+  }, [])
+
   const openSession = useCallback(
     async (session: SessionSummary) => {
       if (session.id === activeSessionIdRef.current) return
@@ -680,6 +725,30 @@ function App(): React.JSX.Element {
     setThreadEpoch((epoch) => epoch + 1)
   }, [resetPlan, setModeBoth])
 
+  // Sidebar rename/delete (docs/04 §2). Rename patches the row in place; a
+  // user rename also blocks the background auto-title main-side (title_renamed).
+  // Delete of the ACTIVE chat first tears the view down (dispose → fresh chat)
+  // so no subscribed transport or panel survives its session. Errors propagate
+  // to the sidebar's inline menu message (e.g. the mid-run delete refusal).
+  const handleRenameSession = useCallback(
+    async (session: SessionSummary, title: string): Promise<void> => {
+      const updated = await window.agento.sessions.rename({ sessionId: session.id, title })
+      setSessions((prev) =>
+        prev.map((s) => (s.id === updated.id ? { ...s, title: updated.title } : s))
+      )
+    },
+    []
+  )
+
+  const handleDeleteSession = useCallback(
+    async (session: SessionSummary): Promise<void> => {
+      await window.agento.sessions.delete({ sessionId: session.id })
+      if (session.id === activeSessionIdRef.current) startNewChat()
+      setSessions((prev) => prev.filter((s) => s.id !== session.id))
+    },
+    [startNewChat]
+  )
+
   // ⌘/Ctrl+, opens Settings (docs/04 §7). Renderer-side keydown rather than an
   // Electron Menu accelerator: no Menu exists (autoHideMenuBar) and pure UI
   // state needs no extra push channel.
@@ -693,6 +762,38 @@ function App(): React.JSX.Element {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
+
+  // ⌘/Ctrl+Z (undo the newest change) and ⌘/Ctrl+N (new chat) — docs/04 §7.
+  // Same renderer-side keydown pattern as ⌘/Ctrl+, above. When focus sits in
+  // an editable control the event falls through untouched, so the composer's
+  // and the rename field's native text undo keep working. Modal overlays own
+  // the keyboard while up (same guard the Esc handler uses).
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!(event.ctrlKey || event.metaKey)) return
+      if (event.shiftKey) return
+      const key = event.key.toLowerCase()
+      if (key !== 'z' && key !== 'n') return
+      const target = event.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      ) {
+        return
+      }
+      if (
+        document.querySelector('.settings-overlay') ||
+        document.querySelector('.approval-dialog-overlay')
+      ) {
+        return
+      }
+      event.preventDefault()
+      if (key === 'z') void undoLastChange()
+      else startNewChat()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [undoLastChange, startNewChat])
 
   if (setupReady === false) {
     return <Onboarding onDone={() => setSetupReady(true)} />
@@ -709,6 +810,8 @@ function App(): React.JSX.Element {
         onNewChat={startNewChat}
         onOpenSession={openSession}
         onOpenSettings={() => setSettingsOpen(true)}
+        onRenameSession={handleRenameSession}
+        onDeleteSession={handleDeleteSession}
       />
       {/* Real three-column shell (UI_POLISH_PLAN.md): the thread lives in its
           own flex column (.chat-main), so messages can never render under the

@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `title_renamed` integer DEFAULT 0 NOT NULL;

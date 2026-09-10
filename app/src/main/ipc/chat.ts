@@ -572,6 +572,14 @@ export function registerChatIpc(): void {
             console.info(`[title] model returned nothing usable for session ${sessionId}`)
             return
           }
+          // A user rename (session:rename) wins over the background auto-title
+          // for the session's lifetime — re-read the row at write time so the
+          // rename landing mid-run is honored too.
+          const current = getSession(sessionId)
+          if (!current || current.titleRenamed === 1) {
+            console.info(`[title] skipped — user renamed session ${sessionId}`)
+            return
+          }
           const row = setSessionTitle(sessionId, title)
           if (row) {
             console.info(`[title] "${session.title}" -> "${title}"`)

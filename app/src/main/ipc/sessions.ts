@@ -2,11 +2,14 @@ import { ipcMain } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import { getSettings } from '../settings'
 import { getCurrentWorkspace } from '../workspaces'
+import { isSessionRunActive } from './chat'
 import {
   createSession,
+  deleteSession,
   getSessionMessages,
   listSessions,
   normalizeSessionMode,
+  renameSession,
   setSessionMode
 } from '../storage/sessions'
 import type { SessionMode, SessionRow } from '../storage/sessions'
@@ -31,6 +34,11 @@ export interface SetSessionModePayload {
 
 export interface SessionMessagesPayload {
   sessionId: string
+}
+
+export interface RenameSessionPayload {
+  sessionId: string
+  title: string
 }
 
 // M1.5: per-session token totals, aggregated from usage_events in one grouped
@@ -99,6 +107,26 @@ export function registerSessionsIpc(): void {
       const row = setSessionMode(payload.sessionId, payload?.mode)
       if (!row) throw new Error('The session for this conversation no longer exists.')
       return toSessionInfo(row, undefined)
+    }
+  )
+  ipcMain.handle('session:rename', (_event: IpcMainInvokeEvent, payload: RenameSessionPayload) => {
+    const sessionId = requireString(payload?.sessionId, 'Session id')
+    const title = requireString(payload?.title, 'Title')
+    const row = renameSession(sessionId, title.trim())
+    if (!row) throw new Error('The session for this conversation no longer exists.')
+    return toSessionInfo(row, undefined)
+  })
+  ipcMain.handle(
+    'session:delete',
+    (_event: IpcMainInvokeEvent, payload: SessionMessagesPayload) => {
+      const sessionId = requireString(payload?.sessionId, 'Session id')
+      // A run owns its checkpoints/plan rows mid-run — deleting underneath it
+      // would corrupt the very audit trail the panel renders. Same honest
+      // refusal as undo mid-run (docs/03 §8).
+      if (isSessionRunActive(sessionId)) {
+        throw new Error('This chat is still running — stop it before deleting.')
+      }
+      return deleteSession(sessionId)
     }
   )
   ipcMain.handle('session:list', () => {

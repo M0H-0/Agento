@@ -262,6 +262,10 @@ export interface AgentoSessions {
   messages: (payload: SessionMessagesPayload) => Promise<UIMessage[]>
   /** Invoke 'session:set-mode' — persists the composer's Plan/Act tab (docs/03 §2). */
   setMode: (payload: { sessionId: string; mode: SessionMode }) => Promise<SessionInfo>
+  /** Invoke 'session:rename' — user rename; the auto-title never overwrites it. */
+  rename: (payload: { sessionId: string; title: string }) => Promise<SessionInfo>
+  /** Invoke 'session:delete' — removes the conversation, its undo history, and audit rows. */
+  delete: (payload: SessionMessagesPayload) => Promise<{ deleted: boolean }>
   /** Invoke 'session:plan' — the session's latest saved plan (empty when none). */
   plan: (payload: SessionMessagesPayload) => Promise<AgentPlanStep[]>
 }

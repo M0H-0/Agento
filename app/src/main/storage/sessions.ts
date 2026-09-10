@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { UIMessage } from 'ai'
 import { asc, desc, eq, sql } from 'drizzle-orm'
 import { getDrizzle } from './db'
-import { messages, sessions } from './schema'
+import { checkpoints, messages, planSteps, sessions, toolCalls, usageEvents } from './schema'
 
 // Session repository — the only code that touches the sessions/messages tables
 // (docs/02 §2.5, docs/03-agent-core.md §8). Plain Node, no Electron imports.
@@ -16,6 +16,8 @@ export function normalizeSessionMode(value: unknown): SessionMode {
 export interface SessionRow {
   id: string
   title: string
+  /** 1 once the user renamed the chat — auto-titles must never overwrite it. */
+  titleRenamed: number
   workspacePath: string
   mode: SessionMode
   status: string
@@ -91,6 +93,35 @@ export function setSessionTitle(sessionId: string, title: string): SessionRow | 
     .returning()
     .get()
   return row === undefined ? undefined : withNormalizedMode(row)
+}
+
+// User rename (sidebar, docs/04 §2): stores the new title AND marks the row so
+// the background auto-title skips this session from now on. updatedAt stays
+// put, like setSessionTitle — a rename must not reorder the sidebar.
+export function renameSession(sessionId: string, title: string): SessionRow | undefined {
+  const row = getDrizzle()
+    .update(sessions)
+    .set({ title, titleRenamed: 1 })
+    .where(eq(sessions.id, sessionId))
+    .returning()
+    .get()
+  return row === undefined ? undefined : withNormalizedMode(row)
+}
+
+// One conversation and its children — messages, usage, tool-call audit,
+// plan steps, and checkpoints (no FK cascades in the schema, so every child
+// goes explicitly, inside one transaction). Returns whether the row existed.
+export function deleteSession(sessionId: string): { deleted: boolean } {
+  const db = getDrizzle()
+  const result = db.transaction((tx) => {
+    tx.delete(messages).where(eq(messages.sessionId, sessionId)).run()
+    tx.delete(usageEvents).where(eq(usageEvents.sessionId, sessionId)).run()
+    tx.delete(toolCalls).where(eq(toolCalls.sessionId, sessionId)).run()
+    tx.delete(planSteps).where(eq(planSteps.sessionId, sessionId)).run()
+    tx.delete(checkpoints).where(eq(checkpoints.sessionId, sessionId)).run()
+    return tx.delete(sessions).where(eq(sessions.id, sessionId)).run()
+  })
+  return { deleted: result.changes > 0 }
 }
 
 function withNormalizedMode<T extends { mode: string }>(row: T): T & { mode: SessionMode } {

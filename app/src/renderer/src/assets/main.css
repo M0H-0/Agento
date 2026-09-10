@@ -307,6 +307,13 @@
   overflow-y: auto;
 }
 
+/* Per-row rename/delete (docs/04 §2): each li anchors an absolutely
+   positioned hover "…" button and dropdown menu; position:relative is what
+   keeps the menu inside the rail's stacking context. */
+.session-row {
+  position: relative;
+}
+
 .session-item {
   display: flex;
   flex-direction: column;
@@ -351,6 +358,136 @@
 
 .session-item-time {
   font-size: 0.72rem;
+  color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+}
+
+/* Hover "…" affordance: invisible until the row (or keyboard focus) is on it,
+   so the resting sidebar looks exactly as before. */
+.session-menu-btn {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 150ms ease,
+    background 150ms ease;
+}
+
+.session-row:hover .session-menu-btn,
+.session-menu-btn:focus-visible,
+.session-menu-btn[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.session-menu-btn:hover {
+  background: var(--secondary);
+  border-color: var(--border);
+  color: var(--secondary-foreground);
+}
+
+/* The row's text must not run under the "…" button. */
+.session-row .session-item {
+  padding-right: 1.6rem;
+}
+
+.session-menu {
+  position: absolute;
+  top: 1.7rem;
+  right: 0.3rem;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 10.5rem;
+  padding: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--popover, var(--card));
+  color: var(--card-foreground);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+}
+
+.session-menu button[role='menuitem'] {
+  padding: 0.3rem 0.5rem;
+  border: none;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-menu button[role='menuitem']:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.session-menu button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.session-menu .session-menu-danger:hover:not(:disabled) {
+  background: var(--destructive);
+  color: var(--destructive-foreground, #fff);
+}
+
+.session-menu-confirm {
+  margin: 0.1rem 0.2rem 0.2rem;
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+}
+
+.session-menu-actions {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.session-menu-actions button[role='menuitem'] {
+  flex: 1;
+  text-align: center;
+}
+
+.session-menu-error {
+  margin: 0.1rem 0.2rem;
+  font-size: 0.72rem;
+  color: var(--destructive);
+}
+
+.session-rename {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.35rem 0.5rem;
+}
+
+.session-rename input {
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--ring);
+  border-radius: 0.35rem;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.session-rename-hint {
+  font-size: 0.68rem;
   color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
 }
 
@@ -399,38 +536,77 @@
   padding: 0.5rem 0.25rem;
 }
 
+/* Empty-thread home (docs/04 §2): composer-first and centered like a launcher
+   — the folder chip sits right above the composer, QuickActions hang under
+   it. :has() gates the centering to the empty state only; once the thread
+   has messages the viewport regains flex:1 and the composer docks bottom. */
+.thread:has(.thread-welcome) {
+  justify-content: center;
+}
+
+.thread:has(.thread-welcome) .thread-viewport {
+  flex: 0 0 auto;
+}
+
 .thread-welcome {
-  margin: auto;
   text-align: center;
   color: var(--foreground);
 }
 
-/* Grounding eyebrow: names the folder this chat will work in — the one thing
-   this screen knows that a template line can't. Same small-caps treatment as
-   the sidebar's section label. */
+/* Folder chip: the one grounding fact this screen knows — the folder this
+   chat will work in. Quiet row, normal case, small folder glyph. */
 .thread-welcome p.thread-welcome-eyebrow {
-  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.8rem;
   color: var(--muted-foreground);
-  font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 0.82rem;
   overflow-wrap: anywhere;
 }
 
-.thread-welcome h1 {
-  margin-top: 0.35rem;
-  font-size: 1.6rem;
-  font-weight: 600;
+.thread-welcome-foldericon {
+  width: 0.95rem;
+  height: 0.95rem;
+  flex-shrink: 0;
 }
 
-/* Balanced wrap: the two-sentence lede breaks at a natural point instead of
-   stranding one word on the last line. */
-.thread-welcome p.thread-welcome-lede {
-  max-width: 34rem;
-  margin: 0.4rem auto 0;
+/* QuickActions chips (docs/04 §3.5, P1): example prompts under the composer.
+   Fill-the-composer affordances, never auto-send — ghost pills that stay out
+   of the way of the clean home. */
+.quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.4rem;
+  max-width: 38rem;
+  margin: 0.75rem auto 0.1rem;
+}
+
+.quick-action-chip {
+  padding: 0.24rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: transparent;
   color: var(--muted-foreground);
-  font-size: 0.9rem;
-  text-wrap: balance;
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease;
+}
+
+.quick-action-chip:hover {
+  background: var(--accent);
+  border-color: var(--ring);
+  color: var(--accent-foreground);
+}
+
+.quick-action-chip:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
 }
 
 .message {
@@ -808,6 +984,8 @@
   border: 1px solid var(--border);
   border-radius: 0.75rem;
   transition: border-color 150ms ease;
+  /* Anchor for the absolutely positioned .model-chip-anchor. */
+  position: relative;
 }
 
 /* Execution mode tabs (docs/04 §3.5): Plan is structurally read-only, Act
@@ -861,6 +1039,115 @@
   margin-left: 0.35rem;
   font-size: 0.72rem;
   color: var(--muted-foreground);
+}
+
+/* Model chip (docs/04 §2): rides the tabs row's right end without sitting
+   inside the role="tablist". Sits on the row's vertical centerline; the
+   popover drops BELOW the chip so it never covers the tabs. */
+.model-chip-anchor {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.85rem;
+  z-index: 25;
+}
+
+.model-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 13rem;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease;
+}
+
+.model-chip:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--ring);
+  color: var(--accent-foreground);
+}
+
+.model-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.model-chip-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-menu {
+  position: absolute;
+  /* Opens UPWARD: the chip sits at the bottom of the window (composer row),
+     so a downward popover runs off-screen. Bottom-anchored above the chip. */
+  bottom: calc(100% + 0.4rem);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 13rem;
+  max-height: 16rem;
+  overflow-y: auto;
+  padding: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--popover);
+  color: var(--card-foreground);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+}
+
+.model-menu-section {
+  margin: 0.25rem 0.4rem 0.15rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.model-menu button[role='menuitemradio'] {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.45rem;
+  border: none;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-menu button[role='menuitemradio']:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.model-menu button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.model-menu-check {
+  width: 0.9rem;
+  flex-shrink: 0;
+  color: var(--success, var(--foreground));
+}
+
+.model-menu-error {
+  margin: 0.15rem 0.3rem;
+  font-size: 0.72rem;
+  color: var(--destructive);
 }
 
 .composer:focus-within {
