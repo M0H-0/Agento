@@ -1572,6 +1572,8 @@
   position: relative;
   display: inline-flex;
   flex-shrink: 0;
+  align-items: center;
+  align-self: flex-end;
 }
 
 .attach-chip {
@@ -1618,12 +1620,17 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  align-self: center;
   flex-shrink: 0;
   border: 1px solid transparent;
-  border-radius: 0.4rem;
+  border-radius: 0.5rem;
   background: transparent;
   color: var(--muted-foreground);
-  padding: 0.3rem;
+  /* Height-matched to Send/Stop: 1rem icon + 2×0.65rem = 2.3rem, the same as
+     their 1.6em text + 2×0.35rem — both track the root size, so the row's
+     tops and bottoms align instead of the icon floating small. */
+  padding: 0.65rem 0.6rem;
+  line-height: 1;
   cursor: pointer;
   transition: background 150ms ease;
 }

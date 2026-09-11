@@ -898,9 +898,11 @@ function App(): React.JSX.Element {
         })
       } else if (event.type === 'verification/finished') {
         const L = localeRef.current
-        setRunStatus(
-          event.isComplete ? translate(L, 'app.verifiedDone') : translate(L, 'app.notVerified')
-        )
+        // Incomplete verification stays silent at thread level (user request):
+        // '' passes through the liveStatus ?? fallback and is falsy at the
+        // .run-status gate, so no line renders until settle clears. The
+        // per-step `not verified` badge in PlanPanel is untouched.
+        setRunStatus(event.isComplete ? translate(L, 'app.verifiedDone') : '')
         setPlan((prev) => {
           if (!prev || prev.runId !== event.runId) return prev
           const key = event.stepId === 'run' ? (prev.steps[0]?.id ?? 'run') : event.stepId
