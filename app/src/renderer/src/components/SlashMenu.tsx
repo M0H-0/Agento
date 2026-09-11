@@ -8,6 +8,9 @@ import {
   SLASH_COMMANDS,
   slashMenuQuery
 } from '../chat/slash-commands'
+import { plural } from '../chat/locale'
+import type { StringKey } from '../chat/locale'
+import { useLocale } from './locale-context'
 
 // Slash command menu (docs/04 §3.5): typing `/` at the start of the composer
 // opens the same upward popover treatment as the file picker — no new deps,
@@ -39,6 +42,17 @@ type SlashView =
 
 const LEADING_TOKEN_RE = /^(\s*)\/[A-Za-z-]*/
 
+// Menu descriptions live in the locale dictionary (slash.desc.*) — the defs
+// in chat/slash-commands.ts stay a locale-free catalog (unit-tested as-is);
+// unknown names fall back to the catalog description.
+const DESC_KEYS: Record<string, StringKey> = {
+  search: 'slash.desc.search',
+  semantic: 'slash.desc.semantic',
+  undo: 'slash.desc.undo',
+  'undo-all': 'slash.desc.undoAll',
+  help: 'slash.desc.help'
+}
+
 function stripLeadingToken(text: string): string {
   return text.replace(LEADING_TOKEN_RE, '')
 }
@@ -49,6 +63,7 @@ function completeCommand(text: string, name: string): string {
 }
 
 function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JSX.Element | null {
+  const { locale, t } = useLocale()
   const runtime = useThreadRuntime({ optional: true })
   const [view, setView] = useState<SlashView>({ kind: 'closed' })
   const rootRef = useRef<HTMLDivElement>(null)
@@ -70,10 +85,15 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
 
   // Open the undo confirm: fetch the newest change group so the question can
   // name what it will restore (both undo flavors ask first — user decision).
+  const describe = (def: SlashCommandDef): string => {
+    const key = DESC_KEYS[def.name]
+    return key ? t(key) : def.description
+  }
+
   const openConfirm = (target: 'undo' | 'undo-all'): void => {
     const id = sessionRef.current
     if (!id) {
-      setView({ kind: 'hint', message: 'There is no conversation to undo yet.' })
+      setView({ kind: 'hint', message: t('slash.noConversation') })
       return
     }
     setView({ kind: 'confirm', target, detail: '', busy: true, error: null })
@@ -82,14 +102,17 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
       .then((result) => {
         if (target === 'undo-all') {
           if (result.activeCount === 0) {
-            setView({ kind: 'hint', message: 'No file changes yet in this conversation.' })
+            setView({ kind: 'hint', message: t('slash.noChanges') })
             return
           }
-          const noun = result.activeCount === 1 ? 'change' : 'changes'
           setView({
             kind: 'confirm',
             target,
-            detail: `${result.activeCount} ${noun} in this conversation`,
+            detail: plural(locale, result.activeCount, {
+              one: t('slash.changesDetailOne'),
+              two: t('slash.changesDetailTwo'),
+              many: t('slash.changesDetailMany')
+            }),
             busy: false,
             error: null
           })
@@ -97,7 +120,7 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
         }
         const newest = result.entries.find((entry) => entry.revertedAt === null)
         if (!newest) {
-          setView({ kind: 'hint', message: 'No file changes yet in this conversation.' })
+          setView({ kind: 'hint', message: t('slash.noChanges') })
           return
         }
         const key = newest.groupKey ?? `solo:${newest.id}`
@@ -108,11 +131,11 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
           .map((entry) => entry.relativePath)
           .filter((path, index, all) => all.indexOf(path) === index)
         const shown = paths.slice(0, 3).join(', ')
-        const extra = paths.length > 3 ? ` and ${paths.length - 3} more` : ''
+        const extra = paths.length > 3 ? t('slash.andMore', { n: paths.length - 3 }) : ''
         setView({ kind: 'confirm', target, detail: shown + extra, busy: false, error: null })
       })
       .catch((cause: unknown) => {
-        const message = cause instanceof Error ? cause.message : 'Could not read the changes.'
+        const message = cause instanceof Error ? cause.message : t('slash.readFailed')
         setView({ kind: 'confirm', target, detail: '', busy: false, error: message })
       })
   }
@@ -124,7 +147,7 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
     if (started.kind !== 'confirm' || started.busy) return
     const id = sessionRef.current
     if (!id) {
-      setView({ kind: 'hint', message: 'There is no conversation to undo yet.' })
+      setView({ kind: 'hint', message: t('slash.noConversation') })
       return
     }
     const target = started.target
@@ -138,14 +161,14 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
         .then((result) => {
           const failures = result.results.filter((item) => !item.ok)
           if (failures.length > 0) {
-            fail(failures[0]?.error ?? 'Some items could not be restored.')
+            fail(failures[0]?.error ?? t('slash.someNotRestored'))
             return
           }
           onMutated()
           setView({ kind: 'closed' })
         })
         .catch((cause: unknown) => {
-          fail(cause instanceof Error ? cause.message : 'Undo failed.')
+          fail(cause instanceof Error ? cause.message : t('slash.undoFailed'))
         })
       return
     }
@@ -154,7 +177,7 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
       .then(async (result) => {
         const newest = result.entries.find((entry) => entry.revertedAt === null)
         if (!newest) {
-          setView({ kind: 'hint', message: 'No file changes yet in this conversation.' })
+          setView({ kind: 'hint', message: t('slash.noChanges') })
           return
         }
         const key = newest.groupKey ?? `solo:${newest.id}`
@@ -175,14 +198,14 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
         }
         const failures = outcomes.filter((outcome) => !outcome.ok)
         if (failures.length > 0) {
-          fail(failures[0]?.error ?? 'That change could not be restored.')
+          fail(failures[0]?.error ?? t('slash.changeNotRestored'))
           return
         }
         onMutated()
         setView({ kind: 'closed' })
       })
       .catch((cause: unknown) => {
-        fail(cause instanceof Error ? cause.message : 'Undo failed.')
+        fail(cause instanceof Error ? cause.message : t('slash.undoFailed'))
       })
   }
 
@@ -199,7 +222,7 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
       const example = def.name === 'search' ? '/search invoice' : '/semantic pricing'
       setView({
         kind: 'hint',
-        message: `Type text after /${def.name} first — e.g. ${example}.`
+        message: t('slash.typeAfterName', { name: def.name, example })
       })
       return
     }
@@ -239,7 +262,7 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
     if (!parsed.def) {
       setView({
         kind: 'hint',
-        message: `No command matches '/${parsed.name}'. Try /help.`
+        message: t('slash.noMatchQuery', { q: parsed.name })
       })
       return true
     }
@@ -346,7 +369,7 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
         event.preventDefault()
         event.stopPropagation()
         if (choice) pick(choice)
-        else setView({ kind: 'hint', message: 'No commands match. Try /help.' })
+        else setView({ kind: 'hint', message: t('slash.noMatch') })
         return
       }
       if (current.kind !== 'closed') {
@@ -365,8 +388,10 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
     }
     input.addEventListener('keydown', onKeyDown, { capture: true })
     return () => input.removeEventListener('keydown', onKeyDown, { capture: true })
+    // `locale` re-registers the listeners so the t() closures follow a
+    // language switch (same reason `view` is a dep).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [disabled, runtime, sessionId, view])
+  }, [disabled, runtime, sessionId, view, locale])
 
   // Send-button interception (the keyboard path above covers Enter; the
   // pointer path needs the same treatment).
@@ -385,8 +410,10 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
     }
     document.addEventListener('click', onClick, { capture: true })
     return () => document.removeEventListener('click', onClick, { capture: true })
+    // `locale` re-registers the listener so the t() closures follow a
+    // language switch (same reason `view` is a dep).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [disabled, runtime, sessionId, view])
+  }, [disabled, runtime, sessionId, view, locale])
 
   // Outside-click / Escape dismissal (FileAttach precedent). Textarea clicks
   // are owned by the trigger sync above, never by this closer.
@@ -418,11 +445,9 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
   if (view.kind === 'menu') {
     const matches = filterSlashCommands(view.query)
     return (
-      <div className="slash-popover" role="listbox" aria-label="Slash commands" ref={rootRef}>
+      <div className="slash-popover" role="listbox" aria-label={t('slash.commands')} ref={rootRef}>
         <div className="slash-list">
-          {matches.length === 0 ? (
-            <p className="slash-empty">No commands match. Try /help.</p>
-          ) : null}
+          {matches.length === 0 ? <p className="slash-empty">{t('slash.noMatch')}</p> : null}
           {matches.map((def, index) => (
             <button
               key={def.name}
@@ -430,7 +455,7 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
               role="option"
               aria-selected={index === view.active}
               className={index === view.active ? 'slash-item slash-item--active' : 'slash-item'}
-              title={def.description}
+              title={describe(def)}
               onMouseEnter={() => setView({ ...view, active: index })}
               onClick={() => pick(def)}
             >
@@ -438,7 +463,7 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
                 /{def.name}
                 {def.argHint ? ` ${def.argHint}` : ''}
               </span>
-              <span className="slash-item-desc">{def.description}</span>
+              <span className="slash-item-desc">{describe(def)}</span>
             </button>
           ))}
         </div>
@@ -448,28 +473,28 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
 
   if (view.kind === 'help') {
     return (
-      <div className="slash-popover" aria-label="Slash commands help" ref={rootRef}>
-        <p className="slash-title">Commands</p>
+      <div className="slash-popover" aria-label={t('slash.helpLabel')} ref={rootRef}>
+        <p className="slash-title">{t('slash.commands')}</p>
         <div className="slash-list">
           {SLASH_COMMANDS.map((def) => (
             <button
               key={def.name}
               type="button"
               className="slash-item"
-              title={def.description}
+              title={describe(def)}
               onClick={() => pick(def)}
             >
               <span className="slash-item-name">
                 /{def.name}
                 {def.argHint ? ` ${def.argHint}` : ''}
               </span>
-              <span className="slash-item-desc">{def.description}</span>
+              <span className="slash-item-desc">{describe(def)}</span>
             </button>
           ))}
         </div>
         <div className="slash-confirm-actions">
           <button type="button" onClick={close}>
-            Close
+            {t('slash.close')}
           </button>
         </div>
       </div>
@@ -478,11 +503,11 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
 
   if (view.kind === 'hint') {
     return (
-      <div className="slash-popover" aria-label="Command hint" ref={rootRef}>
+      <div className="slash-popover" aria-label={t('slash.hintLabel')} ref={rootRef}>
         <p className="slash-hint">{view.message}</p>
         <div className="slash-confirm-actions">
           <button type="button" onClick={close}>
-            Dismiss
+            {t('slash.dismiss')}
           </button>
         </div>
       </div>
@@ -491,11 +516,11 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
 
   // Confirm (both undo flavors ask first — user decision).
   return (
-    <div className="slash-popover" aria-label="Confirm undo" ref={rootRef}>
+    <div className="slash-popover" aria-label={t('slash.confirmUndo')} ref={rootRef}>
       <p className="slash-title">
-        {view.target === 'undo' ? 'Undo the last change?' : 'Undo all changes?'}
+        {view.target === 'undo' ? t('slash.undoConfirm') : t('slash.undoAllConfirm')}
       </p>
-      {view.busy && view.detail === '' ? <p className="slash-hint">Checking the changes…</p> : null}
+      {view.busy && view.detail === '' ? <p className="slash-hint">{t('slash.checking')}</p> : null}
       {view.detail !== '' ? <p className="slash-hint">{view.detail}</p> : null}
       {view.error ? (
         <p className="slash-error" role="alert">
@@ -504,10 +529,14 @@ function SlashMenu({ disabled, sessionId, onMutated }: SlashMenuProps): React.JS
       ) : null}
       <div className="slash-confirm-actions">
         <button type="button" onClick={runConfirm} disabled={view.busy}>
-          {view.busy ? 'Restoring…' : view.target === 'undo' ? 'Yes, restore' : 'Yes, undo all'}
+          {view.busy
+            ? t('slash.restoring')
+            : view.target === 'undo'
+              ? t('slash.yesRestore')
+              : t('slash.yesUndoAll')}
         </button>
         <button type="button" onClick={close} disabled={view.busy}>
-          Keep
+          {t('slash.keep')}
         </button>
       </div>
     </div>

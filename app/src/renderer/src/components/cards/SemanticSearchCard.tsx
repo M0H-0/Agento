@@ -1,4 +1,6 @@
 import { BaseToolCard, type BaseToolCardProps } from './BaseToolCard'
+import { plural } from '../../chat/locale'
+import { useLocale } from '../locale-context'
 
 // semantic_search card (MVP standout): ranked results with score + snippet;
 // clicking a result asks main to open that file with the OS default app
@@ -18,18 +20,21 @@ export function SemanticSearchCard({
   results,
   ...rest
 }: SemanticSearchCardProps): React.JSX.Element {
+  const { locale, t } = useLocale()
   const meta =
     results.length === 0
-      ? 'no matching files'
-      : `${results.length} matching file${results.length === 1 ? '' : 's'}`
+      ? t('cards.noMatchingFiles')
+      : plural(locale, results.length, {
+          one: t('cards.matchingOne'),
+          two: t('cards.matchingTwo'),
+          many: t('cards.matchingMany')
+        })
   return (
     <BaseToolCard {...rest} meta={meta} defaultOpen>
       <div className="semantic-card">
         <div className="semantic-card__query">“{query}”</div>
         {results.length === 0 ? (
-          <div className="semantic-card__empty">
-            Nothing in the workspace reads as close to that yet — try search_files for exact text.
-          </div>
+          <div className="semantic-card__empty">{t('cards.semanticEmpty')}</div>
         ) : (
           <ul className="semantic-card__list">
             {results.map((result) => (
@@ -44,9 +49,13 @@ export function SemanticSearchCard({
                     void window.agento.system.openPath({ path: result.path })
                   }}
                 >
-                  <span className="semantic-card__path">{result.path}</span>
+                  <span className="semantic-card__path">
+                    <bdi>{result.path}</bdi>
+                  </span>
                   <span className="semantic-card__score">{Math.round(result.score * 100)}%</span>
-                  <span className="semantic-card__snippet">{result.snippet}</span>
+                  <span className="semantic-card__snippet">
+                    <bdi>{result.snippet}</bdi>
+                  </span>
                 </button>
               </li>
             ))}

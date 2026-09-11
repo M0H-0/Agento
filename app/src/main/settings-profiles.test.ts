@@ -4,6 +4,7 @@ import {
   migratePrefs,
   normalizeAppearance,
   normalizeBaseUrl,
+  normalizeLocale,
   normalizePermissionDefaults,
   validateCustomModel,
   validateProviderName
@@ -98,6 +99,25 @@ describe('appearance and permission defaults', () => {
     })
     const normalized = normalizePermissionDefaults({ risk1: 'ask', risk2: 'ask' })
     expect('risk3' in (normalized as unknown as Record<string, unknown>)).toBe(false)
+  })
+})
+
+describe('locale', () => {
+  it('accepts en/ar, falls back to en', () => {
+    expect(normalizeLocale('ar')).toBe('ar')
+    expect(normalizeLocale('en')).toBe('en')
+    expect(normalizeLocale('fr')).toBe('en')
+    expect(normalizeLocale(undefined)).toBe('en')
+  })
+
+  it('defaults old files without a locale to en and keeps ar', () => {
+    expect(migratePrefs({ version: 1, provider: 'google' }, resolveModel).locale).toBe('en')
+    expect(
+      migratePrefs({ version: 2, provider: 'google', locale: 'ar' }, resolveModel).locale
+    ).toBe('ar')
+    expect(
+      migratePrefs({ version: 2, provider: 'google', locale: 'xx' }, resolveModel).locale
+    ).toBe('en')
   })
 })
 

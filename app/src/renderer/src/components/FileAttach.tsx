@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useThreadRuntime } from '@assistant-ui/react'
+import { useLocale } from './locale-context'
 
 // Composer file references (gap 1): a paperclip button opens a searchable
 // workspace-scoped picker, and typing `@name` in the composer opens the same
@@ -46,6 +47,7 @@ function FileAttach({
   disabled,
   sessionId
 }: FileAttachProps): React.JSX.Element {
+  const { t } = useLocale()
   const runtime = useThreadRuntime({ optional: true })
   const [open, setOpen] = useState(false)
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
@@ -71,11 +73,11 @@ function FileAttach({
         setFiles(result.files)
       })
       .catch((cause) => {
-        setError(cause instanceof Error ? cause.message : 'Could not list files.')
+        setError(cause instanceof Error ? cause.message : t('attach.listFailed'))
         loadAttempted.current = false
       })
       .finally(() => setLoading(false))
-  }, [sessionId])
+  }, [sessionId, t])
 
   // `@` mention detection on the assistant-ui composer input. The composer
   // itself is runtime-owned — we only listen for the trigger and strip the
@@ -166,14 +168,16 @@ function FileAttach({
   return (
     <>
       {attachments.length > 0 ? (
-        <div className="composer-attachments" aria-label="Attached files">
+        <div className="composer-attachments" aria-label={t('attach.attached')}>
           {attachments.map((path) => (
             <span key={path} className="attach-chip" title={path}>
-              <span className="attach-chip-path">@{path}</span>
+              <span className="attach-chip-path">
+                @<bdi>{path}</bdi>
+              </span>
               <button
                 type="button"
                 className="attach-remove"
-                aria-label={`Remove ${path}`}
+                aria-label={t('attach.remove', { name: path })}
                 disabled={disabled}
                 onClick={() => remove(path)}
               >
@@ -190,10 +194,10 @@ function FileAttach({
         <button
           type="button"
           className="attach-btn"
-          aria-label="Attach a file from the workspace"
+          aria-label={t('attach.label')}
           aria-haspopup="listbox"
           aria-expanded={open && mentionQuery === null}
-          title="Attach a file from the workspace (@ to mention)"
+          title={t('attach.title')}
           disabled={disabled}
           onClick={() => {
             if (open && mentionQuery === null) {
@@ -210,12 +214,12 @@ function FileAttach({
           <PaperclipIcon />
         </button>
         {open ? (
-          <div className="attach-popover" role="listbox" aria-label="Workspace files">
+          <div className="attach-popover" role="listbox" aria-label={t('attach.files')}>
             {mentionQuery === null ? (
               <input
                 ref={searchRef}
                 className="attach-search"
-                placeholder="Search files…"
+                placeholder={t('attach.search')}
                 value={query}
                 onChange={(event) => {
                   setQuery(event.target.value)
@@ -234,17 +238,15 @@ function FileAttach({
                     if (pick) add(pick.relativePath)
                   }
                 }}
-                aria-label="Search workspace files"
+                aria-label={t('attach.searchLabel')}
               />
             ) : null}
             <div className="attach-list">
-              {loading ? <p className="attach-empty">Loading files…</p> : null}
+              {loading ? <p className="attach-empty">{t('attach.loading')}</p> : null}
               {error ? <p className="attach-error">{error}</p> : null}
               {!loading && !error && matches.length === 0 ? (
                 <p className="attach-empty">
-                  {files !== null && files.length === 0
-                    ? 'No files in this workspace yet.'
-                    : 'No files match.'}
+                  {files !== null && files.length === 0 ? t('attach.empty') : t('attach.noMatch')}
                 </p>
               ) : null}
               {matches.map((file, index) => (
@@ -260,7 +262,7 @@ function FileAttach({
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => add(file.relativePath)}
                 >
-                  {file.relativePath}
+                  <bdi>{file.relativePath}</bdi>
                 </button>
               ))}
             </div>

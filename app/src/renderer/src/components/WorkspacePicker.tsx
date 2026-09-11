@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import { relativeTime } from '../chat/locale'
+import { useLocale } from './locale-context'
 
 // Workspace picker (M2.2, docs/03 §4 workspace/*): the native folder dialog
 // lives in main — this component only shows the current workspace + recents
@@ -13,8 +15,8 @@ interface WorkspaceRecent {
 
 // Path formatting for the chip — never abbreviate on an ambiguous spot; show
 // the tail (the part a user recognizes) with an ellipsis head when needed.
-function formatPath(path: string | null): string {
-  if (!path) return 'No workspace selected'
+function formatPath(path: string | null, noWorkspace: string): string {
+  if (!path) return noWorkspace
   if (path.length <= 46) return path
   // Keep the last two segments recognizable: `…\📁 Projects\agency`
   const segments = path.split(/[\\/]/).filter(Boolean)
@@ -22,25 +24,13 @@ function formatPath(path: string | null): string {
   return `…\\${tail}`
 }
 
-function formatRecentTime(iso: string): string {
-  const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return ''
-  const seconds = Math.round((Date.now() - then) / 1000)
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d ago`
-  return new Date(iso).toLocaleDateString()
-}
-
 export default function WorkspacePicker({
   onChanged
 }: {
   onChanged?: (path: string | null) => void
 }): React.JSX.Element {
+  const { locale, t } = useLocale()
+  const noWorkspaceLabel = t('picker.noWorkspace')
   const [current, setCurrent] = useState<string | null>(null)
   const [recents, setRecents] = useState<WorkspaceRecent[]>([])
   const [open, setOpen] = useState(false)
@@ -87,9 +77,9 @@ export default function WorkspacePicker({
       const picked = await window.agento.workspaces.pick()
       if (picked) await refresh()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not open that folder.')
+      setError(cause instanceof Error ? cause.message : t('picker.openFailed'))
     }
-  }, [refresh])
+  }, [refresh, t])
 
   const applyRecent = useCallback(
     async (path: string) => {
@@ -99,10 +89,10 @@ export default function WorkspacePicker({
         setOpen(false)
         await refresh()
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : 'Could not use that folder.')
+        setError(cause instanceof Error ? cause.message : t('picker.useFailed'))
       }
     },
-    [refresh]
+    [refresh, t]
   )
 
   return (
@@ -113,20 +103,16 @@ export default function WorkspacePicker({
         onClick={() => setOpen((value) => !value)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        title={
-          current
-            ? `Folder new chats will use: ${current}\nEach chat keeps the folder it was created in.`
-            : 'Pick a folder — new chats will work in it.'
-        }
+        title={current ? t('picker.chipTitle', { path: current }) : t('picker.pickHint')}
       >
-        <span className="workspace-chip-label">Workspace</span>
-        <span className="workspace-chip-path">{formatPath(current)}</span>
+        <span className="workspace-chip-label">{t('picker.workspace')}</span>
+        <span className="workspace-chip-path">{formatPath(current, noWorkspaceLabel)}</span>
       </button>
 
       {open && (
-        <ul className="workspace-menu" role="listbox" aria-label="Recent workspaces">
+        <ul className="workspace-menu" role="listbox" aria-label={t('picker.recents')}>
           {recents.length === 0 && !current && (
-            <li className="workspace-menu-empty">Pick a folder for new chats to work in.</li>
+            <li className="workspace-menu-empty">{t('picker.menuEmpty')}</li>
           )}
           {recents.map((recent) => (
             <li key={recent.path}>
@@ -138,14 +124,18 @@ export default function WorkspacePicker({
                 onClick={() => void applyRecent(recent.path)}
                 title={recent.path}
               >
-                <span className="workspace-menu-path">{formatPath(recent.path)}</span>
-                <span className="workspace-menu-time">{formatRecentTime(recent.lastOpenedAt)}</span>
+                <span className="workspace-menu-path">
+                  {formatPath(recent.path, noWorkspaceLabel)}
+                </span>
+                <span className="workspace-menu-time">
+                  {relativeTime(locale, recent.lastOpenedAt)}
+                </span>
               </button>
             </li>
           ))}
           <li>
             <button type="button" className="workspace-menu-pick" onClick={() => void choose()}>
-              Choose folder…
+              {t('picker.chooseFolder')}
             </button>
           </li>
         </ul>

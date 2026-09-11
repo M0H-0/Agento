@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import type { SessionSummary } from '../chat/transport'
 import { genericPrompts, suggestPromptsFromScan } from '../chat/suggestions'
 import { formatTokenCount, lastActiveAt, summarizeFolderSessions } from '../chat/folder-activity'
+import { plural, relativeTime } from '../chat/locale'
+import { useLocale } from './locale-context'
 import {
   summarizeWorkspaceFiles,
   workspaceTail,
@@ -31,20 +33,6 @@ function folderLeaf(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path
 }
 
-function formatRelativeTime(iso: string): string {
-  const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return ''
-  const seconds = Math.round((Date.now() - then) / 1000)
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d ago`
-  return new Date(iso).toLocaleDateString()
-}
-
 export function WorkspaceOverview({
   sessions,
   workspacePath,
@@ -53,6 +41,7 @@ export function WorkspaceOverview({
   onStartTask,
   onBack
 }: WorkspaceOverviewProps): React.JSX.Element {
+  const { locale, t } = useLocale()
   const [files, setFiles] = useState<SnapshotFile[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [prompts, setPrompts] = useState<string[]>(() => genericPrompts())
@@ -77,7 +66,7 @@ export function WorkspaceOverview({
       })
       .catch(() => {
         if (!cancelled) {
-          setLoadError('Could not read this folder right now.')
+          setLoadError(t('overview.readFailed'))
           setPrompts(genericPrompts())
         }
       })
@@ -115,14 +104,14 @@ export function WorkspaceOverview({
   return (
     <div className="workspace-overview">
       <button type="button" className="workspace-overview__back" onClick={onBack}>
-        ← Back to chat
+        {t('overview.back')}
       </button>
 
       <h1 className="workspace-overview__title">
-        {workspacePath ? folderLeaf(workspacePath) : 'Your workspace'}
+        {workspacePath ? folderLeaf(workspacePath) : t('overview.yourWorkspace')}
       </h1>
       <p className="workspace-overview__path" title={workspacePath ?? undefined}>
-        {workspacePath ? workspaceTail(workspacePath) : 'Pick a folder in the sidebar to begin.'}
+        {workspacePath ? workspaceTail(workspacePath) : t('overview.pickFolder')}
       </p>
 
       {loadError ? (
@@ -131,60 +120,63 @@ export function WorkspaceOverview({
         </p>
       ) : null}
 
-      <section aria-label="What's here">
-        <h2 className="workspace-overview__heading">What&apos;s here</h2>
+      <section aria-label={t('overview.whatsHere')}>
+        <h2 className="workspace-overview__heading">{t('overview.whatsHere')}</h2>
         {snapshot === null ? (
-          <p className="workspace-overview__note">Reading the folder…</p>
+          <p className="workspace-overview__note">{t('overview.reading')}</p>
         ) : snapshot.fileCount === 0 && snapshot.folderCount === 0 ? (
-          <p className="workspace-overview__note">
-            This folder is empty — add files with Windows Explorer, then ask Agento to organize or
-            summarize them.
-          </p>
+          <p className="workspace-overview__note">{t('overview.emptyFolderNote')}</p>
         ) : (
           <p className="workspace-overview__note">
-            {snapshot.fileCount} file{snapshot.fileCount === 1 ? '' : 's'} · {snapshot.folderCount}{' '}
-            folder{snapshot.folderCount === 1 ? '' : 's'} · {snapshot.documents} document
-            {snapshot.documents === 1 ? '' : 's'}
+            {t('overview.counts', {
+              files: snapshot.fileCount,
+              folders: snapshot.folderCount,
+              documents: snapshot.documents
+            })}
           </p>
         )}
         {snapshot !== null && (snapshot.fileCount > 0 || snapshot.folderCount > 0) ? (
           <ul className="workspace-overview__stats">
             <li>
               <span className="workspace-overview__stat-num">{snapshot.documents}</span>
-              <span className="workspace-overview__stat-label">Documents</span>
+              <span className="workspace-overview__stat-label">{t('overview.documents')}</span>
             </li>
             <li>
               <span className="workspace-overview__stat-num">{snapshot.images}</span>
-              <span className="workspace-overview__stat-label">Images</span>
+              <span className="workspace-overview__stat-label">{t('overview.images')}</span>
             </li>
             <li>
               <span className="workspace-overview__stat-num">{snapshot.spreadsheets}</span>
-              <span className="workspace-overview__stat-label">Spreadsheets</span>
+              <span className="workspace-overview__stat-label">{t('overview.spreadsheets')}</span>
             </li>
             <li>
               <span className="workspace-overview__stat-num">{snapshot.others}</span>
-              <span className="workspace-overview__stat-label">Other</span>
+              <span className="workspace-overview__stat-label">{t('overview.other')}</span>
             </li>
           </ul>
         ) : null}
       </section>
 
       {activityLine ? (
-        <section aria-label="Activity in this folder">
-          <h2 className="workspace-overview__heading">Activity in this folder</h2>
+        <section aria-label={t('overview.activity')}>
+          <h2 className="workspace-overview__heading">{t('overview.activity')}</h2>
           <ul className="workspace-overview__stats">
             <li>
               <span className="workspace-overview__stat-num">{activityLine.chatCount}</span>
               <span className="workspace-overview__stat-label">
-                Chat{activityLine.chatCount === 1 ? '' : 's'}
+                {plural(locale, activityLine.chatCount, {
+                  one: t('overview.chatsOne'),
+                  two: t('overview.chatsTwo'),
+                  many: t('overview.chatsMany')
+                })}
               </span>
             </li>
             {lastActive ? (
               <li>
                 <span className="workspace-overview__stat-num">
-                  {formatRelativeTime(lastActive)}
+                  {relativeTime(locale, lastActive)}
                 </span>
-                <span className="workspace-overview__stat-label">Last active</span>
+                <span className="workspace-overview__stat-label">{t('overview.lastActive')}</span>
               </li>
             ) : null}
             {activityLine.totalTokens > 0 ? (
@@ -192,7 +184,7 @@ export function WorkspaceOverview({
                 <span className="workspace-overview__stat-num">
                   {formatTokenCount(activityLine.totalTokens)}
                 </span>
-                <span className="workspace-overview__stat-label">Tokens used</span>
+                <span className="workspace-overview__stat-label">{t('overview.tokensUsed')}</span>
               </li>
             ) : null}
           </ul>
@@ -200,9 +192,9 @@ export function WorkspaceOverview({
       ) : null}
 
       {resume ? (
-        <section aria-label={resume.usage ? 'Pick up where you left off' : 'Unfinished draft'}>
+        <section aria-label={t(resume.usage ? 'overview.resume' : 'overview.draft')}>
           <h2 className="workspace-overview__heading">
-            {resume.usage ? 'Pick up where you left off' : 'Unfinished draft'}
+            {t(resume.usage ? 'overview.resume' : 'overview.draft')}
           </h2>
           <ul className="workspace-overview__recent">
             <li>
@@ -212,13 +204,17 @@ export function WorkspaceOverview({
                 onClick={() => onOpenSession(resume)}
                 title={resume.title}
               >
-                <span className="workspace-overview__recent-title">{resume.title}</span>
+                <span className="workspace-overview__recent-title">
+                  <bdi>{resume.title}</bdi>
+                </span>
                 <span className="workspace-overview__recent-time">
-                  {resume.mode === 'plan' ? 'Plan' : 'Act'} ·{' '}
+                  {t(resume.mode === 'plan' ? 'app.planTab' : 'app.actTab')} ·{' '}
                   {resume.usage
-                    ? `${formatTokenCount(resume.usage.inputTokens + resume.usage.outputTokens)} tokens`
-                    : 'no messages yet'}{' '}
-                  · {formatRelativeTime(resume.updatedAt)}
+                    ? t('overview.tokens', {
+                        n: formatTokenCount(resume.usage.inputTokens + resume.usage.outputTokens)
+                      })
+                    : t('overview.noMessages')}{' '}
+                  · {relativeTime(locale, resume.updatedAt)}
                 </span>
                 <span className="workspace-overview__open" aria-hidden="true">
                   →
@@ -230,14 +226,14 @@ export function WorkspaceOverview({
       ) : null}
 
       {files === null ? null : (
-        <section aria-label={isEmptyFolder ? 'Things to try' : 'Common tasks'}>
+        <section aria-label={t(isEmptyFolder ? 'overview.thingsToTry' : 'overview.commonTasks')}>
           <h2 className="workspace-overview__heading">
-            {isEmptyFolder ? 'Things to try' : 'Common tasks'}
+            {t(isEmptyFolder ? 'overview.thingsToTry' : 'overview.commonTasks')}
           </h2>
           <div
             className="quick-actions workspace-overview__chips"
             role="list"
-            aria-label="Task starters"
+            aria-label={t('overview.taskStarters')}
           >
             {prompts.map((prompt) => (
               <button
@@ -256,7 +252,7 @@ export function WorkspaceOverview({
 
       <div className="workspace-overview__actions">
         <button type="button" className="sessions-new-chat" onClick={onNewChat}>
-          Start a task
+          {t('overview.startTask')}
         </button>
       </div>
     </div>

@@ -17,6 +17,8 @@ import { SummarizeDocumentCard } from './SummarizeDocumentCard'
 import { WebFetchCard } from './WebFetchCard'
 import { WriteFileCard } from './WriteFileCard'
 import type { ToolCardStatus } from './BaseToolCard'
+import { useLocale } from '../locale-context'
+import type { StringKey } from '../../chat/locale'
 
 // Tool card registry: mounts every per-tool card via the assistant-ui
 // runtime's tools API (`setToolUI`). The ToolUIRegistry runs ONCE per
@@ -69,44 +71,47 @@ function errorTextFor(part: AuiToolPart): string | undefined {
     try {
       return JSON.stringify(part.result)
     } catch {
-      return 'That step failed.'
+      return undefined
     }
   }
-  return 'That step failed.'
+  return undefined
 }
 
-function titleFromToolName(toolName: string): string {
+// Card titles live in the locale dictionary (cards.tool.*) — the Shim owns
+// useLocale and resolves the title once per part, so the pure render
+// functions below stay locale-free and thread a plain `title` string.
+function titleKeyFromToolName(toolName: string): StringKey | null {
   switch (toolName) {
     case 'list_dir':
-      return 'List folder'
+      return 'cards.tool.listDir'
     case 'read_file':
-      return 'Read file'
+      return 'cards.tool.readFile'
     case 'read_document':
-      return 'Read document'
+      return 'cards.tool.readDocument'
     case 'summarize_document':
-      return 'Summarize document'
+      return 'cards.tool.summarize'
     case 'web_fetch':
-      return 'Open web page'
+      return 'cards.tool.webFetch'
     case 'search_files':
-      return 'Search files'
+      return 'cards.tool.searchFiles'
     case 'semantic_search':
-      return 'Search by meaning'
+      return 'cards.tool.semantic'
     case 'ask_user':
-      return 'Ask you something'
+      return 'cards.tool.askUser'
     case 'write_file':
-      return 'Write file'
+      return 'cards.tool.writeFile'
     case 'create_dir':
-      return 'Create folder'
+      return 'cards.tool.createDir'
     case 'edit_file':
-      return 'Edit file'
+      return 'cards.tool.editFile'
     case 'move_path':
-      return 'Move'
+      return 'cards.tool.move'
     case 'copy_path':
-      return 'Copy'
+      return 'cards.tool.copy'
     case 'delete_path':
-      return 'Delete'
+      return 'cards.tool.delete'
     default:
-      return toolName
+      return null
   }
 }
 
@@ -277,12 +282,12 @@ function asDeletePath(value: unknown): { path: string } | null {
   return { path: value.path }
 }
 
-function renderListDirCard(part: AuiToolPart): React.JSX.Element | null {
+function renderListDirCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   const entries = asListEntries(part.result)
   if (entries.length === 0 && !isRecord(part.result)) return null
   return (
     <ListDirCard
-      title={titleFromToolName('list_dir')}
+      title={title}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       entries={entries}
@@ -290,12 +295,12 @@ function renderListDirCard(part: AuiToolPart): React.JSX.Element | null {
   )
 }
 
-function renderReadFileCard(part: AuiToolPart): React.JSX.Element | null {
+function renderReadFileCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   const result = asReadFile(part.result)
   if (!result) return null
   return (
     <ReadFileCard
-      title={titleFromToolName('read_file')}
+      title={title}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -303,12 +308,12 @@ function renderReadFileCard(part: AuiToolPart): React.JSX.Element | null {
   )
 }
 
-function renderReadDocumentCard(part: AuiToolPart): React.JSX.Element | null {
+function renderReadDocumentCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   const result = asReadDocument(part.result)
   if (!result) return null
   return (
     <ReadDocumentCard
-      title={titleFromToolName('read_document')}
+      title={title}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -316,12 +321,12 @@ function renderReadDocumentCard(part: AuiToolPart): React.JSX.Element | null {
   )
 }
 
-function renderSummarizeDocumentCard(part: AuiToolPart): React.JSX.Element | null {
+function renderSummarizeDocumentCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   const result = asSummarizeDocument(part.result)
   if (!result) return null
   return (
     <SummarizeDocumentCard
-      title={titleFromToolName('summarize_document')}
+      title={title}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -329,12 +334,12 @@ function renderSummarizeDocumentCard(part: AuiToolPart): React.JSX.Element | nul
   )
 }
 
-function renderWebFetchCard(part: AuiToolPart): React.JSX.Element | null {
+function renderWebFetchCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   const result = asWebFetch(part.result)
   if (!result) return null
   return (
     <WebFetchCard
-      title={titleFromToolName('web_fetch')}
+      title={title}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -342,12 +347,12 @@ function renderWebFetchCard(part: AuiToolPart): React.JSX.Element | null {
   )
 }
 
-function renderSemanticSearchCard(part: AuiToolPart): React.JSX.Element | null {
+function renderSemanticSearchCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   const result = asSemanticResults(part.result)
   if (!result) return null
   return (
     <SemanticSearchCard
-      title={titleFromToolName('semantic_search')}
+      title={title}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -355,12 +360,12 @@ function renderSemanticSearchCard(part: AuiToolPart): React.JSX.Element | null {
   )
 }
 
-function renderSearchFilesCard(part: AuiToolPart): React.JSX.Element | null {
+function renderSearchFilesCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   const result = asSearchResults(part.result)
   if (!result) return null
   return (
     <SearchFilesCard
-      title={titleFromToolName('search_files')}
+      title={title}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -368,7 +373,7 @@ function renderSearchFilesCard(part: AuiToolPart): React.JSX.Element | null {
   )
 }
 
-function renderAskUserCard(part: AuiToolPart): React.JSX.Element | null {
+function renderAskUserCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   // ask_user is the only tool whose card is open while the run is paused.
   // The synthetic pause chunk's output carries __agentoAskUser — the reply
   // happens in the main composer (App.tsx reply mode), so this card is
@@ -380,7 +385,7 @@ function renderAskUserCard(part: AuiToolPart): React.JSX.Element | null {
   if (!question) return null
   return (
     <AskUserCard
-      title={titleFromToolName('ask_user')}
+      title={title}
       status={statusFor(part.status)}
       question={question}
       output={result}
@@ -388,12 +393,12 @@ function renderAskUserCard(part: AuiToolPart): React.JSX.Element | null {
   )
 }
 
-function renderWriteFileCard(part: AuiToolPart): React.JSX.Element | null {
+function renderWriteFileCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   const result = asWriteFile(part.result)
   if (!result) return null
   return (
     <WriteFileCard
-      title={titleFromToolName('write_file')}
+      title={title}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -401,12 +406,12 @@ function renderWriteFileCard(part: AuiToolPart): React.JSX.Element | null {
   )
 }
 
-function renderCreateDirCard(part: AuiToolPart): React.JSX.Element | null {
+function renderCreateDirCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   const result = asCreateDir(part.result)
   if (!result) return null
   return (
     <CreateDirCard
-      title={titleFromToolName('create_dir')}
+      title={title}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -414,12 +419,12 @@ function renderCreateDirCard(part: AuiToolPart): React.JSX.Element | null {
   )
 }
 
-function renderEditFileCard(part: AuiToolPart): React.JSX.Element | null {
+function renderEditFileCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   const result = asEditFile(part.result)
   if (!result) return null
   return (
     <EditFileCard
-      title={titleFromToolName('edit_file')}
+      title={title}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -427,12 +432,12 @@ function renderEditFileCard(part: AuiToolPart): React.JSX.Element | null {
   )
 }
 
-function renderMovePathCard(part: AuiToolPart): React.JSX.Element | null {
+function renderMovePathCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   const result = asMovePath(part.result)
   if (!result) return null
   return (
     <MovePathCard
-      title={titleFromToolName('move_path')}
+      title={title}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -440,12 +445,12 @@ function renderMovePathCard(part: AuiToolPart): React.JSX.Element | null {
   )
 }
 
-function renderCopyPathCard(part: AuiToolPart): React.JSX.Element | null {
+function renderCopyPathCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   const result = asCopyPath(part.result)
   if (!result) return null
   return (
     <CopyPathCard
-      title={titleFromToolName('copy_path')}
+      title={title}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -453,12 +458,12 @@ function renderCopyPathCard(part: AuiToolPart): React.JSX.Element | null {
   )
 }
 
-function renderDeletePathCard(part: AuiToolPart): React.JSX.Element | null {
+function renderDeletePathCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   const result = asDeletePath(part.result)
   if (!result) return null
   return (
     <DeletePathCard
-      title={titleFromToolName('delete_path')}
+      title={title}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       {...result}
@@ -468,71 +473,71 @@ function renderDeletePathCard(part: AuiToolPart): React.JSX.Element | null {
 
 // Single renderer per tool: the assistant-ui runtime hands us the ToolCall
 // props; we project to a per-tool card (or the generic fallback).
-function renderToolCard(part: AuiToolPart): React.JSX.Element {
+function renderToolCard(part: AuiToolPart, title: string, stepFailed: string): React.JSX.Element {
   if (part.toolName === 'list_dir') {
-    const card = renderListDirCard(part)
+    const card = renderListDirCard(part, title)
     if (card) return card
   }
   if (part.toolName === 'read_file') {
-    const card = renderReadFileCard(part)
+    const card = renderReadFileCard(part, title)
     if (card) return card
   }
   if (part.toolName === 'read_document') {
-    const card = renderReadDocumentCard(part)
+    const card = renderReadDocumentCard(part, title)
     if (card) return card
   }
   if (part.toolName === 'summarize_document') {
-    const card = renderSummarizeDocumentCard(part)
+    const card = renderSummarizeDocumentCard(part, title)
     if (card) return card
   }
   if (part.toolName === 'web_fetch') {
-    const card = renderWebFetchCard(part)
+    const card = renderWebFetchCard(part, title)
     if (card) return card
   }
   if (part.toolName === 'semantic_search') {
-    const card = renderSemanticSearchCard(part)
+    const card = renderSemanticSearchCard(part, title)
     if (card) return card
   }
   if (part.toolName === 'search_files') {
-    const card = renderSearchFilesCard(part)
+    const card = renderSearchFilesCard(part, title)
     if (card) return card
   }
   if (part.toolName === 'ask_user') {
-    const card = renderAskUserCard(part)
+    const card = renderAskUserCard(part, title)
     if (card) return card
   }
   if (part.toolName === 'write_file') {
-    const card = renderWriteFileCard(part)
+    const card = renderWriteFileCard(part, title)
     if (card) return card
   }
   if (part.toolName === 'create_dir') {
-    const card = renderCreateDirCard(part)
+    const card = renderCreateDirCard(part, title)
     if (card) return card
   }
   if (part.toolName === 'edit_file') {
-    const card = renderEditFileCard(part)
+    const card = renderEditFileCard(part, title)
     if (card) return card
   }
   if (part.toolName === 'move_path') {
-    const card = renderMovePathCard(part)
+    const card = renderMovePathCard(part, title)
     if (card) return card
   }
   if (part.toolName === 'copy_path') {
-    const card = renderCopyPathCard(part)
+    const card = renderCopyPathCard(part, title)
     if (card) return card
   }
   if (part.toolName === 'delete_path') {
-    const card = renderDeletePathCard(part)
+    const card = renderDeletePathCard(part, title)
     if (card) return card
   }
   return (
     <GenericToolCard
-      title={titleFromToolName(part.toolName)}
+      title={title}
       status={statusFor(part.status)}
       toolCallId={part.toolCallId}
       result={part.result}
       args={part.args}
-      errorText={errorTextFor(part)}
+      errorText={errorTextFor(part) ?? stepFailed}
     />
   )
 }
@@ -544,6 +549,9 @@ function renderToolCard(part: AuiToolPart): React.JSX.Element {
 // every render is harmless.
 function makeToolCardShim(toolName: string): ToolCallMessagePartComponent {
   const Shim = (props: unknown): React.JSX.Element => {
+    // The Shim is a real component under App's LocaleProvider, so it owns
+    // the locale read; the pure render functions below take plain strings.
+    const { t } = useLocale()
     // assistant-ui passes { status, toolCallId, args, argsText, result,
     // isError, addResult, resume, ... }. We only read the documented part
     // fields plus `status`; everything else degrades to the generic card.
@@ -557,7 +565,9 @@ function makeToolCardShim(toolName: string): ToolCallMessagePartComponent {
       isError: p.isError,
       status: p.status
     }
-    return renderToolCard(part)
+    const key = titleKeyFromToolName(toolName)
+    const title = key ? t(key) : toolName
+    return renderToolCard(part, title, t('cards.stepFailed'))
   }
   return Shim as ToolCallMessagePartComponent
 }

@@ -247,6 +247,8 @@ export interface SidecarStatusEvent {
 // OpenAI-compatible provider profiles join the snapshot.
 export type Appearance = 'dark' | 'light' | 'system'
 
+export type Locale = 'en' | 'ar'
+
 export interface CustomProviderSnapshot {
   id: string
   name: string
@@ -274,6 +276,7 @@ export interface SettingsSnapshot {
   /** Model ids for the active provider (curated list, or [profile.model] for customs). */
   models: string[]
   appearance: Appearance
+  locale: Locale
   permissionDefaults: PermissionDefaults
   customProviders: CustomProviderSnapshot[]
 }
@@ -297,6 +300,10 @@ export interface ClearApiKeyPayload {
 
 export interface SetAppearancePayload {
   appearance: string
+}
+
+export interface SetLocalePayload {
+  locale: string
 }
 
 export interface SetPermissionDefaultsPayload {
@@ -456,6 +463,8 @@ const agento = {
       ipcRenderer.invoke('settings:clear-api-key', payload),
     setAppearance: (payload: SetAppearancePayload): Promise<SettingsSnapshot> =>
       ipcRenderer.invoke('settings:set-appearance', payload),
+    setLocale: (payload: SetLocalePayload): Promise<SettingsSnapshot> =>
+      ipcRenderer.invoke('settings:set-locale', payload),
     setPermissionDefaults: (payload: SetPermissionDefaultsPayload): Promise<PermissionDefaults> =>
       ipcRenderer.invoke('settings:set-permission-defaults', payload),
     createCustomProvider: (payload: CreateCustomProviderPayload): Promise<{ id: string }> =>

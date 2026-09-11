@@ -5,6 +5,8 @@
 
 export type Appearance = 'dark' | 'light' | 'system'
 
+export type Locale = 'en' | 'ar'
+
 export interface CustomProviderProfile {
   /** Opaque stable id (`custom:<uuid>`) — never the editable name/URL, so a rename never orphans the key. */
   id: string
@@ -30,6 +32,7 @@ export interface PrefsV2 {
   provider: string
   model: string
   appearance: Appearance
+  locale: Locale
   permissionDefaults: PermissionDefaults
   customProviders: CustomProviderProfile[]
 }
@@ -37,6 +40,7 @@ export interface PrefsV2 {
 export const SETTINGS_VERSION = 2
 
 export const DEFAULT_APPEARANCE: Appearance = 'dark'
+export const DEFAULT_LOCALE: Locale = 'en'
 export const DEFAULT_PERMISSIONS: PermissionDefaults = { risk1: 'auto', risk2: 'ask' }
 
 export const BUILT_IN_PROVIDERS = ['google', 'groq'] as const
@@ -58,6 +62,10 @@ export function isKnownProviderId(id: string, customIds: string[]): boolean {
 
 export function normalizeAppearance(value: unknown): Appearance {
   return value === 'light' || value === 'dark' || value === 'system' ? value : DEFAULT_APPEARANCE
+}
+
+export function normalizeLocale(value: unknown): Locale {
+  return value === 'ar' ? 'ar' : DEFAULT_LOCALE
 }
 
 export function normalizePermissionDefaults(value: unknown): PermissionDefaults {
@@ -151,6 +159,7 @@ export function migratePrefs(
     provider: defaultProvider,
     model: resolveModel(defaultProvider, undefined),
     appearance: DEFAULT_APPEARANCE,
+    locale: DEFAULT_LOCALE,
     permissionDefaults: { ...DEFAULT_PERMISSIONS },
     customProviders: []
   }
@@ -197,6 +206,7 @@ export function migratePrefs(
     provider,
     model: resolveModel(provider, obj.model),
     appearance: normalizeAppearance(obj.appearance),
+    locale: normalizeLocale(obj.locale),
     permissionDefaults: normalizePermissionDefaults(obj.permissionDefaults),
     customProviders
   }

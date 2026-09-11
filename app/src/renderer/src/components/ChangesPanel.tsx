@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { ChangeEntry } from '../../../preload/index'
+import { relativeTime } from '../chat/locale'
+import type { StringKey } from '../chat/locale'
+import { useLocale } from './locale-context'
 
 // Changes panel (M2.8; docs/04 §3.4): session checkpoints with per-item undo
 // and Undo all. Rows sharing a groupKey are one mutation (M2.7: a move lands
@@ -39,33 +42,39 @@ function fileName(path: string): string {
   return parts.length > 0 ? (parts[parts.length - 1] as string) : path
 }
 
-function titleForGroup(group: ChangeGroup): string {
+type T = (key: StringKey, params?: Record<string, string | number>) => string
+
+function titleForGroup(t: T, group: ChangeGroup): string {
   // The oldest row (snapshot order) describes the mutation best: for a move
   // it is the source row carrying the destination.
   const first = group.rows[group.rows.length - 1] as ChangeEntry
   switch (first.tool) {
     case 'write_file':
-      return first.existed ? 'Overwrote file' : 'Wrote file'
+      return t(first.existed ? 'changes.overwrote' : 'changes.wrote')
     case 'edit_file':
-      return 'Edited file'
+      return t('changes.edited')
     case 'create_dir':
-      return 'Created folder'
+      return t('changes.createdFolder')
     case 'move_path': {
       const dest = group.rows.find((row) => row.relativeDestPath)?.relativeDestPath
-      return dest ? `Moved ${fileName(first.relativePath)} to ${fileName(dest)}` : 'Moved file'
+      return dest
+        ? t('changes.movedTo', { from: fileName(first.relativePath), to: fileName(dest) })
+        : t('changes.movedFile')
     }
     case 'copy_path': {
       const dest = group.rows.find((row) => row.relativeDestPath)?.relativeDestPath
-      return dest ? `Copied ${fileName(first.relativePath)} to ${fileName(dest)}` : 'Copied file'
+      return dest
+        ? t('changes.copiedTo', { from: fileName(first.relativePath), to: fileName(dest) })
+        : t('changes.copiedFile')
     }
     case 'delete_path':
-      return 'Deleted file'
+      return t('changes.deleted')
     case 'agent':
       // Undo rows carry no toolCallId (their own solo group): the captured
       // pre-undo state, which undoing reverts the undo (docs/04 §3.4).
-      return 'Restore point'
+      return t('changes.restorePoint')
     default:
-      return 'Changed file'
+      return t('changes.changed')
   }
 }
 
@@ -74,22 +83,11 @@ function pathForGroup(group: ChangeGroup): string {
   return first.relativePath
 }
 
-function relativeTime(createdAt: string): string {
-  const then = Date.parse(createdAt)
-  if (Number.isNaN(then)) return ''
-  const seconds = Math.max(0, Math.floor((Date.now() - then) / 1000))
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  return new Date(then).toLocaleDateString()
-}
-
 export function ChangesPanel({
   sessionId,
   refreshKey
 }: ChangesPanelProps): React.JSX.Element | null {
+  const { locale, t } = useLocale()
   const [entries, setEntries] = useState<ChangeEntry[]>([])
   const [activeCount, setActiveCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -150,8 +148,12 @@ export function ChangesPanel({
   const failMessages = (results: { ok: boolean; error?: string }[]): string | null => {
     const failures = results.filter((result) => !result.ok)
     if (failures.length === 0) return null
-    if (failures.length === 1) return (failures[0] as { error?: string }).error ?? 'Undo failed.'
-    return `${failures.length} items could not be restored — ${(failures[0] as { error?: string }).error ?? 'see each item'}`
+    if (failures.length === 1)
+      return (failures[0] as { error?: string }).error ?? t('changes.undoFailed')
+    return t('changes.restoreFailed', {
+      n: failures.length,
+      reason: (failures[0] as { error?: string }).error ?? t('changes.seeEachItem')
+    })
   }
 
   const undoGroup = (group: ChangeGroup): void => {
@@ -201,37 +203,37 @@ export function ChangesPanel({
   const groups = groupEntries(entries)
 
   return (
-    <aside className="changes-panel" aria-label="Changes">
+    <aside className="changes-panel" aria-label={t('changes.title')}>
       <h2 className="changes-panel__title">
-        Changes{' '}
+        {t('changes.title')}{' '}
         {activeCount > 0 ? <span className="changes-panel__count">{activeCount}</span> : null}
       </h2>
       {activeCount > 0 ? (
         <div className="changes-panel__actions">
           {confirmAll ? (
             <span className="changes-panel__confirm">
-              Restore everything to how it was before this conversation?
+              {t('changes.confirmAll')}
               <button type="button" onClick={undoAll} disabled={busyKey !== null}>
-                Yes, undo all
+                {t('changes.yesUndoAll')}
               </button>
               <button
                 type="button"
                 onClick={() => setConfirmAll(false)}
                 disabled={busyKey !== null}
               >
-                Keep
+                {t('changes.keep')}
               </button>
             </span>
           ) : (
             <button type="button" onClick={() => setConfirmAll(true)} disabled={busyKey !== null}>
-              Undo all
+              {t('changes.undoAll')}
             </button>
           )}
         </div>
       ) : null}
       {error ? <div className="changes-panel__error">{error}</div> : null}
       {groups.length === 0 && !error ? (
-        <div className="changes-panel__empty">No file changes yet in this conversation.</div>
+        <div className="changes-panel__empty">{t('changes.empty')}</div>
       ) : (
         <ul className="changes-panel__list">
           {groups.map((group) => {
@@ -241,6 +243,7 @@ export function ChangesPanel({
             // pre-undo state captures with this one (M2.8 review fix; the
             // main side serializes too, but the UI should say so).
             const busy = busyKey !== null
+            const title = titleForGroup(t, group)
             return (
               <li
                 key={group.key}
@@ -251,23 +254,27 @@ export function ChangesPanel({
                 }
               >
                 <span className="changes-panel__item-title">
-                  {titleForGroup(group)}{' '}
-                  {reverted ? <span className="changes-panel__restored">restored ✓</span> : null}
+                  {title}{' '}
+                  {reverted ? (
+                    <span className="changes-panel__restored">{t('changes.restored')}</span>
+                  ) : null}
                 </span>
-                <span className="changes-panel__item-path">{pathForGroup(group)}</span>
+                <span className="changes-panel__item-path">
+                  <bdi>{pathForGroup(group)}</bdi>
+                </span>
                 <span className="changes-panel__item-meta">
-                  {relativeTime((group.rows[0] as ChangeEntry).createdAt)}
+                  {relativeTime(locale, (group.rows[0] as ChangeEntry).createdAt)}
                 </span>
                 {!reverted ? (
                   <span className="changes-panel__item-actions">
                     {confirmKey === group.key ? (
                       <span className="changes-panel__confirm">
-                        Restore {fileName(pathForGroup(group))} to how it was before?
+                        {t('changes.confirmItem', { name: fileName(pathForGroup(group)) })}
                         <button type="button" onClick={() => undoGroup(group)} disabled={busy}>
-                          Yes, restore
+                          {t('changes.yesRestore')}
                         </button>
                         <button type="button" onClick={() => setConfirmKey(null)} disabled={busy}>
-                          Keep
+                          {t('changes.keep')}
                         </button>
                       </span>
                     ) : (
@@ -275,9 +282,9 @@ export function ChangesPanel({
                         type="button"
                         onClick={() => setConfirmKey(group.key)}
                         disabled={busy}
-                        aria-label={`Undo ${titleForGroup(group)}`}
+                        aria-label={t('changes.undoItem', { title })}
                       >
-                        undo ↩
+                        {t('changes.undo')}
                       </button>
                     )}
                   </span>

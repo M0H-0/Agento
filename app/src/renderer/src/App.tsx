@@ -13,6 +13,10 @@ import { createIpcChatTransport } from './chat/transport'
 import type { SessionMode, SessionSummary } from './chat/transport'
 import { findPendingAsk } from './chat/ask'
 import type { PendingAsk } from './chat/ask'
+import { translate } from './chat/locale'
+import type { Locale, StringKey } from './chat/locale'
+import { LocaleProvider } from './components/LocaleContext'
+import { useLocale } from './components/locale-context'
 import { parseAgentEvent } from './chat/agent-events'
 import type { PlanStep } from './chat/agent-events'
 import type { AgentApprovalRequestedEvent } from '../../preload/index'
@@ -102,11 +106,11 @@ function formatFolderTail(path: string): string {
 // Home greeting pool — one line shown at a time, picked at random once per
 // app lifetime (App owns the pick so session switches, which remount ChatView
 // per threadEpoch, neither re-roll the line nor replay the entrance).
-const HOME_GREETINGS = ['Ready when you are.', 'What shall we work on?']
+const HOME_GREETING_KEYS: StringKey[] = ['app.greeting.a', 'app.greeting.b']
 
-function pickHomeGreeting(): string {
-  const pick = HOME_GREETINGS[Math.floor(Math.random() * HOME_GREETINGS.length)]
-  return pick ?? 'Ready when you are.'
+function pickHomeGreeting(): StringKey {
+  const pick = HOME_GREETING_KEYS[Math.floor(Math.random() * HOME_GREETING_KEYS.length)]
+  return pick ?? 'app.greeting.a'
 }
 
 // Empty-thread welcome (docs/04 §2). A short greeting line plus, below it as
@@ -118,14 +122,15 @@ function pickHomeGreeting(): string {
 // re-render) once the first empty paint marks itself spent — without the
 // latch the re-render would strip .home-enter mid-animation.
 function ThreadWelcome({
-  greeting,
+  greetingKey,
   playEntrance,
   onPlayed
 }: {
-  greeting: string
+  greetingKey: StringKey
   playEntrance: boolean
   onPlayed: () => void
 }): React.JSX.Element {
+  const { t } = useLocale()
   const [workspace, setWorkspace] = useState<string | null>(null)
   const [animate] = useState(playEntrance)
   useEffect(() => {
@@ -147,7 +152,7 @@ function ThreadWelcome({
   }, [animate, onPlayed])
   return (
     <div className={animate ? 'thread-welcome home-enter' : 'thread-welcome'}>
-      <h1 className="thread-welcome-greeting">{greeting}</h1>
+      <h1 className="thread-welcome-greeting">{t(greetingKey)}</h1>
       <p className="thread-welcome-eyebrow">
         {/* Inline folder glyph (no icon dep — STACK.md): 16px grid, stroke
             follows the text color. */}
@@ -163,7 +168,7 @@ function ThreadWelcome({
         >
           <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
         </svg>
-        {workspace ? formatFolderTail(workspace) : 'Pick a folder to work in'}
+        {workspace ? <bdi>{formatFolderTail(workspace)}</bdi> : t('app.noFolder')}
       </p>
     </div>
   )
@@ -177,6 +182,7 @@ function ThreadWelcome({
 // so the user can Stop or retry. Stop itself stays rendered beside Send —
 // it rejects the pending answer and aborts, exactly like chat:stop mid-ask.
 function ReplyComposer({ ask }: { ask: PendingAsk }): React.JSX.Element {
+  const { t } = useLocale()
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
@@ -189,7 +195,7 @@ function ReplyComposer({ ask }: { ask: PendingAsk }): React.JSX.Element {
     try {
       const res = await window.agento.tool.answer({ toolCallId: ask.toolCallId, answer: trimmed })
       if (!res.ok) {
-        setErrorText(res.reason ?? 'That question is no longer active.')
+        setErrorText(res.reason ?? t('app.questionGone'))
       }
     } catch (error) {
       setErrorText(error instanceof Error ? error.message : String(error))
@@ -201,7 +207,7 @@ function ReplyComposer({ ask }: { ask: PendingAsk }): React.JSX.Element {
   return (
     <>
       {ask.options && ask.options.length > 0 ? (
-        <div className="composer-replies" role="group" aria-label="Suggested replies">
+        <div className="composer-replies" role="group" aria-label={t('app.suggestedReplies')}>
           {ask.options.map((option) => (
             <button
               key={option}
@@ -217,7 +223,7 @@ function ReplyComposer({ ask }: { ask: PendingAsk }): React.JSX.Element {
       ) : null}
       <textarea
         className="composer-input"
-        placeholder="Type your reply…"
+        placeholder={t('app.typeReply')}
         value={draft}
         rows={1}
         autoFocus
@@ -235,7 +241,7 @@ function ReplyComposer({ ask }: { ask: PendingAsk }): React.JSX.Element {
         disabled={sending || draft.trim().length === 0}
         onClick={() => void submit(draft)}
       >
-        {sending ? 'Sending…' : 'Send'}
+        {sending ? t('app.sending') : t('app.send')}
       </button>
       {errorText ? (
         <div className="composer-reply-error" role="alert">
@@ -257,7 +263,7 @@ function Thread({
   onAttachmentsChange,
   sessionId,
   onSlashMutated,
-  homeGreeting,
+  greetingKey,
   playHomeEntrance,
   onHomeEntrancePlayed,
   prefillPrompt,
@@ -273,7 +279,7 @@ function Thread({
   onAttachmentsChange: (next: string[]) => void
   sessionId: string | null
   onSlashMutated: () => void
-  homeGreeting: string
+  greetingKey: StringKey
   playHomeEntrance: boolean
   onHomeEntrancePlayed: () => void
   prefillPrompt: string | null
@@ -285,6 +291,7 @@ function Thread({
   // grayscale treatment untouched, reduced-motion safe.
   const [hintPreview, setHintPreview] = useState<SessionMode | null>(null)
   const hintMode = hintPreview ?? mode
+  const { t } = useLocale()
   // Latched at mount (see ThreadWelcome): App marks the entrance spent right
   // after the first empty paint, which re-renders this same instance with
   // playHomeEntrance=false — the latch keeps .home-enter for the full 250ms.
@@ -294,7 +301,7 @@ function Thread({
       <ThreadPrimitive.Viewport className="thread-viewport">
         <ThreadPrimitive.If empty>
           <ThreadWelcome
-            greeting={homeGreeting}
+            greetingKey={greetingKey}
             playEntrance={playEntrance}
             onPlayed={onHomeEntrancePlayed}
           />
@@ -328,7 +335,7 @@ function Thread({
           {/* Execution mode tabs (docs/04 §3.5): session-owned, persisted via
               session:set-mode. Plan is structurally read-only; Act may mutate
               through the normal approval/snapshot pipeline. */}
-          <div className="mode-tabs" role="tablist" aria-label="Execution mode">
+          <div className="mode-tabs" role="tablist" aria-label={t('app.modeLabel')}>
             <button
               type="button"
               role="tab"
@@ -341,9 +348,9 @@ function Thread({
               onMouseLeave={() => setHintPreview(null)}
               onFocus={() => setHintPreview('plan')}
               onBlur={() => setHintPreview(null)}
-              title="Read files and prepare a plan. Nothing will be changed."
+              title={t('app.planTitle')}
             >
-              Plan
+              {t('app.planTab')}
             </button>
             <button
               type="button"
@@ -357,12 +364,12 @@ function Thread({
               onMouseLeave={() => setHintPreview(null)}
               onFocus={() => setHintPreview('act')}
               onBlur={() => setHintPreview(null)}
-              title="Carry out work. Agento asks before risky changes."
+              title={t('app.actTitle')}
             >
-              Act
+              {t('app.actTab')}
             </button>
             <span className="mode-hint" id="mode-hint">
-              {hintMode === 'plan' ? 'Read-only — nothing will change.' : 'Carries out work.'}
+              {hintMode === 'plan' ? t('app.planHint') : t('app.actHint')}
             </span>
           </div>
           {/* Model chip (docs/04 §2): a sibling of the tablist (a non-tab
@@ -394,7 +401,7 @@ function Thread({
               <SlashMenu disabled={modeDisabled} sessionId={sessionId} onMutated={onSlashMutated} />
               <ComposerPrimitive.Input
                 className="composer-input"
-                placeholder={mode === 'plan' ? 'Ask for a read-only plan…' : 'Ask anything…'}
+                placeholder={t(mode === 'plan' ? 'app.planPlaceholder' : 'app.actPlaceholder')}
                 rows={1}
                 autoFocus
               />
@@ -407,10 +414,14 @@ function Thread({
               the reasoning lead-in (status submitted|streaming), so Stop is
               visible before any text arrives. */}
           <ThreadPrimitive.If running={false}>
-            <ComposerPrimitive.Send className="composer-send">Send</ComposerPrimitive.Send>
+            <ComposerPrimitive.Send className="composer-send">
+              {t('app.send')}
+            </ComposerPrimitive.Send>
           </ThreadPrimitive.If>
           <ThreadPrimitive.If running>
-            <ComposerPrimitive.Cancel className="composer-cancel">Stop</ComposerPrimitive.Cancel>
+            <ComposerPrimitive.Cancel className="composer-cancel">
+              {t('app.stop')}
+            </ComposerPrimitive.Cancel>
           </ThreadPrimitive.If>
         </ComposerPrimitive.Root>
         {/* QuickActions chips (docs/04 §3.5) sit UNDER the composer on the
@@ -442,7 +453,7 @@ interface ChatViewProps {
   getAttachments: () => string[]
   onAttachmentsConsumed: () => void
   onSlashMutated: () => void
-  homeGreeting: string
+  greetingKey: StringKey
   playHomeEntrance: boolean
   onHomeEntrancePlayed: () => void
   prefillPrompt: string | null
@@ -473,12 +484,13 @@ function ChatView({
   getAttachments,
   onAttachmentsConsumed,
   onSlashMutated,
-  homeGreeting,
+  greetingKey,
   playHomeEntrance,
   onHomeEntrancePlayed,
   prefillPrompt,
   onPrefillConsumed
 }: ChatViewProps): React.JSX.Element {
+  const { t } = useLocale()
   // Created once per mount: the transport carries this view's run state
   // (in-flight guard, active run's session id), so a per-render identity
   // would be a lie. getMode is App-stable (useCallback over a ref), so it can
@@ -507,16 +519,12 @@ function ChatView({
   const runActive = chat.status === 'submitted' || chat.status === 'streaming'
   const activeAsk = runActive ? pendingAsk : null
   const liveStatus = activeAsk
-    ? 'Waiting for your reply...'
+    ? t('app.waitingReply')
     : (runStatus ??
       (chat.status === 'submitted'
-        ? mode === 'plan'
-          ? 'Reading and preparing your plan...'
-          : 'Getting ready...'
+        ? t(mode === 'plan' ? 'app.preparingPlan' : 'app.gettingReady')
         : chat.status === 'streaming'
-          ? mode === 'plan'
-            ? 'Reading and preparing your plan...'
-            : 'Working...'
+          ? t(mode === 'plan' ? 'app.preparingPlan' : 'app.working')
           : undefined))
   // The view is unmounted ONLY by an explicit session switch / New chat, and
   // App runs dispose there (before the remount) rather than in an effect
@@ -557,7 +565,7 @@ function ChatView({
         onAttachmentsChange={onAttachmentsChange}
         sessionId={sessionId}
         onSlashMutated={onSlashMutated}
-        homeGreeting={homeGreeting}
+        greetingKey={greetingKey}
         playHomeEntrance={playHomeEntrance}
         onHomeEntrancePlayed={onHomeEntrancePlayed}
         prefillPrompt={prefillPrompt}
@@ -581,7 +589,18 @@ function App(): React.JSX.Element {
   // per threadEpoch) keep the same line. Spent flips after the first empty
   // paint; later ChatViews receive playHomeEntrance=false, so the entrance
   // never replays on new chats and window focus (no remount) replays nothing.
-  const [homeGreeting] = useState(() => pickHomeGreeting())
+  const [greetingKey] = useState(() => pickHomeGreeting())
+  // Locale (Arabic option): owned here, pushed down via LocaleProvider.
+  // localeRef mirrors it for the agent:event handler (registered once).
+  const [locale, setLocaleState] = useState<Locale>('en')
+  const localeRef = useRef<Locale>('en')
+  const applyLocale = useCallback((next: Locale) => {
+    localeRef.current = next
+    setLocaleState(next)
+    const root = document.documentElement
+    root.lang = next
+    root.dir = next === 'ar' ? 'rtl' : 'ltr'
+  }, [])
   const [homeEntranceSpent, setHomeEntranceSpent] = useState(false)
   const markHomeEntranceSpent = useCallback(() => setHomeEntranceSpent(true), [])
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -605,11 +624,17 @@ function App(): React.JSX.Element {
   // a failed check degrades to the main UI, which already handles both
   // missing states honestly.
   const [setupReady, setSetupReady] = useState<boolean | null>(null)
+  // Locale loads with the first settings read so the onboarding screen (which
+  // renders before the appearance effect's setupReady gate) already speaks
+  // the saved language; the appearance effect re-applies it for later changes.
   useEffect(() => {
     let cancelled = false
     Promise.all([window.agento.settings.get(), window.agento.workspaces.get()])
       .then(([settings, workspaces]) => {
-        if (!cancelled) setSetupReady(settings.hasKey && workspaces.current !== null)
+        if (cancelled) return
+        const saved = settings.locale
+        if (saved === 'en' || saved === 'ar') applyLocale(saved)
+        setSetupReady(settings.hasKey && workspaces.current !== null)
       })
       .catch(() => {
         if (!cancelled) setSetupReady(true)
@@ -617,7 +642,7 @@ function App(): React.JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [applyLocale])
 
   // M6.3 Appearance (docs/04 §3.7): the settings snapshot owns the theme;
   // the <html> .dark class is the token switch (main.css). Applied on launch
@@ -636,7 +661,10 @@ function App(): React.JSX.Element {
     window.agento.settings
       .get()
       .then((snapshot) => {
-        if (!cancelled) apply(snapshot.appearance ?? 'dark')
+        if (cancelled) return
+        apply(snapshot.appearance ?? 'dark')
+        const saved = snapshot.locale
+        if (saved === 'en' || saved === 'ar') applyLocale(saved)
       })
       .catch(() => {})
     const media = window.matchMedia('(prefers-color-scheme: light)')
@@ -653,7 +681,7 @@ function App(): React.JSX.Element {
       cancelled = true
       media.removeEventListener?.('change', onChange)
     }
-  }, [setupReady])
+  }, [setupReady, applyLocale])
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -777,12 +805,12 @@ function App(): React.JSX.Element {
           // when the event is delayed — the resolved handler is idempotent.
           setApproval(null)
         } else {
-          setApprovalError(result.reason ?? 'That decision was not accepted. Try again.')
+          setApprovalError(result.reason ?? translate(locale, 'app.decisionRejected'))
         }
       })
       .catch((error) => {
         setApprovalError(
-          error instanceof Error ? error.message : 'Could not send that decision. Try again.'
+          error instanceof Error ? error.message : translate(locale, 'app.sendFailed')
         )
       })
       .finally(() => setApprovalPending(false))
@@ -822,7 +850,7 @@ function App(): React.JSX.Element {
       }
       if (event.type === 'plan/created') {
         lastRunIdRef.current = event.runId
-        setRunStatus('Plan ready — nothing was changed.')
+        setRunStatus(translate(localeRef.current, 'app.planReady'))
         setPlan((prev) =>
           prev !== null && prev.runId === event.runId
             ? {
@@ -843,14 +871,15 @@ function App(): React.JSX.Element {
               }
         )
       } else if (event.type === 'plan/step_updated') {
+        const L = localeRef.current
         setRunStatus(
           event.status === 'done'
-            ? 'Checking the result...'
+            ? translate(L, 'app.checkingResult')
             : event.status === 'failed'
-              ? 'That step needs attention.'
+              ? translate(L, 'app.stepAttention')
               : event.status === 'skipped'
-                ? 'Continuing with the remaining steps...'
-                : 'Working through your plan...'
+                ? translate(L, 'app.continuingSteps')
+                : translate(L, 'app.workingPlan')
         )
         setPlan((prev) => {
           if (!prev || prev.runId !== event.runId) return prev
@@ -868,10 +897,9 @@ function App(): React.JSX.Element {
           }
         })
       } else if (event.type === 'verification/finished') {
+        const L = localeRef.current
         setRunStatus(
-          event.isComplete
-            ? 'Everything checks out — finishing up.'
-            : 'Some results could not be confirmed — take a quick look when it finishes.'
+          event.isComplete ? translate(L, 'app.verifiedDone') : translate(L, 'app.notVerified')
         )
         setPlan((prev) => {
           if (!prev || prev.runId !== event.runId) return prev
@@ -891,7 +919,7 @@ function App(): React.JSX.Element {
       } else if (event.type === 'approval/requested') {
         if (lastRunIdRef.current && event.runId !== lastRunIdRef.current) return
         lastRunIdRef.current = event.runId
-        setRunStatus('Waiting for your approval...')
+        setRunStatus(translate(localeRef.current, 'app.waitingApproval'))
         setApproval(event)
         setApprovalError(null)
         // No false owning-step glyph: the approval request carries no
@@ -899,10 +927,11 @@ function App(): React.JSX.Element {
         // awaiting. The dialog itself is the approval surface.
       } else if (event.type === 'approval/resolved') {
         if (lastRunIdRef.current && event.runId !== lastRunIdRef.current) return
+        const L = localeRef.current
         setRunStatus(
           event.decision === 'approve'
-            ? 'Approved. Starting the next step...'
-            : 'Continuing without that step...'
+            ? translate(L, 'app.approvedNext')
+            : translate(L, 'app.continuingWithout')
         )
         setApproval((current) =>
           current && current.approvalId === event.approvalId ? null : current
@@ -1119,14 +1148,18 @@ function App(): React.JSX.Element {
   }, [undoLastChange, startNewChat])
 
   if (setupReady === false) {
-    return <Onboarding onDone={() => setSetupReady(true)} />
+    return (
+      <LocaleProvider locale={locale}>
+        <Onboarding onDone={() => setSetupReady(true)} />
+      </LocaleProvider>
+    )
   }
   if (setupReady === null) {
     return <SidecarStatusDot />
   }
 
   return (
-    <>
+    <LocaleProvider locale={locale}>
       <SessionsSidebar
         sessions={sessions}
         activeSessionId={activeSessionId}
@@ -1182,7 +1215,7 @@ function App(): React.JSX.Element {
             getAttachments={getAttachments}
             onAttachmentsConsumed={clearAttachments}
             onSlashMutated={onSlashMutated}
-            homeGreeting={homeGreeting}
+            greetingKey={greetingKey}
             playHomeEntrance={!homeEntranceSpent}
             onHomeEntrancePlayed={markHomeEntranceSpent}
             prefillPrompt={composerPrefill}
@@ -1219,8 +1252,12 @@ function App(): React.JSX.Element {
           error={approvalError}
         />
       ) : null}
-      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-    </>
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onLocaleChange={applyLocale}
+      />
+    </LocaleProvider>
   )
 }
 

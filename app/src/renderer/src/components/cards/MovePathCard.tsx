@@ -1,4 +1,5 @@
 import { BaseToolCard, type BaseToolCardProps } from './BaseToolCard'
+import { useLocale } from '../locale-context'
 
 // move_path card (M2.7): plain-language title, source → destination meta line.
 // Paths in the result are absolute (sandbox-resolved main-side); the card
@@ -21,15 +22,13 @@ export function MovePathCard({
   overwritten,
   ...rest
 }: MovePathCardProps): React.JSX.Element {
-  const meta = overwritten
-    ? `Moved ${fileName(from)} to ${fileName(to)} · replaced existing`
-    : `Moved ${fileName(from)} to ${fileName(to)}`
+  const { t } = useLocale()
+  const names = { from: fileName(from), to: fileName(to) }
+  const meta = t(overwritten ? 'cards.movedReplaced' : 'cards.movedTo', names)
   return (
     <BaseToolCard {...rest} meta={meta}>
       <div className="tool-card__empty">
-        {overwritten
-          ? 'The destination already existed — its old content is kept in the checkpoint, so this is undoable.'
-          : 'The original is gone from its old place — undo restores it.'}
+        {t(overwritten ? 'cards.moveReplacedNote' : 'cards.moveGoneNote')}
       </div>
     </BaseToolCard>
   )

@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import type { Locale, StringKey } from '../chat/locale'
+import { useLocale } from './locale-context'
+import { SettingsPopoverSelect } from './SettingsPopoverSelect'
 
 // Settings modal (docs/04 §3.7): tabbed by category — Providers (built-ins +
 // custom OpenAI-compatible profiles), Appearance, Permissions, Data. Only the
@@ -10,7 +13,6 @@ import { useEffect, useRef, useState } from 'react'
 // Structural mirror of SettingsSnapshot in src/preload/index.d.ts — the
 // renderer consumes window.agento typed globally and doesn't import preload.
 type Appearance = 'dark' | 'light' | 'system'
-
 interface CustomProviderSnapshot {
   id: string
   name: string
@@ -31,6 +33,7 @@ interface SettingsSnapshot {
   providers: string[]
   models: string[]
   appearance: Appearance
+  locale: Locale
   permissionDefaults: { risk1: 'auto' | 'ask'; risk2: 'auto' | 'ask' }
   customProviders: CustomProviderSnapshot[]
 }
@@ -54,19 +57,25 @@ function providerLabel(id: string, customs: CustomProviderSnapshot[]): string {
 
 type SettingsTab = 'providers' | 'appearance' | 'permissions' | 'data'
 
-const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
-  { id: 'providers', label: 'Providers' },
-  { id: 'appearance', label: 'Appearance' },
-  { id: 'permissions', label: 'Permissions' },
-  { id: 'data', label: 'Data' }
+const SETTINGS_TABS: { id: SettingsTab; labelKey: StringKey }[] = [
+  { id: 'providers', labelKey: 'settings.tab.providers' },
+  { id: 'appearance', labelKey: 'settings.tab.appearance' },
+  { id: 'permissions', labelKey: 'settings.tab.permissions' },
+  { id: 'data', labelKey: 'settings.tab.data' }
 ]
 
 interface SettingsDialogProps {
   open: boolean
   onClose: () => void
+  onLocaleChange: (locale: Locale) => void
 }
 
-function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Element | null {
+function SettingsDialog({
+  open,
+  onClose,
+  onLocaleChange
+}: SettingsDialogProps): React.JSX.Element | null {
+  const { t } = useLocale()
   const [snapshot, setSnapshot] = useState<SettingsSnapshot | null>(null)
   const [keyDraft, setKeyDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -96,7 +105,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
         setError(null)
       })
       .catch(() => {
-        setError('Could not load settings.')
+        setError(t('settings.loadFailed'))
       })
 
   const refreshDataSummary = (): void => {
@@ -124,7 +133,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
       })
       .catch(() => {
         if (cancelled) return
-        setError('Could not load settings.')
+        setError(t('settings.loadFailed'))
       })
     window.agento.settings
       .getDataSummary()
@@ -137,6 +146,10 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
     return () => {
       cancelled = true
     }
+    // `t` intentionally omitted: this effect opens the dialog (fresh pull +
+    // tab reset) and must not re-run on a language switch mid-open — error
+    // text resolves in the locale active at open time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   useEffect(() => {
@@ -172,7 +185,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
             return refresh()
           })
           .then(() => setNotice(null)),
-      'Saving the key failed.'
+      t('settings.saveKeyFailed')
     )
   }
 
@@ -181,7 +194,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
     const provider = snapshot.provider
     runGuarded(
       () => window.agento.settings.clearApiKey({ provider }).then(refresh),
-      'Removing the key failed.'
+      t('settings.removeKeyFailed')
     )
   }
 
@@ -189,7 +202,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
     if (snapshot === null) return
     runGuarded(
       () => window.agento.settings.setModel({ model }).then(refresh),
-      'Changing the model failed.'
+      t('settings.changeModelFailed')
     )
   }
 
@@ -200,7 +213,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
     setTestResult(null)
     runGuarded(
       () => window.agento.settings.setProvider({ provider }).then(refresh),
-      'Changing the provider failed.'
+      t('settings.changeProviderFailed')
     )
   }
 
@@ -222,8 +235,24 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
           setSnapshot(next)
           applyAppearance(next.appearance)
         }),
-      'Changing the appearance failed.'
+      t('settings.changeAppearanceFailed')
     )
+  }
+
+  // Language (Arabic option): persists via settings:set-locale, then tells
+  // App to flip <html> lang/dir + the LocaleProvider — the whole dialog
+  // re-renders in the new language instantly, no restart.
+  const changeLocale = (locale: Locale): void => {
+    if (snapshot === null || locale === snapshot.locale) return
+    setBusy(true)
+    window.agento.settings
+      .setLocale({ locale })
+      .then((next) => {
+        setSnapshot(next)
+        onLocaleChange(next.locale)
+      })
+      .catch(() => setError(t('settings.changeLanguageFailed')))
+      .finally(() => setBusy(false))
   }
 
   const changePermissions = (risk1: 'auto' | 'ask', risk2: 'auto' | 'ask'): void => {
@@ -234,7 +263,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
           .then((next) =>
             setSnapshot((prev) => (prev === null ? prev : { ...prev, permissionDefaults: next }))
           ),
-      'Changing the permission defaults failed.'
+      t('settings.changePermissionsFailed')
     )
   }
 
@@ -260,7 +289,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
 
   const saveCustomForm = (): void => {
     if (formName.trim() === '' || formBaseUrl.trim() === '' || formModel.trim() === '') {
-      setError('Fill in the provider name, endpoint URL, and model name.')
+      setError(t('settings.fillCustomForm'))
       return
     }
     setBusy(true)
@@ -281,10 +310,10 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
         .then(() => finish)
         .then(() => {
           setError(null)
-          setNotice('Custom provider added and selected.')
+          setNotice(t('settings.customAdded'))
         })
         .catch((saveError: unknown) =>
-          setError(saveError instanceof Error ? saveError.message : 'Adding the provider failed.')
+          setError(saveError instanceof Error ? saveError.message : t('settings.addProviderFailed'))
         )
         .finally(() => setBusy(false))
     } else if (editingId !== undefined) {
@@ -302,10 +331,12 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
           setEditingId(undefined)
           setFormKey('')
           setError(null)
-          setNotice('Custom provider updated.')
+          setNotice(t('settings.customUpdated'))
         })
         .catch((saveError: unknown) =>
-          setError(saveError instanceof Error ? saveError.message : 'Updating the provider failed.')
+          setError(
+            saveError instanceof Error ? saveError.message : t('settings.updateProviderFailed')
+          )
         )
         .finally(() => setBusy(false))
     }
@@ -316,9 +347,9 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
       () =>
         window.agento.settings.deleteCustomProvider({ id }).then((next) => {
           setSnapshot(next)
-          setNotice('Custom provider removed — its stored key was removed too.')
+          setNotice(t('settings.customRemoved'))
         }),
-      'Removing the provider failed.'
+      t('settings.removeProviderFailed')
     )
   }
 
@@ -328,15 +359,17 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
     window.agento.settings
       .testProvider({ provider: providerId })
       .then((result) =>
-        setTestResult(result.ok ? 'Connected.' : (result.reason ?? 'The test failed.'))
+        setTestResult(
+          result.ok ? t('settings.connected') : (result.reason ?? t('settings.testFailed'))
+        )
       )
-      .catch(() => setTestResult('The test could not run.'))
+      .catch(() => setTestResult(t('settings.testCouldNotRun')))
       .finally(() => setTesting(false))
   }
 
   const testDraft = (): void => {
     if (formBaseUrl.trim() === '' || formModel.trim() === '') {
-      setTestResult('Enter the endpoint URL and model name first.')
+      setTestResult(t('settings.enterEndpointFirst'))
       return
     }
     setTesting(true)
@@ -348,9 +381,11 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
         ...(formKey.trim() !== '' ? { key: formKey } : {})
       })
       .then((result) =>
-        setTestResult(result.ok ? 'Connected.' : (result.reason ?? 'The test failed.'))
+        setTestResult(
+          result.ok ? t('settings.connected') : (result.reason ?? t('settings.testFailed'))
+        )
       )
-      .catch(() => setTestResult('The test could not run.'))
+      .catch(() => setTestResult(t('settings.testCouldNotRun')))
       .finally(() => setTesting(false))
   }
 
@@ -360,13 +395,11 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
         window.agento.settings.clearSessions().then(({ sessions }) => {
           setConfirmAction(null)
           setNotice(
-            sessions === 0
-              ? 'There were no conversations to clear.'
-              : `Cleared ${sessions} conversation${sessions === 1 ? '' : 's'}.`
+            sessions === 0 ? t('settings.clearedNone') : t('settings.cleared', { n: sessions })
           )
           refreshDataSummary()
         }),
-      'Clearing conversations failed.'
+      t('settings.clearFailed')
     )
   }
 
@@ -376,13 +409,11 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
         window.agento.settings.purgeSnapshots().then(({ checkpoints }) => {
           setConfirmAction(null)
           setNotice(
-            checkpoints === 0
-              ? 'There were no undo snapshots to remove.'
-              : `Removed ${checkpoints} undo snapshot${checkpoints === 1 ? '' : 's'}. Undo history for past changes is gone.`
+            checkpoints === 0 ? t('settings.purgedNone') : t('settings.purged', { n: checkpoints })
           )
           refreshDataSummary()
         }),
-      'Removing snapshots failed.'
+      t('settings.purgeFailed')
     )
   }
 
@@ -409,19 +440,19 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
       >
         <div className="settings-title-row">
           <h2 id="settings-title" className="settings-title">
-            Settings
+            {t('settings.title')}
           </h2>
           <button
             type="button"
             className="settings-close"
             onClick={onClose}
-            aria-label="Close settings"
+            aria-label={t('settings.close')}
           >
             ×
           </button>
         </div>
 
-        <div className="settings-tabs" role="tablist" aria-label="Settings categories">
+        <div className="settings-tabs" role="tablist" aria-label={t('settings.categories')}>
           {SETTINGS_TABS.map((tab) => (
             <button
               key={tab.id}
@@ -433,13 +464,13 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
               className="settings-tab"
               onClick={() => setActiveTab(tab.id)}
             >
-              {tab.label}
+              {t(tab.labelKey)}
             </button>
           ))}
         </div>
 
         {snapshot === null ? (
-          <p className="settings-note">Loading settings…</p>
+          <p className="settings-note">{t('settings.loading')}</p>
         ) : (
           <>
             <section
@@ -447,48 +478,50 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
               id="settings-panel-providers"
               role="tabpanel"
               aria-labelledby="settings-tab-providers"
-              aria-label="Providers"
+              aria-label={t('settings.tab.providers')}
               hidden={activeTab !== 'providers'}
             >
-              <h3 className="settings-heading">Providers</h3>
+              <h3 className="settings-heading">{t('settings.tab.providers')}</h3>
 
               <div className="settings-field">
                 <span className="settings-label" id="settings-provider-label">
-                  Provider
+                  {t('settings.provider')}
                 </span>
-                <select
-                  className="settings-select"
-                  value={snapshot.provider}
-                  aria-labelledby="settings-provider-label"
+                <SettingsPopoverSelect
+                  key={`provider-${String(open)}`}
+                  labelledBy="settings-provider-label"
                   disabled={busy}
-                  onChange={(event) => changeProvider(event.target.value)}
-                >
-                  {snapshot.providers.map((provider) => (
-                    <option key={provider} value={provider}>
-                      {PROVIDER_LABELS[provider] ?? provider}
-                    </option>
-                  ))}
-                  {snapshot.customProviders.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.name} (custom)
-                    </option>
-                  ))}
-                </select>
+                  value={snapshot.provider}
+                  options={[
+                    ...snapshot.providers.map((provider) => ({
+                      value: provider,
+                      label: PROVIDER_LABELS[provider] ?? provider
+                    })),
+                    ...snapshot.customProviders.map((profile) => ({
+                      value: profile.id,
+                      label: t('settings.customSuffix', { name: profile.name })
+                    }))
+                  ]}
+                  onChange={changeProvider}
+                />
                 <p className="settings-note">
-                  New replies in this conversation will use{' '}
-                  {providerLabel(snapshot.provider, snapshot.customProviders)}
-                  {' · '}
-                  {snapshot.model}.
+                  {t('settings.newRepliesUse', {
+                    provider: providerLabel(snapshot.provider, snapshot.customProviders),
+                    model: snapshot.model
+                  })}
                 </p>
               </div>
 
               <div className="settings-field">
                 <span className="settings-label" id="settings-key-label">
-                  API key
+                  {t('settings.apiKey')}
                 </span>
                 {snapshot.hasKey ? (
                   <div className="settings-key-row">
-                    <span className="settings-key-display" aria-label="Stored API key (masked)">
+                    <span
+                      className="settings-key-display"
+                      aria-label={t('settings.storedKeyMasked')}
+                    >
                       {maskedKey}
                     </span>
                     <button
@@ -497,7 +530,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                       onClick={removeKey}
                       disabled={busy}
                     >
-                      Remove
+                      {t('settings.remove')}
                     </button>
                   </div>
                 ) : (
@@ -507,11 +540,9 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                       className="settings-input"
                       value={keyDraft}
                       onChange={(event) => setKeyDraft(event.target.value)}
-                      placeholder={
-                        isCustomActive
-                          ? 'Paste the key (leave empty for a local server with none)'
-                          : 'Paste your API key'
-                      }
+                      placeholder={t(
+                        isCustomActive ? 'settings.pasteKeyLocal' : 'settings.pasteKey'
+                      )}
                       autoComplete="off"
                       spellCheck={false}
                       aria-labelledby="settings-key-label"
@@ -522,20 +553,18 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                       onClick={saveKey}
                       disabled={busy || keyDraft.trim() === ''}
                     >
-                      Save
+                      {t('settings.save')}
                     </button>
                   </div>
                 )}
                 {!snapshot.storageAvailable && (
-                  <p className="settings-warning">
-                    OS encryption unavailable — the key is kept for this session only.
-                  </p>
+                  <p className="settings-warning">{t('settings.noEncryption')}</p>
                 )}
               </div>
 
               <div className="settings-field">
                 <span className="settings-label" id="settings-model-label">
-                  Model
+                  {t('settings.model')}
                 </span>
                 {isCustomActive ? (
                   <input
@@ -552,19 +581,17 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                     spellCheck={false}
                   />
                 ) : (
-                  <select
-                    className="settings-select"
-                    value={snapshot.model}
-                    aria-labelledby="settings-model-label"
+                  <SettingsPopoverSelect
+                    key={`model-${String(open)}`}
+                    labelledBy="settings-model-label"
                     disabled={busy}
-                    onChange={(event) => changeModel(event.target.value)}
-                  >
-                    {snapshot.models.map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </select>
+                    value={snapshot.model}
+                    options={snapshot.models.map((model) => ({
+                      value: model,
+                      label: model
+                    }))}
+                    onChange={changeModel}
+                  />
                 )}
               </div>
 
@@ -575,17 +602,14 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                   onClick={() => testSaved(snapshot.provider)}
                   disabled={busy || testing}
                 >
-                  {testing ? 'Testing…' : 'Test connection'}
+                  {testing ? t('settings.testing') : t('settings.testConnection')}
                 </button>
               </div>
 
               <div className="settings-field">
-                <span className="settings-label">Custom providers</span>
+                <span className="settings-label">{t('settings.customProviders')}</span>
                 {snapshot.customProviders.length === 0 ? (
-                  <p className="settings-note">
-                    None yet. Add an OpenAI-compatible endpoint — a hosted gateway, or a local
-                    server such as LM Studio or Ollama.
-                  </p>
+                  <p className="settings-note">{t('settings.noCustomProviders')}</p>
                 ) : (
                   <ul className="settings-custom-list">
                     {snapshot.customProviders.map((profile) => (
@@ -596,9 +620,9 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                           <span className="settings-note">{profile.baseUrl}</span>
                           <span className="settings-note">
                             {profile.hasKey
-                              ? `Key saved (•••• ${profile.keyLast4})`
-                              : 'No key saved'}
-                            {profile.id === snapshot.provider ? ' · in use' : ''}
+                              ? t('settings.keySaved', { last4: profile.keyLast4 })
+                              : t('settings.noKeySaved')}
+                            {profile.id === snapshot.provider ? t('settings.inUse') : ''}
                           </span>
                         </div>
                         <div className="settings-custom-actions">
@@ -608,7 +632,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                             disabled={busy}
                             onClick={() => changeProvider(profile.id)}
                           >
-                            Use
+                            {t('settings.use')}
                           </button>
                           <button
                             type="button"
@@ -616,20 +640,20 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                             disabled={busy}
                             onClick={() => startEditCustom(profile)}
                           >
-                            Edit
+                            {t('settings.edit')}
                           </button>
                           <button
                             type="button"
                             className="settings-remove"
                             disabled={busy || profile.id === snapshot.provider}
-                            title={
+                            title={t(
                               profile.id === snapshot.provider
-                                ? 'Pick another provider before removing this one.'
-                                : 'Remove this provider and its stored key.'
-                            }
+                                ? 'settings.removeActiveProvider'
+                                : 'settings.removeProviderHint'
+                            )}
                             onClick={() => removeCustom(profile.id)}
                           >
-                            Remove
+                            {t('settings.remove')}
                           </button>
                         </div>
                       </li>
@@ -643,41 +667,38 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                     onClick={startAddCustom}
                     disabled={busy}
                   >
-                    Add custom provider…
+                    {t('settings.addCustomProvider')}
                   </button>
                 ) : (
                   <div className="settings-custom-form">
                     <label className="settings-label" htmlFor="custom-name">
-                      Name
+                      {t('settings.customName')}
                     </label>
                     <input
                       id="custom-name"
                       className="settings-input"
                       value={formName}
                       onChange={(event) => setFormName(event.target.value)}
-                      placeholder="e.g. Work gateway"
+                      placeholder={t('settings.customNamePlaceholder')}
                       autoComplete="off"
                       maxLength={80}
                     />
                     <label className="settings-label" htmlFor="custom-baseurl">
-                      API endpoint
+                      {t('settings.customEndpoint')}
                     </label>
                     <input
                       id="custom-baseurl"
                       className="settings-input"
                       value={formBaseUrl}
                       onChange={(event) => setFormBaseUrl(event.target.value)}
-                      placeholder="https://… or http://127.0.0.1:11434/v1"
+                      placeholder={t('settings.customEndpointPlaceholder')}
                       autoComplete="off"
                       spellCheck={false}
                       inputMode="url"
                     />
-                    <p className="settings-note">
-                      Enter the endpoint exactly as documented. Plain http:// is only allowed for
-                      local servers.
-                    </p>
+                    <p className="settings-note">{t('settings.customEndpointNote')}</p>
                     <label className="settings-label" htmlFor="custom-model">
-                      Model
+                      {t('settings.customModelLabel')}
                     </label>
                     <input
                       id="custom-model"
@@ -689,10 +710,10 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                       spellCheck={false}
                     />
                     <label className="settings-label" htmlFor="custom-key">
-                      API key{' '}
-                      {editingId === null
-                        ? '(optional — leave empty for a keyless local server)'
-                        : '(leave empty to keep the saved key)'}
+                      {t('settings.apiKey')}{' '}
+                      {t(
+                        editingId === null ? 'settings.customKeyOptional' : 'settings.customKeyKeep'
+                      )}
                     </label>
                     <input
                       id="custom-key"
@@ -700,14 +721,11 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                       className="settings-input"
                       value={formKey}
                       onChange={(event) => setFormKey(event.target.value)}
-                      placeholder="Paste the key, if this endpoint needs one"
+                      placeholder={t('settings.customKeyPlaceholder')}
                       autoComplete="off"
                       spellCheck={false}
                     />
-                    <p className="settings-note">
-                      Streaming and tool calling are required for file work. Many compatible
-                      gateways implement only part of the API — test before relying on one.
-                    </p>
+                    <p className="settings-note">{t('settings.customGatewayNote')}</p>
                     <div className="settings-custom-actions">
                       <button
                         type="button"
@@ -715,7 +733,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                         onClick={saveCustomForm}
                         disabled={busy}
                       >
-                        {editingId === null ? 'Add provider' : 'Save changes'}
+                        {t(editingId === null ? 'settings.addProvider' : 'settings.saveChanges')}
                       </button>
                       <button
                         type="button"
@@ -723,7 +741,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                         onClick={testDraft}
                         disabled={busy || testing}
                       >
-                        {testing ? 'Testing…' : 'Test'}
+                        {testing ? t('settings.testing') : t('settings.test')}
                       </button>
                       <button
                         type="button"
@@ -735,7 +753,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                         }}
                         disabled={busy}
                       >
-                        Cancel
+                        {t('settings.cancel')}
                       </button>
                     </div>
                   </div>
@@ -750,25 +768,46 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
               id="settings-panel-appearance"
               role="tabpanel"
               aria-labelledby="settings-tab-appearance"
-              aria-label="Appearance"
+              aria-label={t('settings.tab.appearance')}
               hidden={activeTab !== 'appearance'}
             >
-              <h3 className="settings-heading">Appearance</h3>
+              <h3 className="settings-heading">{t('settings.tab.appearance')}</h3>
               <div className="settings-field">
                 <span className="settings-label" id="settings-appearance-label">
-                  Theme
+                  {t('settings.theme')}
                 </span>
-                <select
-                  className="settings-select"
-                  value={snapshot.appearance}
-                  aria-labelledby="settings-appearance-label"
+                <SettingsPopoverSelect
+                  key={`theme-${String(open)}`}
+                  labelledBy="settings-appearance-label"
                   disabled={busy}
-                  onChange={(event) => changeAppearance(event.target.value as Appearance)}
-                >
-                  <option value="dark">Dark</option>
-                  <option value="light">Light</option>
-                  <option value="system">Follow system</option>
-                </select>
+                  value={snapshot.appearance}
+                  options={[
+                    { value: 'dark', label: t('settings.theme.dark') },
+                    { value: 'light', label: t('settings.theme.light') },
+                    { value: 'system', label: t('settings.theme.system') }
+                  ]}
+                  onChange={(value) => changeAppearance(value as Appearance)}
+                />
+              </div>
+              <div className="settings-field">
+                <span className="settings-label" id="settings-language-label">
+                  {t('settings.language')}
+                </span>
+                <SettingsPopoverSelect
+                  key={`language-${String(open)}`}
+                  labelledBy="settings-language-label"
+                  describedBy="settings-language-note"
+                  disabled={busy}
+                  value={snapshot.locale ?? 'en'}
+                  options={[
+                    { value: 'en', label: t('settings.language.english') },
+                    { value: 'ar', label: t('settings.language.arabic') }
+                  ]}
+                  onChange={(value) => changeLocale(value as Locale)}
+                />
+                <p className="settings-note" id="settings-language-note">
+                  {t('settings.language.note')}
+                </p>
               </div>
             </section>
 
@@ -777,58 +816,50 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
               id="settings-panel-permissions"
               role="tabpanel"
               aria-labelledby="settings-tab-permissions"
-              aria-label="Permissions"
+              aria-label={t('settings.tab.permissions')}
               hidden={activeTab !== 'permissions'}
             >
-              <h3 className="settings-heading">Permissions</h3>
+              <h3 className="settings-heading">{t('settings.tab.permissions')}</h3>
               <div className="settings-field">
                 <span className="settings-label" id="settings-risk1-label">
-                  Creating new files
+                  {t('settings.creatingFiles')}
                 </span>
-                <select
-                  className="settings-select"
-                  value={snapshot.permissionDefaults.risk1}
-                  aria-labelledby="settings-risk1-label"
+                <SettingsPopoverSelect
+                  key={`risk1-${String(open)}`}
+                  labelledBy="settings-risk1-label"
                   disabled={busy}
-                  onChange={(event) =>
-                    changePermissions(
-                      event.target.value as 'auto' | 'ask',
-                      snapshot.permissionDefaults.risk2
-                    )
+                  value={snapshot.permissionDefaults.risk1}
+                  options={[
+                    { value: 'auto', label: t('settings.runWithoutAsking') },
+                    { value: 'ask', label: t('settings.askFirst') }
+                  ]}
+                  onChange={(value) =>
+                    changePermissions(value as 'auto' | 'ask', snapshot.permissionDefaults.risk2)
                   }
-                >
-                  <option value="auto">Run without asking</option>
-                  <option value="ask">Ask first</option>
-                </select>
+                />
               </div>
               <div className="settings-field">
                 <span className="settings-label" id="settings-risk2-label">
-                  Overwriting or moving existing files
+                  {t('settings.overwriting')}
                 </span>
-                <select
-                  className="settings-select"
-                  value={snapshot.permissionDefaults.risk2}
-                  aria-labelledby="settings-risk2-label"
+                <SettingsPopoverSelect
+                  key={`risk2-${String(open)}`}
+                  labelledBy="settings-risk2-label"
                   disabled={busy}
-                  onChange={(event) =>
-                    changePermissions(
-                      snapshot.permissionDefaults.risk1,
-                      event.target.value as 'auto' | 'ask'
-                    )
+                  value={snapshot.permissionDefaults.risk2}
+                  options={[
+                    { value: 'ask', label: t('settings.askFirstRecommended') },
+                    { value: 'auto', label: t('settings.runWithoutAsking') }
+                  ]}
+                  onChange={(value) =>
+                    changePermissions(snapshot.permissionDefaults.risk1, value as 'auto' | 'ask')
                   }
-                >
-                  <option value="ask">Ask first (recommended)</option>
-                  <option value="auto">Run without asking</option>
-                </select>
+                />
                 {snapshot.permissionDefaults.risk2 === 'auto' && (
-                  <p className="settings-warning">
-                    Overwrites will not ask first. Every change can still be undone.
-                  </p>
+                  <p className="settings-warning">{t('settings.overwriteWarning')}</p>
                 )}
               </div>
-              <p className="settings-note">
-                Deleting files always asks first — that cannot be changed.
-              </p>
+              <p className="settings-note">{t('settings.deleteNote')}</p>
             </section>
 
             <section
@@ -836,14 +867,19 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
               id="settings-panel-data"
               role="tabpanel"
               aria-labelledby="settings-tab-data"
-              aria-label="Data"
+              aria-label={t('settings.tab.data')}
               hidden={activeTab !== 'data'}
             >
-              <h3 className="settings-heading">Data</h3>
+              <h3 className="settings-heading">{t('settings.tab.data')}</h3>
               <p className="settings-note">
                 {dataSummary === null
-                  ? 'Usage totals are unavailable right now.'
-                  : `${dataSummary.sessionCount} conversation${dataSummary.sessionCount === 1 ? '' : 's'} · ${dataSummary.messageCount} messages · ${dataSummary.activeCheckpointCount} undo snapshots`}
+                  ? t('settings.dataUnavailable')
+                  : t('settings.dataSummary', {
+                      sessions: dataSummary.sessionCount,
+                      sessionPlural: dataSummary.sessionCount === 1 ? '' : 's',
+                      messages: dataSummary.messageCount,
+                      snapshots: dataSummary.activeCheckpointCount
+                    })}
               </p>
               <div className="settings-field">
                 <div className="settings-custom-actions">
@@ -855,13 +891,13 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                       runGuarded(
                         () =>
                           window.agento.settings.openDataFolder().then(() => {
-                            setNotice('Opened the data folder.')
+                            setNotice(t('settings.openedDataFolder'))
                           }),
-                        'Could not open the data folder.'
+                        t('settings.openFolderFailed')
                       )
                     }}
                   >
-                    Open data folder
+                    {t('settings.openDataFolder')}
                   </button>
                   <button
                     type="button"
@@ -872,21 +908,24 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                         () =>
                           window.agento.settings.exportEval().then(({ fileName, sessionCount }) => {
                             setNotice(
-                              `Saved ${fileName} in the data folder (${sessionCount} conversation${sessionCount === 1 ? '' : 's'}, no message content or keys).`
+                              t('settings.exportedEval', {
+                                file: fileName,
+                                n: sessionCount
+                              })
                             )
                           }),
-                        'The export failed.'
+                        t('settings.exportFailed')
                       )
                     }}
                   >
-                    Export eval data
+                    {t('settings.exportEval')}
                   </button>
                 </div>
               </div>
               <div className="settings-field">
                 {confirmAction === 'clear-sessions' ? (
                   <div className="settings-confirm">
-                    <span>Clear all conversations? This cannot be undone.</span>
+                    <span>{t('settings.clearConfirm')}</span>
                     <div className="settings-custom-actions">
                       <button
                         type="button"
@@ -894,7 +933,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                         disabled={busy}
                         onClick={doClearSessions}
                       >
-                        Clear everything
+                        {t('settings.clearEverything')}
                       </button>
                       <button
                         type="button"
@@ -902,13 +941,13 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                         disabled={busy}
                         onClick={() => setConfirmAction(null)}
                       >
-                        Keep
+                        {t('settings.keep')}
                       </button>
                     </div>
                   </div>
                 ) : confirmAction === 'purge-snapshots' ? (
                   <div className="settings-confirm">
-                    <span>Remove all undo snapshots? Past changes could no longer be undone.</span>
+                    <span>{t('settings.purgeConfirm')}</span>
                     <div className="settings-custom-actions">
                       <button
                         type="button"
@@ -916,7 +955,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                         disabled={busy}
                         onClick={doPurgeSnapshots}
                       >
-                        Remove snapshots
+                        {t('settings.removeSnapshotsConfirm')}
                       </button>
                       <button
                         type="button"
@@ -924,7 +963,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                         disabled={busy}
                         onClick={() => setConfirmAction(null)}
                       >
-                        Keep
+                        {t('settings.keep')}
                       </button>
                     </div>
                   </div>
@@ -936,7 +975,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                       disabled={busy}
                       onClick={() => setConfirmAction('clear-sessions')}
                     >
-                      Clear conversations…
+                      {t('settings.clearConversations')}
                     </button>
                     <button
                       type="button"
@@ -944,7 +983,7 @@ function SettingsDialog({ open, onClose }: SettingsDialogProps): React.JSX.Eleme
                       disabled={busy}
                       onClick={() => setConfirmAction('purge-snapshots')}
                     >
-                      Remove undo snapshots…
+                      {t('settings.removeSnapshots')}
                     </button>
                   </div>
                 )}

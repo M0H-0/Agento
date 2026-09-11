@@ -1,4 +1,5 @@
 import type { AgentPlanStep, PlanStepStatus } from '../../../preload/index'
+import { useLocale } from './locale-context'
 
 // Plan panel (M3.1 + M3.6 live; docs/04 §3.3): the plan's user surface.
 // M3.6 feeds live statuses via plan/step_updated + verification/finished:
@@ -47,13 +48,14 @@ export function PlanPanel({
   verification,
   errors
 }: PlanPanelProps): React.JSX.Element {
+  const { t } = useLocale()
   const doneCount = steps.filter((s) => statusOf(statuses, s.id) === 'done').length
   return (
-    <aside className="plan-panel" aria-label="Plan">
+    <aside className="plan-panel" aria-label={t('plan.title')}>
       <h2 className="plan-panel__title">
-        Plan
-        {updated ? <span className="plan-panel__updated">updated</span> : null}
-        {readOnly ? <span className="plan-panel__readonly">read-only</span> : null}
+        {t('plan.title')}
+        {updated ? <span className="plan-panel__updated">{t('plan.updated')}</span> : null}
+        {readOnly ? <span className="plan-panel__readonly">{t('plan.readOnly')}</span> : null}
       </h2>
       <ul className="plan-panel__list">
         {steps.map((step) => {
@@ -74,7 +76,7 @@ export function PlanPanel({
                 {step.description}
                 {badge ? (
                   <span className="plan-panel__badge">
-                    {badge.verified ? 'verified ✓' : 'not verified'}
+                    {t(badge.verified ? 'plan.verified' : 'plan.notVerified')}
                   </span>
                 ) : null}
                 {error ? <span className="plan-panel__error">{error}</span> : null}
@@ -85,8 +87,8 @@ export function PlanPanel({
       </ul>
       <div className="plan-panel__footer">
         {readOnly
-          ? 'Read-only plan — nothing was changed. Switch to Act and say “go ahead” to carry it out.'
-          : `${doneCount} of ${steps.length} steps done`}
+          ? t('plan.readOnlyFooter')
+          : t('plan.progress', { done: doneCount, total: steps.length })}
       </div>
     </aside>
   )

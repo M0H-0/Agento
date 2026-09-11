@@ -1,4 +1,5 @@
 import { BaseToolCard, type BaseToolCardProps } from './BaseToolCard'
+import { useLocale } from '../locale-context'
 
 // read_file card: title is the registry's `Read <basename>`, meta is the
 // line range / truncation marker, body shows the content in a pre block.
@@ -19,12 +20,12 @@ export function ReadFileCard({
   truncated,
   ...rest
 }: ReadFileCardProps): React.JSX.Element {
-  const meta = truncated
-    ? `lines ${startLine + 1}–${endLine} of ${totalLines} (truncated)`
-    : `lines ${startLine + 1}–${endLine} of ${totalLines}`
+  const { t } = useLocale()
+  const range = { a: startLine + 1, b: endLine, c: totalLines }
+  const meta = t(truncated ? 'cards.linesOfTruncated' : 'cards.linesOf', range)
   return (
     <BaseToolCard {...rest} meta={meta} defaultOpen>
-      <pre className="tool-card__pre">{content || '(empty file)'}</pre>
+      <pre className="tool-card__pre">{content || t('cards.emptyFile')}</pre>
     </BaseToolCard>
   )
 }

@@ -1,4 +1,5 @@
 import { BaseToolCard, type BaseToolCardProps } from './BaseToolCard'
+import { useLocale } from '../locale-context'
 
 // summarize_document card: title is the registry's `Summarize <basename>`,
 // body shows the plain-language summary.
@@ -16,13 +17,10 @@ export function SummarizeDocumentCard({
   truncated,
   ...rest
 }: SummarizeDocumentCardProps): React.JSX.Element {
+  const { t } = useLocale()
   return (
-    <BaseToolCard
-      {...rest}
-      meta={truncated ? 'from the beginning of a longer document' : undefined}
-      defaultOpen
-    >
-      <pre className="tool-card__pre">{summary || '(no summary was produced)'}</pre>
+    <BaseToolCard {...rest} meta={truncated ? t('cards.docBeginning') : undefined} defaultOpen>
+      <pre className="tool-card__pre">{summary || t('cards.noSummary')}</pre>
     </BaseToolCard>
   )
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { CodeHeaderProps } from '@assistant-ui/react-markdown'
 import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useLocale } from './locale-context'
 
 // Plain-language names for fenced code blocks (docs/04 §8.3: "code — JavaScript
 // · copy"). Unlisted languages fall back to a capitalized form of the tag.
@@ -41,6 +42,7 @@ function languageLabel(language: string): string {
 // docs/04 §8.3: fenced code blocks get a plain-language header and a copy
 // button. Clipboard only — navigator.clipboard, no new bridge surface.
 function CodeBlockHeader({ language, code }: CodeHeaderProps): React.JSX.Element {
+  const { t } = useLocale()
   const [copied, setCopied] = useState(false)
   const timerRef = useRef<number | undefined>(undefined)
 
@@ -61,9 +63,11 @@ function CodeBlockHeader({ language, code }: CodeHeaderProps): React.JSX.Element
 
   return (
     <div className="code-header">
-      <span>{language ? `code — ${languageLabel(language)}` : 'code'}</span>
+      <span>
+        {language ? `${t('markdown.code')} — ${languageLabel(language)}` : t('markdown.code')}
+      </span>
       <button type="button" className="code-copy" onClick={copy}>
-        {copied ? 'copied' : 'copy'}
+        {t(copied ? 'markdown.copied' : 'markdown.copy')}
       </button>
     </div>
   )

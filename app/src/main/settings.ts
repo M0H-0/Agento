@@ -10,6 +10,7 @@ import {
   migratePrefs,
   normalizeAppearance,
   normalizeBaseUrl,
+  normalizeLocale,
   normalizePermissionDefaults,
   nowIso,
   validateCustomModel,
@@ -18,6 +19,7 @@ import {
 import type {
   Appearance,
   CustomProviderProfile,
+  Locale,
   PermissionDefaults,
   PrefsV2
 } from './settings-profiles'
@@ -57,6 +59,7 @@ export interface SettingsSnapshot {
   /** Model ids for the active provider: curated list for built-ins, [profile.model] for customs. */
   models: string[]
   appearance: Appearance
+  locale: Locale
   permissionDefaults: PermissionDefaults
   customProviders: CustomProviderSnapshot[]
 }
@@ -116,6 +119,7 @@ let prefs: PrefsV2 = {
   provider: DEFAULT_PROVIDER,
   model: PROVIDERS[DEFAULT_PROVIDER].defaultModel,
   appearance: 'dark',
+  locale: 'en',
   permissionDefaults: { ...DEFAULT_PERMISSIONS },
   customProviders: []
 }
@@ -166,6 +170,7 @@ function loadPrefs(): PrefsV2 {
     provider: DEFAULT_PROVIDER,
     model: PROVIDERS[DEFAULT_PROVIDER].defaultModel,
     appearance: 'dark',
+    locale: 'en',
     permissionDefaults: { ...DEFAULT_PERMISSIONS },
     customProviders: []
   }
@@ -275,6 +280,7 @@ export function getSettings(): SettingsSnapshot {
     providers: [...ENABLED_PROVIDERS],
     models,
     appearance: prefs.appearance,
+    locale: prefs.locale,
     permissionDefaults: { ...prefs.permissionDefaults },
     customProviders: prefs.customProviders.map(toCustomSnapshot)
   }
@@ -288,6 +294,10 @@ export function resolveActiveBaseUrl(): string | undefined {
 
 export function getAppearance(): Appearance {
   return prefs.appearance
+}
+
+export function getLocale(): Locale {
+  return prefs.locale
 }
 
 export function getPermissionDefaults(): PermissionDefaults {
@@ -396,6 +406,11 @@ export function clearApiKey(provider: string): void {
 
 export function setAppearance(appearance: string): void {
   prefs = { ...prefs, appearance: normalizeAppearance(appearance) }
+  writePrefs()
+}
+
+export function setLocale(locale: string): void {
+  prefs = { ...prefs, locale: normalizeLocale(locale) }
   writePrefs()
 }
 

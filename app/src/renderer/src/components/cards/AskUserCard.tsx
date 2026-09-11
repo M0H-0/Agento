@@ -1,5 +1,6 @@
 import { BaseToolCard, type BaseToolCardProps } from './BaseToolCard'
 import { isAwaitingAskOutput } from '../../chat/ask'
+import { useLocale } from '../locale-context'
 
 // ask_user card: a display-only record of the question and its answer. While
 // the payload carries __agentoAskUser the run is paused on this question and
@@ -36,6 +37,7 @@ export function AskUserCard({
   status,
   ...rest
 }: AskUserCardProps): React.JSX.Element {
+  const { t } = useLocale()
   const awaiting = isAwaitingAskOutput(output)
   const answered = !awaiting && isAnswered(output)
 
@@ -45,26 +47,30 @@ export function AskUserCard({
   const stopped = awaiting && status === 'incomplete'
 
   const meta = answered
-    ? 'Replied'
+    ? t('cards.replied')
     : stopped
-      ? 'Stopped before reply'
+      ? t('cards.stoppedReply')
       : awaiting
-        ? 'Awaiting your reply'
+        ? t('cards.awaitingReply')
         : ''
 
   return (
-    <BaseToolCard {...rest} title={`Ask: ${question}`} status={status} meta={meta} defaultOpen>
+    <BaseToolCard
+      {...rest}
+      title={t('cards.askPrefix', { q: question })}
+      status={status}
+      meta={meta}
+      defaultOpen
+    >
       {awaiting ? (
-        <div className="tool-card__empty">
-          Waiting for your reply — type it in the message box below.
-        </div>
+        <div className="tool-card__empty">{t('cards.waitingReplyHint')}</div>
       ) : answered ? (
         <div className="tool-card__answered">
-          <span className="tool-card__answered-label">Your reply:</span>
+          <span className="tool-card__answered-label">{t('cards.yourReply')}</span>
           <span className="tool-card__answered-value">{(output as AnsweredPayload).answer}</span>
         </div>
       ) : stopped ? (
-        <div className="tool-card__empty">The run was stopped before you could reply.</div>
+        <div className="tool-card__empty">{t('cards.stoppedBeforeReply')}</div>
       ) : (
         <div className="tool-card__empty">—</div>
       )}

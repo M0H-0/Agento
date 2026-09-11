@@ -1,4 +1,5 @@
 import { BaseToolCard, type BaseToolCardProps } from './BaseToolCard'
+import { useLocale } from '../locale-context'
 
 // edit_file card (M2.6): shows the changed region's before/after excerpts —
 // no diff component, no code view (docs/03 §5, docs/04 §3.1). The excerpts
@@ -15,14 +16,15 @@ export function EditFileCard({
   afterExcerpt,
   ...rest
 }: EditFileCardProps): React.JSX.Element {
+  const { t } = useLocale()
   return (
     <BaseToolCard {...rest} defaultOpen>
       <div className="tool-card__excerpt">
-        <span className="tool-card__excerpt-label">Before</span>
+        <span className="tool-card__excerpt-label">{t('cards.before')}</span>
         <pre className="tool-card__pre">{beforeExcerpt}</pre>
       </div>
       <div className="tool-card__excerpt">
-        <span className="tool-card__excerpt-label">After</span>
+        <span className="tool-card__excerpt-label">{t('cards.after')}</span>
         <pre className="tool-card__pre">{afterExcerpt}</pre>
       </div>
     </BaseToolCard>

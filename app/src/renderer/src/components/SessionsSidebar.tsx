@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SessionSummary } from '../chat/transport'
+import { relativeTime } from '../chat/locale'
+import type { StringKey } from '../chat/locale'
+import { useLocale } from './locale-context'
 import SidecarStatusDot from './SidecarStatusDot'
 import WorkspacePicker from './WorkspacePicker'
 
@@ -42,28 +45,12 @@ function writeBadgeDismissed(provider: string): void {
   }
 }
 
-// Relative timestamps for the session list — small local helper, no
-// date library (STACK.md is the law); ISO-8601 strings from main.
-function formatRelativeTime(iso: string): string {
-  const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return ''
-  const seconds = Math.round((Date.now() - then) / 1000)
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d ago`
-  return new Date(iso).toLocaleDateString()
-}
-
 // The folder tag for each chat (per-session workspace_path, docs/03 §8) —
 // folder name only, so consecutive chats in the same workspace no longer
 // repeat the full path down the rail. The full path stays in the row's
 // tooltip. '' placeholder rows (created before any pick) say so honestly.
-function workspaceFolderName(path: string): string {
-  if (!path) return 'No folder'
+function workspaceFolderName(path: string, noFolder: string): string {
+  if (!path) return noFolder
   const segments = path.split(/[\\/]/).filter(Boolean)
   return segments.length > 0 ? segments[segments.length - 1] : path
 }
@@ -71,27 +58,35 @@ function workspaceFolderName(path: string): string {
 // Date groups for the session list (docs/04 §2) — local calendar days, no
 // date library. Today / Yesterday / Earlier this week (Monday–Sunday) /
 // Older. Invalid or future timestamps fall back to Today so a row never
-// vanishes into the wrong bucket.
-type DateGroupKey = 'Today' | 'Yesterday' | 'Earlier this week' | 'Older'
+// vanishes into the wrong bucket. Keys are locale-free; labels come from
+// sidebar.today/yesterday/earlierWeek/older at render time.
+type DateGroupKey = 'today' | 'yesterday' | 'earlierWeek' | 'older'
+
+const DATE_GROUP_LABEL_KEYS: Record<DateGroupKey, StringKey> = {
+  today: 'sidebar.today',
+  yesterday: 'sidebar.yesterday',
+  earlierWeek: 'sidebar.earlierWeek',
+  older: 'sidebar.older'
+}
 
 function getDateGroup(iso: string): DateGroupKey {
   const then = new Date(iso)
-  if (Number.isNaN(then.getTime())) return 'Today'
+  if (Number.isNaN(then.getTime())) return 'today'
   const now = new Date()
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const startOfThen = new Date(then.getFullYear(), then.getMonth(), then.getDate())
   const dayMs = 24 * 60 * 60 * 1000
   const diffDays = Math.round((startOfToday.getTime() - startOfThen.getTime()) / dayMs)
-  if (diffDays <= 0) return 'Today'
-  if (diffDays === 1) return 'Yesterday'
+  if (diffDays <= 0) return 'today'
+  if (diffDays === 1) return 'yesterday'
   // Monday-start week containing today; days since Monday (0 = Monday).
   const dayOfWeek = (startOfToday.getDay() + 6) % 7
   const startOfWeek = new Date(startOfToday.getTime() - dayOfWeek * dayMs)
-  if (startOfThen.getTime() >= startOfWeek.getTime()) return 'Earlier this week'
-  return 'Older'
+  if (startOfThen.getTime() >= startOfWeek.getTime()) return 'earlierWeek'
+  return 'older'
 }
 
-const DATE_GROUP_ORDER: DateGroupKey[] = ['Today', 'Yesterday', 'Earlier this week', 'Older']
+const DATE_GROUP_ORDER: DateGroupKey[] = ['today', 'yesterday', 'earlierWeek', 'older']
 
 // Sort toggle state (view preference — lives in localStorage, never IPC or
 // Settings). Default Recency; the last pick is remembered across reloads.
@@ -130,8 +125,8 @@ function folderKey(path: string): string {
 // share a leaf (sibling checkouts both ending in `btw`): those get the last
 // two segments so they stay tellable apart. Full path is always in the
 // header tooltip regardless.
-function folderDisplayName(path: string, colliding: boolean): string {
-  if (!path) return 'No folder'
+function folderDisplayName(path: string, colliding: boolean, noFolder: string): string {
+  if (!path) return noFolder
   const segments = path.split(/[\\/]/).filter(Boolean)
   if (segments.length === 0) return path
   const leaf = segments[segments.length - 1]
@@ -153,6 +148,7 @@ function SessionRename({
   onCommit: (title: string) => void
   onCancel: () => void
 }): React.JSX.Element {
+  const { t } = useLocale()
   const [draft, setDraft] = useState(session.title)
   const inputRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -185,9 +181,9 @@ function SessionRename({
         onBlur={commit}
         disabled={busy}
         maxLength={120}
-        aria-label="Chat name"
+        aria-label={t('sidebar.chatName')}
       />
-      <span className="session-rename-hint">Enter to rename · Esc to cancel</span>
+      <span className="session-rename-hint">{t('sidebar.renameHint')}</span>
     </div>
   )
 }
@@ -213,6 +209,8 @@ function SessionsSidebar({
   settingsOpen,
   onWorkspaceChanged
 }: SessionsSidebarProps): React.JSX.Element {
+  const { locale, t } = useLocale()
+  const noFolderLabel = t('sidebar.noFolder')
   // Per-row menu state. Only one row is ever in a special state; ids are the
   // session's, which also means closing on re-render is never required.
   const [menuFor, setMenuFor] = useState<string | null>(null)
@@ -336,7 +334,7 @@ function SessionsSidebar({
       setRenamingId(null)
     } catch (error) {
       console.error('session:rename failed:', error)
-      setMenuError(error instanceof Error ? error.message : 'Could not rename the chat.')
+      setMenuError(error instanceof Error ? error.message : t('sidebar.renameFailed'))
     } finally {
       setBusyId(null)
     }
@@ -350,7 +348,7 @@ function SessionsSidebar({
       closeMenus()
     } catch (error) {
       console.error('session:delete failed:', error)
-      setMenuError(error instanceof Error ? error.message : 'Could not delete the chat.')
+      setMenuError(error instanceof Error ? error.message : t('sidebar.deleteFailed'))
     } finally {
       setBusyId(null)
     }
@@ -379,7 +377,7 @@ function SessionsSidebar({
       }
       const leafCounts = new Map<string, number>()
       for (const group of seen.values()) {
-        const leaf = workspaceFolderName(group.path).toLowerCase()
+        const leaf = workspaceFolderName(group.path, noFolderLabel).toLowerCase()
         leafCounts.set(leaf, (leafCounts.get(leaf) ?? 0) + 1)
       }
       const groups = [...seen.entries()].map(([key, group]) => ({
@@ -387,7 +385,8 @@ function SessionsSidebar({
         path: group.path,
         label: folderDisplayName(
           group.path,
-          (leafCounts.get(workspaceFolderName(group.path).toLowerCase()) ?? 0) > 1
+          (leafCounts.get(workspaceFolderName(group.path, noFolderLabel).toLowerCase()) ?? 0) > 1,
+          noFolderLabel
         ),
         items: group.items
       }))
@@ -421,7 +420,9 @@ function SessionsSidebar({
               session.workspacePath ? `${session.title}\n${session.workspacePath}` : session.title
             }
           >
-            <span className="session-item-title">{session.title}</span>
+            <span className="session-item-title">
+              <bdi>{session.title}</bdi>
+            </span>
             <span className="session-item-meta">
               {showFolderTag ? (
                 <>
@@ -429,20 +430,20 @@ function SessionsSidebar({
                     className="session-item-folder"
                     title={session.workspacePath ? session.workspacePath : undefined}
                   >
-                    {workspaceFolderName(session.workspacePath)}
+                    {workspaceFolderName(session.workspacePath, noFolderLabel)}
                   </span>
                   <span className="session-item-dot" aria-hidden="true">
                     ·
                   </span>
                 </>
               ) : null}
-              <span className="session-item-time">{formatRelativeTime(session.updatedAt)}</span>
+              <span className="session-item-time">{relativeTime(locale, session.updatedAt)}</span>
             </span>
           </button>
           <button
             type="button"
             className="session-menu-btn"
-            aria-label={`Chat options for ${session.title}`}
+            aria-label={t('sidebar.chatOptions', { title: session.title })}
             aria-haspopup="menu"
             aria-expanded={menuFor === session.id}
             onClick={() => {
@@ -460,16 +461,14 @@ function SessionsSidebar({
             <div
               className="session-menu"
               role="menu"
-              aria-label={`Chat options for ${session.title}`}
+              aria-label={t('sidebar.chatOptions', { title: session.title })}
               onBlur={(event) => {
                 if (!event.currentTarget.contains(event.relatedTarget)) closeMenus()
               }}
             >
               {deleteConfirmFor === session.id ? (
                 <>
-                  <p className="session-menu-confirm">
-                    Delete this chat? Its undo history goes too.
-                  </p>
+                  <p className="session-menu-confirm">{t('sidebar.deleteConfirm')}</p>
                   {menuError ? <p className="session-menu-error">{menuError}</p> : null}
                   <div className="session-menu-actions">
                     <button
@@ -479,7 +478,7 @@ function SessionsSidebar({
                       onClick={() => void handleDeleteConfirm(session)}
                       disabled={busyId !== null}
                     >
-                      Delete
+                      {t('sidebar.delete')}
                     </button>
                     <button
                       type="button"
@@ -487,7 +486,7 @@ function SessionsSidebar({
                       onClick={closeMenus}
                       disabled={busyId !== null}
                     >
-                      Keep
+                      {t('sidebar.keep')}
                     </button>
                   </div>
                 </>
@@ -502,7 +501,7 @@ function SessionsSidebar({
                       closeMenus()
                     }}
                   >
-                    Rename
+                    {t('sidebar.rename')}
                   </button>
                   <button
                     type="button"
@@ -512,7 +511,7 @@ function SessionsSidebar({
                       setMenuError(null)
                     }}
                   >
-                    Delete
+                    {t('sidebar.delete')}
                   </button>
                 </>
               )}
@@ -533,20 +532,20 @@ function SessionsSidebar({
   }
 
   return (
-    <nav className="sessions-sidebar" aria-label="Sessions">
+    <nav className="sessions-sidebar" aria-label={t('sidebar.sessions')}>
       {/* M2.2: the workspace chip + recents live at the top of the rail — they
           are app-level state, not per-session. onChanged keeps Folder mode's
           first-section pin + auto-expand following a switch. */}
       <WorkspacePicker onChanged={handleWorkspaceChanged} />
       <button type="button" className="sessions-overview-btn" onClick={onOpenOverview}>
-        Workspace overview
+        {t('sidebar.workspaceOverview')}
       </button>
       <button type="button" className="sessions-new-chat" onClick={onNewChat}>
-        + New chat
+        {t('sidebar.newChat')}
       </button>
       <div className="sessions-header-row">
-        <h2 className="sessions-section-label">Conversations</h2>
-        <div className="sort-toggle" role="group" aria-label="Sort conversations">
+        <h2 className="sessions-section-label">{t('sidebar.conversations')}</h2>
+        <div className="sort-toggle" role="group" aria-label={t('sidebar.sortBy')}>
           <button
             type="button"
             className={
@@ -555,7 +554,7 @@ function SessionsSidebar({
             aria-pressed={sortMode === 'recency'}
             onClick={() => setSortMode('recency')}
           >
-            Recency
+            {t('sidebar.recency')}
           </button>
           <button
             type="button"
@@ -565,7 +564,7 @@ function SessionsSidebar({
             aria-pressed={sortMode === 'folder'}
             onClick={() => setSortMode('folder')}
           >
-            Folder
+            {t('sidebar.folder')}
           </button>
         </div>
       </div>
@@ -574,14 +573,17 @@ function SessionsSidebar({
           ? groupedSessions.map((group) => {
               const key = `date:${group.key}`
               const collapsed = collapsedKeys.has(key)
+              const label = t(DATE_GROUP_LABEL_KEYS[group.key])
               return (
-                <section key={group.key} aria-label={group.key} className="sessions-group">
+                <section key={group.key} aria-label={label} className="sessions-group">
                   <h3 className="sessions-date-header sessions-folder-header">
                     <button
                       type="button"
                       className="sessions-section-toggle"
                       aria-expanded={!collapsed}
-                      aria-label={`${collapsed ? 'Expand' : 'Collapse'} chats from ${group.key}`}
+                      aria-label={t(collapsed ? 'sidebar.expandChats' : 'sidebar.collapseChats', {
+                        name: label
+                      })}
                       onClick={() => toggleSectionCollapsed(key)}
                     >
                       <span
@@ -595,7 +597,7 @@ function SessionsSidebar({
                         ▸
                       </span>
                       <span className="sessions-section-text">
-                        {group.key} · {group.items.length}
+                        {label} · {group.items.length}
                       </span>
                     </button>
                   </h3>
@@ -616,7 +618,10 @@ function SessionsSidebar({
                       type="button"
                       className="sessions-section-toggle"
                       aria-expanded={!collapsed}
-                      aria-label={`${collapsed ? 'Expand' : 'Collapse'} chats in ${group.label}`}
+                      aria-label={t(
+                        collapsed ? 'sidebar.expandChatsIn' : 'sidebar.collapseChatsIn',
+                        { name: group.label }
+                      )}
                       title={group.path ? group.path : undefined}
                       onClick={() => toggleSectionCollapsed(group.key)}
                     >
@@ -652,16 +657,10 @@ function SessionsSidebar({
             className="sessions-footer-settings"
             onClick={handleOpenSettings}
             aria-haspopup="dialog"
-            aria-label={
-              showSettingsBadge ? 'Settings — no API key yet, open Settings to add one' : 'Settings'
-            }
-            title={
-              showSettingsBadge
-                ? 'No API key for this provider — open Settings → Providers to add one.'
-                : 'Settings'
-            }
+            aria-label={showSettingsBadge ? t('sidebar.noKeyButton') : t('sidebar.settings')}
+            title={showSettingsBadge ? t('sidebar.noKeyTooltip') : t('sidebar.settings')}
           >
-            Settings
+            {t('sidebar.settings')}
           </button>
           {showSettingsBadge ? <span className="sessions-settings-dot" aria-hidden="true" /> : null}
         </span>

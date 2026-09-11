@@ -1892,6 +1892,78 @@
   border-color: var(--ring);
 }
 
+/* Settings popover selects (custom listboxes replacing native <select>s: the
+   dialog is a scroll container and native popups clip against it — these
+   menus open DOWNWARD in-flow and only flip upward (see
+   .settings-pop-menu--above) when they would overflow the app window bottom.
+   Dialog-internal overflow just scrolls into view, so the tab bar stays
+   uncovered. Logical text-align needs no RTL override.
+   Long lists (models) scroll inside the menu. */
+.settings-pop-anchor {
+  position: relative;
+}
+
+.settings-pop-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  cursor: pointer;
+}
+
+.settings-pop-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.settings-pop-menu {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  max-height: 12rem;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.settings-pop-menu--above {
+  top: auto;
+  bottom: calc(100% + 0.25rem);
+}
+
+.settings-pop-menu button[role='option'] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4rem 0.55rem;
+  border: none;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.875rem;
+  text-align: start;
+  cursor: pointer;
+}
+
+.settings-pop-menu button[role='option']:hover {
+  background: var(--secondary);
+}
+
+.settings-pop-menu button[role='option']:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .settings-key-row {
   display: flex;
   gap: 0.5rem;
@@ -2934,4 +3006,121 @@
 
 .workspace-overview__actions .sessions-new-chat {
   flex: 0 0 auto;
+}
+
+/* RTL (Arabic locale): <html dir> flips flex rows automatically, so only
+   physical properties need overrides — start-aligned text, absolute
+   left/right pins, rail borders, list indents, and directional glyphs.
+   One block at the end (same tokens, no new hues), so LTR is untouched. */
+[dir='rtl'] .sessions-sidebar {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+
+[dir='rtl'] .right-rail {
+  border-left: none;
+  border-right: 1px solid var(--border);
+}
+
+[dir='rtl'] .workspace-chip,
+[dir='rtl'] .workspace-menu-pick,
+[dir='rtl'] .sessions-new-chat,
+[dir='rtl'] .sessions-section-toggle,
+[dir='rtl'] .session-item,
+[dir='rtl'] .session-menu button[role='menuitem'],
+[dir='rtl'] .model-menu button[role='menuitemradio'],
+[dir='rtl'] .attach-item,
+[dir='rtl'] .slash-item,
+[dir='rtl'] .tool-card__header,
+[dir='rtl'] .semantic-card__result,
+[dir='rtl'] .sessions-overview-btn,
+[dir='rtl'] .workspace-overview__recent-item,
+[dir='rtl'] .message-markdown th,
+[dir='rtl'] .message-markdown td {
+  text-align: right;
+}
+
+[dir='rtl'] .session-menu-btn {
+  right: auto;
+  left: 0.3rem;
+}
+
+[dir='rtl'] .session-row .session-item {
+  padding-right: 0.5rem;
+  padding-left: 1.6rem;
+}
+
+[dir='rtl'] .session-menu {
+  right: auto;
+  left: 0.3rem;
+}
+
+[dir='rtl'] .model-chip-anchor {
+  right: auto;
+  left: 0.85rem;
+}
+
+[dir='rtl'] .model-menu {
+  right: auto;
+  left: 0;
+}
+
+[dir='rtl'] .attach-popover {
+  left: auto;
+  right: 0;
+}
+
+[dir='rtl'] .slash-popover {
+  left: auto;
+  right: 0.5rem;
+}
+
+[dir='rtl'] .scroll-to-bottom {
+  right: auto;
+  left: 1.5rem;
+}
+
+[dir='rtl'] .sessions-settings-dot {
+  right: auto;
+  left: 1px;
+}
+
+[dir='rtl'] .message-markdown ul,
+[dir='rtl'] .message-markdown ol {
+  padding-left: 0;
+  padding-right: 1.4rem;
+}
+
+[dir='rtl'] .message-markdown blockquote {
+  border-left: none;
+  border-right: 2px solid var(--border);
+  padding-left: 0;
+  padding-right: 0.8rem;
+}
+
+[dir='rtl'] .plan-panel__step--risk .plan-panel__step-text {
+  border-left: none;
+  border-right: 2px solid var(--destructive);
+  padding-left: 0;
+  padding-right: 0.35rem;
+}
+
+[dir='rtl'] .changes-panel__count,
+[dir='rtl'] .plan-panel__badge {
+  margin-left: 0;
+  margin-right: 0.35rem;
+}
+
+[dir='rtl'] .plan-panel__start {
+  margin-left: 0;
+  margin-right: auto;
+}
+
+/* Directional glyphs: collapsed ▸ chevrons and the → open arrow mirror.
+   Expanded states (▾, or ▸ rotated 90° to point down) are direction-neutral
+   and keep their base transform. */
+[dir='rtl'] .sessions-section-chevron--collapsed,
+[dir='rtl'] .tool-card__chevron,
+[dir='rtl'] .workspace-overview__open {
+  transform: scaleX(-1);
 }

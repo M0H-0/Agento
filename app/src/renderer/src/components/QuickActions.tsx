@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useThreadRuntime } from '@assistant-ui/react'
 import { genericPrompts, suggestPromptsFromScan } from '../chat/suggestions'
+import { useLocale } from './locale-context'
 
 // Line icons for the chips (no icon dep — STACK.md): 24-grid, stroke follows
 // the chip text color, same 2px round treatment as the composer's paperclip.
@@ -72,6 +73,7 @@ function QuickActions({
   playEntrance?: boolean
 }): React.JSX.Element | null {
   const runtime = useThreadRuntime({ optional: true })
+  const { t } = useLocale()
   const [prompts, setPrompts] = useState<string[]>(() => genericPrompts())
   // Latched at mount like the welcome (see App.tsx): the async scan
   // re-render must not restart the entrance, and later new chats mount fresh
@@ -107,7 +109,7 @@ function QuickActions({
     <div
       className={animate ? 'quick-actions home-enter' : 'quick-actions'}
       role="list"
-      aria-label="Example prompts"
+      aria-label={t('quick.examples')}
     >
       {prompts.map((prompt) => (
         <button

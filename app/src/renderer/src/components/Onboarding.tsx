@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useLocale } from './locale-context'
 
 // Onboarding (MVP_PLAN.md; the M6.1 cut): ONE static screen — welcome, pick
 // a workspace folder, enter an API key. The gate in App.tsx shows this
@@ -31,6 +32,7 @@ function folderName(path: string): string {
 }
 
 export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
+  const { t } = useLocale()
   const [workspacePath, setWorkspacePath] = useState<string | null>(null)
   const [settings, setSettings] = useState<OnboardingSettings | null>(null)
   const [keyDraft, setKeyDraft] = useState('')
@@ -86,7 +88,7 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
         setError(null)
       })
       .catch((pickError: unknown) =>
-        setError(pickError instanceof Error ? pickError.message : 'Picking the folder failed.')
+        setError(pickError instanceof Error ? pickError.message : t('onboarding.pickFailed'))
       )
       .finally(() => setBusy(false))
   }
@@ -99,7 +101,7 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
       .setProvider({ provider })
       .then(refreshSettings)
       .then(() => setError(null))
-      .catch(() => setError('Changing the provider failed.'))
+      .catch(() => setError(t('onboarding.providerFailed')))
       .finally(() => setBusy(false))
   }
 
@@ -111,7 +113,7 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
       .then(() => setKeyDraft(''))
       .then(refreshSettings)
       .then(() => setError(null))
-      .catch(() => setError('Saving the key failed.'))
+      .catch(() => setError(t('onboarding.saveFailed')))
       .finally(() => setBusy(false))
   }
 
@@ -122,7 +124,7 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
       .clearApiKey({ provider: settings.provider })
       .then(refreshSettings)
       .then(() => setError(null))
-      .catch(() => setError('Removing the key failed.'))
+      .catch(() => setError(t('onboarding.removeFailed')))
       .finally(() => setBusy(false))
   }
 
@@ -131,22 +133,16 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
   return (
     <div className="onboarding-overlay">
       <div className="onboarding-card">
-        <h1 className="onboarding-title">Welcome to Agento</h1>
-        <p className="onboarding-lede">
-          A careful assistant for your files, documents, and the web. It shows you a plan before it
-          changes anything — and every change can be undone. Two quick things to set up first.
-        </p>
+        <h1 className="onboarding-title">{t('onboarding.welcome')}</h1>
+        <p className="onboarding-lede">{t('onboarding.lede')}</p>
 
-        <section className="settings-section" aria-label="Workspace folder">
-          <h3 className="settings-heading">1 · Your workspace folder</h3>
-          <p className="settings-note">
-            Agento only reads and changes files inside the folder you pick — never anywhere else on
-            your computer.
-          </p>
+        <section className="settings-section" aria-label={t('onboarding.workspaceSection')}>
+          <h3 className="settings-heading">{t('onboarding.step1')}</h3>
+          <p className="settings-note">{t('onboarding.step1Note')}</p>
           <div className="settings-field">
             {workspacePath ? (
               <div className="settings-key-row">
-                <span className="settings-key-display" aria-label="Chosen workspace folder">
+                <span className="settings-key-display" aria-label={t('onboarding.chosenFolder')}>
                   {folderName(workspacePath)}
                 </span>
                 <button
@@ -155,7 +151,7 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
                   onClick={pickWorkspace}
                   disabled={busy}
                 >
-                  Change
+                  {t('onboarding.change')}
                 </button>
               </div>
             ) : (
@@ -165,17 +161,17 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
                 onClick={pickWorkspace}
                 disabled={busy}
               >
-                Pick a folder…
+                {t('onboarding.pickFolder')}
               </button>
             )}
           </div>
         </section>
 
-        <section className="settings-section" aria-label="AI provider">
-          <h3 className="settings-heading">2 · Your AI provider</h3>
+        <section className="settings-section" aria-label={t('onboarding.providerSection')}>
+          <h3 className="settings-heading">{t('onboarding.step2')}</h3>
           <div className="settings-field">
             <span className="settings-label" id="onboarding-provider-label">
-              Provider
+              {t('onboarding.provider')}
             </span>
             <select
               className="settings-select"
@@ -191,19 +187,19 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
               ))}
               {(settings?.customProviders ?? []).map((profile) => (
                 <option key={profile.id} value={profile.id}>
-                  {profile.name} (custom)
+                  {t('onboarding.customSuffix', { name: profile.name })}
                 </option>
               ))}
             </select>
           </div>
           <div className="settings-field">
             <span className="settings-label" id="onboarding-key-label">
-              API key
+              {t('onboarding.apiKey')}
             </span>
             {settings?.hasKey ? (
               <div className="settings-key-row">
-                <span className="settings-key-display" aria-label="Stored API key (masked)">
-                  ✓ saved
+                <span className="settings-key-display" aria-label={t('onboarding.storedKeyMasked')}>
+                  {t('onboarding.saved')}
                 </span>
                 <button
                   type="button"
@@ -211,7 +207,7 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
                   onClick={removeKey}
                   disabled={busy}
                 >
-                  Remove
+                  {t('onboarding.remove')}
                 </button>
               </div>
             ) : (
@@ -224,7 +220,7 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' && keyDraft.trim() !== '') saveKey()
                   }}
-                  placeholder="Paste your API key"
+                  placeholder={t('onboarding.pasteKey')}
                   autoComplete="off"
                   spellCheck={false}
                   aria-labelledby="onboarding-key-label"
@@ -235,14 +231,12 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
                   onClick={saveKey}
                   disabled={busy || keyDraft.trim() === ''}
                 >
-                  Save
+                  {t('onboarding.save')}
                 </button>
               </div>
             )}
             {settings !== null && !settings.storageAvailable && (
-              <p className="settings-warning">
-                OS encryption unavailable — the key is kept for this session only.
-              </p>
+              <p className="settings-warning">{t('onboarding.noEncryption')}</p>
             )}
           </div>
         </section>
@@ -259,7 +253,7 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
           onClick={onDone}
           disabled={busy || !ready}
         >
-          Get started
+          {t('onboarding.getStarted')}
         </button>
       </div>
     </div>

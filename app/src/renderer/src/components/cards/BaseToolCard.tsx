@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { Loader } from '@/components/ui/loader'
 import { cn } from '@/lib/utils'
+import { useLocale } from '../locale-context'
+import type { StringKey } from '../../chat/locale'
 
 // Shared chrome for tool cards (docs/04 §3.1): chevron + plain-language title
 // from the registry's describe() + status glyph (spinner / check / cross) +
@@ -70,11 +72,11 @@ function statusGlyph(status: ToolCardStatus): React.JSX.Element {
   )
 }
 
-function statusLabel(status: ToolCardStatus): string {
-  if (status === 'running') return 'Running…'
-  if (status === 'complete') return 'Done'
-  if (status === 'incomplete') return 'Failed'
-  return 'Disabled'
+const STATUS_KEYS: Record<ToolCardStatus, StringKey> = {
+  running: 'cards.running',
+  complete: 'cards.done',
+  incomplete: 'cards.failed',
+  disabled: 'cards.disabled'
 }
 
 export function BaseToolCard({
@@ -86,7 +88,8 @@ export function BaseToolCard({
   toolCallId
 }: BaseToolCardProps): React.JSX.Element {
   const [open, setOpen] = useState(defaultOpen)
-  const ariaLabel = `${title} — ${statusLabel(status)}`
+  const { t } = useLocale()
+  const ariaLabel = t('cards.titleStatus', { title, status: t(STATUS_KEYS[status]) })
   return (
     <div className="tool-card" data-tool-call-id={toolCallId} aria-label={ariaLabel}>
       <button

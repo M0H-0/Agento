@@ -15,6 +15,7 @@ import {
   resolveProviderKey,
   setApiKey,
   setAppearance,
+  setLocale,
   setModel,
   setPermissionDefaults,
   setProvider,
@@ -50,6 +51,10 @@ export interface ClearApiKeyPayload {
 
 export interface SetAppearancePayload {
   appearance: string
+}
+
+export interface SetLocalePayload {
+  locale: string
 }
 
 export interface SetPermissionDefaultsPayload {
@@ -125,6 +130,10 @@ export function registerSettingsIpc(): void {
       return getSettings()
     }
   )
+  ipcMain.handle('settings:set-locale', (_event: IpcMainInvokeEvent, payload: SetLocalePayload) => {
+    setLocale(requireString(payload?.locale, 'Language'))
+    return getSettings()
+  })
   ipcMain.handle(
     'settings:set-permission-defaults',
     (_event: IpcMainInvokeEvent, payload: SetPermissionDefaultsPayload) => {

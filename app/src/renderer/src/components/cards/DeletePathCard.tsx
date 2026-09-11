@@ -1,4 +1,5 @@
 import { BaseToolCard, type BaseToolCardProps } from './BaseToolCard'
+import { useLocale } from '../locale-context'
 
 // delete_path card (M2.7): plain-language title, deleted-name meta line.
 // The snapshot holds the full content, so the body says the delete is
@@ -17,11 +18,10 @@ export interface DeletePathCardProps extends Omit<
 }
 
 export function DeletePathCard({ path, ...rest }: DeletePathCardProps): React.JSX.Element {
+  const { t } = useLocale()
   return (
-    <BaseToolCard {...rest} meta={`Deleted ${fileName(path)}`}>
-      <div className="tool-card__empty">
-        Its content is kept in the checkpoint — undo restores it.
-      </div>
+    <BaseToolCard {...rest} meta={t('cards.deletedName', { name: fileName(path) })}>
+      <div className="tool-card__empty">{t('cards.deleteKeptNote')}</div>
     </BaseToolCard>
   )
 }

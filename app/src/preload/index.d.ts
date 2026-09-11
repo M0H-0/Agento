@@ -320,6 +320,8 @@ export interface AgentoAgent {
 
 export type Appearance = 'dark' | 'light' | 'system'
 
+export type Locale = 'en' | 'ar'
+
 export interface CustomProviderSnapshot {
   id: string
   name: string
@@ -352,6 +354,7 @@ export interface SettingsSnapshot {
   /** Model ids for the active provider (curated list, or [profile.model] for customs). */
   models: string[]
   appearance: Appearance
+  locale: Locale
   permissionDefaults: PermissionDefaults
   customProviders: CustomProviderSnapshot[]
 }
@@ -375,6 +378,10 @@ export interface ClearApiKeyPayload {
 
 export interface SetAppearancePayload {
   appearance: string
+}
+
+export interface SetLocalePayload {
+  locale: string
 }
 
 export interface SetPermissionDefaultsPayload {
@@ -435,6 +442,8 @@ export interface AgentoSettings {
   clearApiKey: (payload: ClearApiKeyPayload) => Promise<void>
   /** Invoke 'settings:set-appearance' — dark | light | system. */
   setAppearance: (payload: SetAppearancePayload) => Promise<SettingsSnapshot>
+  /** Invoke 'settings:set-locale' — en | ar. */
+  setLocale: (payload: SetLocalePayload) => Promise<SettingsSnapshot>
   /** Invoke 'settings:set-permission-defaults' — risk 3 stays always-ask (docs/06 §2). */
   setPermissionDefaults: (payload: SetPermissionDefaultsPayload) => Promise<PermissionDefaults>
   /** Invoke 'settings:create-custom-provider'. */

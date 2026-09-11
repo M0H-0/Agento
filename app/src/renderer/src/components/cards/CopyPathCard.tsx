@@ -1,4 +1,5 @@
 import { BaseToolCard, type BaseToolCardProps } from './BaseToolCard'
+import { useLocale } from '../locale-context'
 
 // copy_path card (M2.7): plain-language title, source → destination meta line.
 // Absolute result paths are reduced to file names (MovePathCard doctrine).
@@ -22,14 +23,14 @@ export function CopyPathCard({
   size,
   ...rest
 }: CopyPathCardProps): React.JSX.Element {
-  const meta = overwritten
-    ? `Copied ${fileName(from)} to ${fileName(to)} · replaced existing`
-    : `Copied ${fileName(from)} to ${fileName(to)}`
+  const { t } = useLocale()
+  const names = { from: fileName(from), to: fileName(to) }
+  const meta = t(overwritten ? 'cards.copiedReplaced' : 'cards.copiedTo', names)
   return (
     <BaseToolCard {...rest} meta={meta}>
       <div className="tool-card__empty">
-        {size > 0 ? `${size} B copied.` : 'Copy finished.'}{' '}
-        {overwritten ? 'The old destination content is kept in the checkpoint.' : ''}
+        {size > 0 ? t('cards.copiedBytes', { n: size }) : t('cards.copyDone')}{' '}
+        {overwritten ? t('cards.copyKeptNote') : ''}
       </div>
     </BaseToolCard>
   )

@@ -1,4 +1,5 @@
 import { BaseToolCard, type BaseToolCardProps } from './BaseToolCard'
+import { useLocale } from '../locale-context'
 
 // read_document card: title is the registry's `Read document <basename>`,
 // meta notes truncation, body shows the extracted plain text.
@@ -16,9 +17,10 @@ export function ReadDocumentCard({
   truncated,
   ...rest
 }: ReadDocumentCardProps): React.JSX.Element {
+  const { t } = useLocale()
   return (
-    <BaseToolCard {...rest} meta={truncated ? 'truncated preview' : undefined} defaultOpen>
-      <pre className="tool-card__pre">{text || '(no text found in this document)'}</pre>
+    <BaseToolCard {...rest} meta={truncated ? t('cards.truncatedPreview') : undefined} defaultOpen>
+      <pre className="tool-card__pre">{text || t('cards.noDocText')}</pre>
     </BaseToolCard>
   )
 }

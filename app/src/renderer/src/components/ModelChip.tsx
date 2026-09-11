@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CustomProviderSnapshot, SettingsSnapshot } from '../../../preload/index'
+import { useLocale } from './locale-context'
 
 // Provider display labels (mirror of SettingsDialog's PROVIDER_LABELS —
 // built-in ids only; custom profiles carry their own name).
@@ -19,6 +20,7 @@ function providerLabel(id: string, customs: CustomProviderSnapshot[]): string {
 // Providers tab uses (settings:set-model / settings:set-provider); main owns
 // validation and the model-resets-to-default rule on provider switches.
 function ModelChip(): React.JSX.Element {
+  const { t } = useLocale()
   const [snapshot, setSnapshot] = useState<SettingsSnapshot | null>(null)
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -57,7 +59,7 @@ function ModelChip(): React.JSX.Element {
       else await window.agento.settings.setProvider({ provider: value })
       setOpen(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not switch.')
+      setError(err instanceof Error ? err.message : t('model.switchFailed'))
     } finally {
       setBusy(false)
       load()
@@ -66,7 +68,7 @@ function ModelChip(): React.JSX.Element {
 
   const label = snapshot
     ? `${providerLabel(snapshot.provider, snapshot.customProviders)} · ${snapshot.model}`
-    : 'Model'
+    : t('model.model')
 
   return (
     <div className="model-chip-anchor" ref={containerRef}>
@@ -84,14 +86,14 @@ function ModelChip(): React.JSX.Element {
         disabled={busy}
         aria-haspopup="menu"
         aria-expanded={open}
-        title="Switch model or provider"
+        title={t('model.switch')}
       >
         <span className="model-chip-label">{label}</span>
         <span aria-hidden="true">▾</span>
       </button>
       {open && snapshot ? (
-        <div className="model-menu" role="menu" aria-label="Model and provider">
-          <p className="model-menu-section">Model</p>
+        <div className="model-menu" role="menu" aria-label={t('model.menu')}>
+          <p className="model-menu-section">{t('model.model')}</p>
           {snapshot.models.map((model) => (
             <button
               key={model}
@@ -105,7 +107,7 @@ function ModelChip(): React.JSX.Element {
               {model}
             </button>
           ))}
-          <p className="model-menu-section">Provider</p>
+          <p className="model-menu-section">{t('model.provider')}</p>
           {[...snapshot.providers, ...snapshot.customProviders.map((profile) => profile.id)].map(
             (id) => (
               <button
