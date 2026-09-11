@@ -445,7 +445,10 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background 150ms ease;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
 }
 
 .session-item:hover {
@@ -702,6 +705,18 @@
   color: var(--foreground);
 }
 
+/* Greeting line: the warm Tier-1 headline; the folder eyebrow below stays
+   the quiet Tier-2 context. Balanced so it never strands a word. */
+.thread-welcome-greeting {
+  margin: 0 0 0.3rem;
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  color: var(--foreground);
+  text-wrap: balance;
+}
+
 /* Folder chip: the one grounding fact this screen knows — the folder this
    chat will work in. Quiet row, normal case, small folder glyph. */
 .thread-welcome p.thread-welcome-eyebrow {
@@ -733,6 +748,9 @@
 }
 
 .quick-action-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
   padding: 0.24rem 0.75rem;
   border: 1px solid var(--border);
   border-radius: 9999px;
@@ -742,20 +760,37 @@
   font-size: 0.76rem;
   cursor: pointer;
   transition:
-    background 150ms ease,
-    color 150ms ease,
-    border-color 150ms ease;
+    background 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
 }
 
 .quick-action-chip:hover {
   background: var(--accent);
   border-color: var(--ring);
   color: var(--accent-foreground);
+  transform: translateY(-1px);
 }
 
 .quick-action-chip:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
+  transform: translateY(-1px);
+}
+
+/* Leading line icon: inherits the chip text color — same gray tone and 2px
+   round weight as the composer's paperclip, no fill, no color. */
+.quick-action-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+.quick-action-icon svg {
+  width: 100%;
+  height: 100%;
 }
 
 .message {
@@ -1098,11 +1133,60 @@
   }
 }
 
+/* Home/empty-state entrance: greeting, composer, and chips fade and rise
+   slightly, staggered ~50ms. Played once per app lifetime (App owns the
+   spent flag; Thread latches it at mount) — later new chats mount without
+   .home-enter, and window focus never remounts. The composer lives in both
+   states, so its entrance is gated behind :has(.thread-welcome) to the empty
+   home only. Strictly token grays — opacity/transform only, no color. */
+@keyframes home-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .home-enter {
+    animation-name: home-in;
+    animation-duration: 250ms;
+    animation-timing-function: ease-out;
+    animation-fill-mode: both;
+  }
+
+  .thread-welcome.home-enter {
+    animation-delay: 0ms;
+  }
+
+  .composer.home-enter {
+    animation-name: none;
+  }
+
+  .thread:has(.thread-welcome) .composer.home-enter {
+    animation-name: home-in;
+    animation-delay: 50ms;
+  }
+
+  .quick-actions.home-enter {
+    animation-delay: 100ms;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .message,
   .thinking-indicator [class*='animate-'],
   .scroll-to-bottom,
-  .sessions-section-chevron {
+  .sessions-section-chevron,
+  .home-enter,
+  .quick-action-chip,
+  .session-item,
+  .composer-send,
+  .composer-cancel,
+  .mode-tab {
     animation: none !important;
     transition: none !important;
   }
@@ -1166,7 +1250,8 @@
   cursor: pointer;
   transition:
     background 150ms ease,
-    color 150ms ease;
+    color 150ms ease,
+    border-color 150ms ease;
 }
 
 .mode-tab:hover:not(:disabled) {
@@ -1331,7 +1416,10 @@
   font: inherit;
   font-weight: 600;
   cursor: pointer;
-  transition: background 150ms ease;
+  transition:
+    background 150ms ease,
+    color 150ms ease,
+    opacity 150ms ease;
 }
 
 .composer-send:hover:not(:disabled) {
@@ -1354,7 +1442,9 @@
   font: inherit;
   font-weight: 600;
   cursor: pointer;
-  transition: background 150ms ease;
+  transition:
+    background 150ms ease,
+    color 150ms ease;
 }
 
 .composer-cancel:hover {

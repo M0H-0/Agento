@@ -75,14 +75,35 @@ function formatFolderTail(path: string): string {
   return `…\\${segments.slice(-2).join('\\')}`
 }
 
-// Empty-thread welcome (docs/04 §2). Deliberately two quiet elements — the
-// folder chip and, below the composer, the QuickActions chips — matching the
-// centered composer-first home layout. The eyebrow names the folder this new
-// chat will actually work in (the picker's current pick — the same state
-// session:create stamps). Plain useState fetch, state lands in the promise
-// callback (StrictMode rule); a failed read degrades to the no-folder copy.
-function ThreadWelcome(): React.JSX.Element {
+// Home greeting pool — one line shown at a time, picked at random once per
+// app lifetime (App owns the pick so session switches, which remount ChatView
+// per threadEpoch, neither re-roll the line nor replay the entrance).
+const HOME_GREETINGS = ['Ready when you are.', 'What shall we work on?']
+
+function pickHomeGreeting(): string {
+  const pick = HOME_GREETINGS[Math.floor(Math.random() * HOME_GREETINGS.length)]
+  return pick ?? 'Ready when you are.'
+}
+
+// Empty-thread welcome (docs/04 §2). A short greeting line plus, below it as
+// secondary context, the folder chip naming the folder this new chat will
+// actually work in (the picker's current pick — the same state session:create
+// stamps). Plain useState fetch, state lands in the promise callback
+// (StrictMode rule); a failed read degrades to the no-folder copy.
+// playEntrance is latched at mount: App flips it to false (same-instance
+// re-render) once the first empty paint marks itself spent — without the
+// latch the re-render would strip .home-enter mid-animation.
+function ThreadWelcome({
+  greeting,
+  playEntrance,
+  onPlayed
+}: {
+  greeting: string
+  playEntrance: boolean
+  onPlayed: () => void
+}): React.JSX.Element {
   const [workspace, setWorkspace] = useState<string | null>(null)
+  const [animate] = useState(playEntrance)
   useEffect(() => {
     let cancelled = false
     window.agento.workspaces
@@ -97,8 +118,12 @@ function ThreadWelcome(): React.JSX.Element {
       cancelled = true
     }
   }, [])
+  useEffect(() => {
+    if (animate) onPlayed()
+  }, [animate, onPlayed])
   return (
-    <div className="thread-welcome">
+    <div className={animate ? 'thread-welcome home-enter' : 'thread-welcome'}>
+      <h1 className="thread-welcome-greeting">{greeting}</h1>
       <p className="thread-welcome-eyebrow">
         {/* Inline folder glyph (no icon dep — STACK.md): 16px grid, stroke
             follows the text color. */}
@@ -206,7 +231,10 @@ function Thread({
   pendingAsk,
   attachments,
   onAttachmentsChange,
-  sessionId
+  sessionId,
+  homeGreeting,
+  playHomeEntrance,
+  onHomeEntrancePlayed
 }: {
   error?: Error
   runStatus?: string
@@ -217,6 +245,9 @@ function Thread({
   attachments: string[]
   onAttachmentsChange: (next: string[]) => void
   sessionId: string | null
+  homeGreeting: string
+  playHomeEntrance: boolean
+  onHomeEntrancePlayed: () => void
 }): React.JSX.Element {
   // Hint preview: hovering or keyboard-focusing the unselected Plan/Act tab
   // shows THAT mode's description, so users can compare before switching.
@@ -224,11 +255,19 @@ function Thread({
   // grayscale treatment untouched, reduced-motion safe.
   const [hintPreview, setHintPreview] = useState<SessionMode | null>(null)
   const hintMode = hintPreview ?? mode
+  // Latched at mount (see ThreadWelcome): App marks the entrance spent right
+  // after the first empty paint, which re-renders this same instance with
+  // playHomeEntrance=false — the latch keeps .home-enter for the full 250ms.
+  const [playEntrance] = useState(playHomeEntrance)
   return (
     <ThreadPrimitive.Root className="thread">
       <ThreadPrimitive.Viewport className="thread-viewport">
         <ThreadPrimitive.If empty>
-          <ThreadWelcome />
+          <ThreadWelcome
+            greeting={homeGreeting}
+            playEntrance={playEntrance}
+            onPlayed={onHomeEntrancePlayed}
+          />
         </ThreadPrimitive.If>
         {runStatus ? (
           <div className="run-status" role="status" aria-live="polite">
@@ -252,7 +291,10 @@ function Thread({
         <ScrollToBottomButton />
       </ThreadPrimitive.Viewport>
       <ThreadPrimitive.ViewportFooter className="thread-footer">
-        <ComposerPrimitive.Root className="composer">
+        {/* The composer's entrance only plays on the empty home (CSS gates
+            .composer.home-enter behind .thread:has(.thread-welcome)) — opening
+            an existing session never animates the docked composer. */}
+        <ComposerPrimitive.Root className={playEntrance ? 'composer home-enter' : 'composer'}>
           {/* Execution mode tabs (docs/04 §3.5): session-owned, persisted via
               session:set-mode. Plan is structurally read-only; Act may mutate
               through the normal approval/snapshot pipeline. */}
@@ -318,7 +360,7 @@ function Thread({
               />
               <ComposerPrimitive.Input
                 className="composer-input"
-                placeholder={mode === 'plan' ? 'Ask for a read-only plan…' : 'Message Agento…'}
+                placeholder={mode === 'plan' ? 'Ask for a read-only plan…' : 'Ask anything…'}
                 rows={1}
                 autoFocus
               />
@@ -341,7 +383,7 @@ function Thread({
             empty thread — part of the centered home group, fill-only, never
             auto-send. */}
         <ThreadPrimitive.If empty>
-          <QuickActions />
+          <QuickActions playEntrance={playEntrance} />
         </ThreadPrimitive.If>
       </ThreadPrimitive.ViewportFooter>
     </ThreadPrimitive.Root>
@@ -364,6 +406,9 @@ interface ChatViewProps {
   onAttachmentsChange: (next: string[]) => void
   getAttachments: () => string[]
   onAttachmentsConsumed: () => void
+  homeGreeting: string
+  playHomeEntrance: boolean
+  onHomeEntrancePlayed: () => void
 }
 
 // One conversation view. Remounted (keyed by an epoch that advances only on
@@ -388,7 +433,10 @@ function ChatView({
   attachments,
   onAttachmentsChange,
   getAttachments,
-  onAttachmentsConsumed
+  onAttachmentsConsumed,
+  homeGreeting,
+  playHomeEntrance,
+  onHomeEntrancePlayed
 }: ChatViewProps): React.JSX.Element {
   // Created once per mount: the transport carries this view's run state
   // (in-flight guard, active run's session id), so a per-render identity
@@ -467,6 +515,9 @@ function ChatView({
         attachments={attachments}
         onAttachmentsChange={onAttachmentsChange}
         sessionId={sessionId}
+        homeGreeting={homeGreeting}
+        playHomeEntrance={playHomeEntrance}
+        onHomeEntrancePlayed={onHomeEntrancePlayed}
       />
     </AssistantRuntimeProvider>
   )
@@ -481,6 +532,14 @@ function App(): React.JSX.Element {
   const activeSessionIdRef = useRef<string | null>(null)
   const [threadEpoch, setThreadEpoch] = useState(0)
   const [pendingMessages, setPendingMessages] = useState<UIMessage[]>([])
+  // Home/empty-state identity (warmth pass): the greeting is picked once per
+  // app lifetime — App never remounts, so session switches (ChatView remounts
+  // per threadEpoch) keep the same line. Spent flips after the first empty
+  // paint; later ChatViews receive playHomeEntrance=false, so the entrance
+  // never replays on new chats and window focus (no remount) replays nothing.
+  const [homeGreeting] = useState(() => pickHomeGreeting())
+  const [homeEntranceSpent, setHomeEntranceSpent] = useState(false)
+  const markHomeEntranceSpent = useCallback(() => setHomeEntranceSpent(true), [])
   const [settingsOpen, setSettingsOpen] = useState(false)
   // The mounted ChatView's transport dispose. Session switches call it BEFORE
   // remounting so an in-flight run is aborted and its part subscription
@@ -1011,6 +1070,9 @@ function App(): React.JSX.Element {
           onAttachmentsChange={handleAttachmentsChange}
           getAttachments={getAttachments}
           onAttachmentsConsumed={clearAttachments}
+          homeGreeting={homeGreeting}
+          playHomeEntrance={!homeEntranceSpent}
+          onHomeEntrancePlayed={markHomeEntranceSpent}
         />
       </main>
       {/* The rail collapses when there is no plan and no active session
