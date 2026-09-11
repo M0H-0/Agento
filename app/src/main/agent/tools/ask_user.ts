@@ -18,7 +18,7 @@ export const askUserTool: ToolDefinition<
 > = {
   name: 'ask_user',
   description:
-    'Ask the user a single clarifying question and wait for their reply in the thread. Use this when the request is ambiguous or missing something essential — never guess.',
+    'Ask the user a single clarifying question and wait for their reply in the thread. Use it ONLY when the answer is needed to proceed with a task — the request is ambiguous or missing something essential. Never use it for greetings, small talk, or anything a normal conversational reply covers; answer those as plain text.',
   access: 'read',
   // `.nullish()` not `.optional()`: models legitimately send an explicit
   // `options: null` for open-ended questions (observed live: Groq's

@@ -25,4 +25,18 @@ describe('buildSystemPrompt', () => {
       'If no workspace is set, ask the user to pick one'
     )
   })
+
+  it('keeps the ask_user task-only guard in both workspace variants', () => {
+    // The "hey" incident: the model fired ask_user for a greeting. The guard
+    // is deliberately present whether or not a workspace is set.
+    const guard = 'Greetings and casual conversation get a normal text reply'
+    expect(buildSystemPrompt('D:\\Random\\folder')).toContain(guard)
+    expect(buildSystemPrompt(null)).toContain(guard)
+  })
+
+  it('bans emojis in replies in both workspace variants', () => {
+    const ban = 'Never use emojis in a reply'
+    expect(buildSystemPrompt('D:\\Random\\folder')).toContain(ban)
+    expect(buildSystemPrompt(null)).toContain(ban)
+  })
 })

@@ -370,23 +370,19 @@ function renderSearchFilesCard(part: AuiToolPart): React.JSX.Element | null {
 
 function renderAskUserCard(part: AuiToolPart): React.JSX.Element | null {
   // ask_user is the only tool whose card is open while the run is paused.
-  // The synthetic pause chunk's output carries __agentoAskUser; the answer
-  // chunk's output is { question, answer }. Both shapes flow through the
-  // same card component.
+  // The synthetic pause chunk's output carries __agentoAskUser — the reply
+  // happens in the main composer (App.tsx reply mode), so this card is
+  // display-only; the answer chunk's output is { question, answer }. Both
+  // shapes flow through the same card component.
   const result = part.result
   if (!isRecord(result)) return null
   const question = typeof result.question === 'string' ? result.question : ''
   if (!question) return null
-  const options = Array.isArray(result.options)
-    ? result.options.filter((o): o is string => typeof o === 'string')
-    : undefined
   return (
     <AskUserCard
       title={titleFromToolName('ask_user')}
       status={statusFor(part.status)}
-      toolCallId={part.toolCallId}
       question={question}
-      options={options}
       output={result}
     />
   )

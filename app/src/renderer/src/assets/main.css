@@ -1210,6 +1210,44 @@
   background: color-mix(in oklab, var(--foreground) 8%, var(--secondary));
 }
 
+/* Reply mode (docs/03 §7): while an ask_user holds the run, the composer is
+   the reply box — suggested options sit as chips on their own line above the
+   input, a stale-question refusal lands under the send row. */
+.composer-replies {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.15rem 0.35rem;
+}
+
+.composer-chip {
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--foreground);
+  border-radius: 9999px;
+  padding: 0.25rem 0.7rem;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.composer-chip:hover:not(:disabled) {
+  background: var(--muted);
+}
+
+.composer-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.composer-reply-error {
+  flex-basis: 100%;
+  color: var(--destructive);
+  font-size: 0.78rem;
+  padding: 0 0.35rem;
+}
+
 /* Sidecar status dot (M0.5) — app chrome in the sidebar footer. Semantic
    green/red only for status (docs/04 §7); neutral = starting. */
 .status-dot {
@@ -1728,82 +1766,6 @@
 .tool-card__details summary {
   cursor: pointer;
   user-select: none;
-}
-
-.tool-card__form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.5rem 0 0;
-}
-
-.tool-card__options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-
-.tool-card__chip {
-  border: 1px solid var(--border);
-  background: var(--background);
-  color: var(--foreground);
-  border-radius: 9999px;
-  padding: 0.3rem 0.7rem;
-  font-size: 0.8rem;
-  cursor: pointer;
-  font: inherit;
-}
-
-.tool-card__chip:hover:not(:disabled) {
-  background: var(--muted);
-}
-
-.tool-card__chip:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.tool-card__textarea {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 0.375rem;
-  background: var(--background);
-  color: var(--foreground);
-  padding: 0.5rem 0.6rem;
-  font-family: var(--font-sans);
-  font-size: 0.85rem;
-  resize: vertical;
-  min-height: 2.4rem;
-  max-height: 12rem;
-}
-
-.tool-card__textarea:focus {
-  outline: 2px solid var(--ring);
-  outline-offset: -1px;
-}
-
-.tool-card__form-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  justify-content: flex-end;
-}
-
-.tool-card__send {
-  border: 0;
-  background: var(--primary);
-  color: var(--primary-foreground);
-  border-radius: 0.375rem;
-  padding: 0.4rem 0.9rem;
-  font-size: 0.85rem;
-  font-weight: 500;
-  cursor: pointer;
-  font: inherit;
-}
-
-.tool-card__send:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .tool-card__error {

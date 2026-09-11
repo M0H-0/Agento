@@ -13,6 +13,7 @@ describe('buildTitlePrompt', () => {
     expect(prompt).toContain('please fix the login bug in auth.ts')
     expect(prompt).toContain('SAME language')
     expect(prompt).toContain('2 to 6 words')
+    expect(prompt).toContain('no emojis')
   })
 
   it('clips very long messages to the input budget', () => {
@@ -51,6 +52,16 @@ describe('sanitizeTitle', () => {
     expect(sanitizeTitle('   ', 'fallback')).toBe('fallback')
     expect(sanitizeTitle('""', 'fallback')).toBe('fallback')
     expect(sanitizeTitle('Title:', 'fallback')).toBe('fallback')
+  })
+
+  it('strips emojis and their leftover modifiers', () => {
+    expect(sanitizeTitle('📁 Invoices 📄✨', 'fallback')).toBe('Invoices')
+    // A bare skin-tone modifier or ZWJ fragment must not survive either.
+    expect(sanitizeTitle('👋🏾 Hi there', 'fallback')).toBe('Hi there')
+  })
+
+  it('falls back when a title was emojis only', () => {
+    expect(sanitizeTitle('📁📄', 'fallback')).toBe('fallback')
   })
 
   it('keeps titles that merely contain punctuation inside', () => {

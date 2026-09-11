@@ -16,17 +16,28 @@ export function buildTitlePrompt(firstMessage: string): string {
     'Write a short title for a conversation that starts with the user message below.',
     'Capture what it is about in 2 to 6 words.',
     'Write the title in the SAME language as the user message.',
-    'Reply with the title text only — no quotes, no labels like "Title:", no trailing punctuation.',
+    'Reply with the title text only — no quotes, no labels like "Title:", no trailing punctuation, no emojis.',
     '',
     `User message: ${clipped}`
   ].join('\n')
 }
 
 // Models wrap titles in quotes or add a label; users type in any language.
-// Clean to one plain line, then cap. Anything empty after cleaning falls back
-// to the derived first-message title already on the session row.
+// Clean to one plain line, then cap. Emoji codepoints are stripped here, not
+// just banned in the prompt — the sidebar renders this text everywhere.
+// Anything empty after cleaning falls back to the derived first-message
+// title already on the session row.
 export function sanitizeTitle(raw: string, fallback: string): string {
   const cleaned = raw
+    .replace(
+      // Emoji ban: pictographs plus the pieces that compose them (skin-tone
+      // and regional-indicator modifiers, ZWJ, variation selector) — leftover
+      // fragments must not survive even when the model sends a bare modifier.
+      // ZWJ/VS16 sit in an alternation, not the class: they only ever match
+      // one code point, which no-misleading-character-class rightly calls out.
+      /(?:[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\u{1F1E6}-\u{1F1FF}]|\u200D|\uFE0F)/gu,
+      ''
+    )
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/^title\s*[:：]\s*/i, '')

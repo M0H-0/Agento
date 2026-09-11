@@ -79,7 +79,7 @@ Session checkpoints: file, friendly action ("created/edited/moved/deleted"), tim
 
 ### 3.5 Composer & QuickActions
 
-assistant-ui composer: Enter sends, Shift+Enter newlines, stop replaces send mid-run, disabled-with-reason when no key/workspace. A **Plan / Act tablist** sits above the input (session-owned, `session:set-mode`; new chats start in Act; tabs disable mid-run): Plan is read-only ("Read-only — nothing will change."), Act carries out work. QuickActions chips (P1) fill the composer; never auto-send.
+assistant-ui composer: Enter sends, Shift+Enter newlines, stop replaces send mid-run, disabled-with-reason when no key/workspace. A **Plan / Act tablist** sits above the input (session-owned, `session:set-mode`; new chats start in Act; tabs disable mid-run): Plan is read-only ("Read-only — nothing will change."), Act carries out work. QuickActions chips (P1) fill the composer; never auto-send. **Reply mode (ask_user):** while a question pends the run, the composer input becomes the reply box — Enter or Send submits via `tool:answer`, the question's options render as quick-pick chips above the input, and Stop keeps its mid-run meaning (reject the answer + abort). The Ask card in the thread stays display-only (Awaiting your reply / Replied / Stopped before reply).
 
 ### 3.6 Document preview (P1)
 

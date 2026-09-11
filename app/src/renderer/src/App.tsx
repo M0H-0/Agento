@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { useAISDKRuntime } from '@assistant-ui/react-ai-sdk'
 import {
@@ -10,6 +10,8 @@ import {
 import type { UIMessage } from 'ai'
 import { createIpcChatTransport } from './chat/transport'
 import type { SessionMode, SessionSummary } from './chat/transport'
+import { findPendingAsk } from './chat/ask'
+import type { PendingAsk } from './chat/ask'
 import { parseAgentEvent } from './chat/agent-events'
 import type { PlanStep } from './chat/agent-events'
 import type { AgentApprovalRequestedEvent } from '../../preload/index'
@@ -117,18 +119,97 @@ function ThreadWelcome(): React.JSX.Element {
   )
 }
 
+// Reply-mode composer (docs/03 §7): while an ask_user holds the run, the
+// main composer IS the reply box — no card-embedded form. Enter sends
+// (Shift+Enter breaks the line, an in-progress IME composition never sends);
+// option chips send directly. The reply rides the same tool:answer channel
+// the old card form used; on a refusal (stale question) the draft survives
+// so the user can Stop or retry. Stop itself stays rendered beside Send —
+// it rejects the pending answer and aborts, exactly like chat:stop mid-ask.
+function ReplyComposer({ ask }: { ask: PendingAsk }): React.JSX.Element {
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [errorText, setErrorText] = useState<string | null>(null)
+
+  async function submit(answer: string): Promise<void> {
+    const trimmed = answer.trim()
+    if (!trimmed || sending) return
+    setSending(true)
+    setErrorText(null)
+    try {
+      const res = await window.agento.tool.answer({ toolCallId: ask.toolCallId, answer: trimmed })
+      if (!res.ok) {
+        setErrorText(res.reason ?? 'That question is no longer active.')
+      }
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <>
+      {ask.options && ask.options.length > 0 ? (
+        <div className="composer-replies" role="group" aria-label="Suggested replies">
+          {ask.options.map((option) => (
+            <button
+              key={option}
+              type="button"
+              className="composer-chip"
+              disabled={sending}
+              onClick={() => void submit(option)}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <textarea
+        className="composer-input"
+        placeholder="Type your reply…"
+        value={draft}
+        rows={1}
+        autoFocus
+        disabled={sending}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+          event.preventDefault()
+          void submit(draft)
+        }}
+      />
+      <button
+        type="button"
+        className="composer-send"
+        disabled={sending || draft.trim().length === 0}
+        onClick={() => void submit(draft)}
+      >
+        {sending ? 'Sending…' : 'Send'}
+      </button>
+      {errorText ? (
+        <div className="composer-reply-error" role="alert">
+          {errorText}
+        </div>
+      ) : null}
+    </>
+  )
+}
+
 function Thread({
   error,
   runStatus,
   mode,
   onModeChange,
-  modeDisabled
+  modeDisabled,
+  pendingAsk
 }: {
   error?: Error
   runStatus?: string
   mode: SessionMode
   onModeChange: (mode: SessionMode) => void
   modeDisabled: boolean
+  pendingAsk: PendingAsk | null
 }): React.JSX.Element {
   return (
     <ThreadPrimitive.Root className="thread">
@@ -193,12 +274,20 @@ function Thread({
               control must not sit inside role="tablist"), absolutely
               positioned over the tabs row's right end. */}
           <ModelChip />
-          <ComposerPrimitive.Input
-            className="composer-input"
-            placeholder={mode === 'plan' ? 'Ask for a read-only plan…' : 'Message Agento…'}
-            rows={1}
-            autoFocus
-          />
+          {/* Reply mode: a pending ask_user replaces the composer input with
+              the reply box (chips + textarea + Send, one unit keyed per
+              question). The normal primitives return the moment the answer
+              chunk overwrites the ask part's output. */}
+          {pendingAsk ? (
+            <ReplyComposer key={pendingAsk.toolCallId} ask={pendingAsk} />
+          ) : (
+            <ComposerPrimitive.Input
+              className="composer-input"
+              placeholder={mode === 'plan' ? 'Ask for a read-only plan…' : 'Message Agento…'}
+              rows={1}
+              autoFocus
+            />
+          )}
           {/* docs/04 §3.5: stop replaces send mid-run. The Cancel primitive is
               gated by ThreadPrimitive.If because composer canCancel is a
               capability flag (onCancel is wired), not a running flag — without
@@ -265,17 +354,25 @@ function ChatView({
   )
   const chat = useChat({ transport: ipc.transport, messages: initialMessages })
   const runtime = useAISDKRuntime(chat)
-  const liveStatus =
-    runStatus ??
-    (chat.status === 'submitted'
-      ? mode === 'plan'
-        ? 'Reading and preparing your plan...'
-        : 'Getting ready...'
-      : chat.status === 'streaming'
+  // Reply mode (docs/03 §7): a pending ask_user pauses the run — the newest
+  // tool part still carrying __agentoAskUser is the question to answer in
+  // the composer. Gated on runActive so a dead ask (crashed stream, stale
+  // history) can never trap the composer in reply mode.
+  const pendingAsk = useMemo(() => findPendingAsk(chat.messages), [chat.messages])
+  const runActive = chat.status === 'submitted' || chat.status === 'streaming'
+  const activeAsk = runActive ? pendingAsk : null
+  const liveStatus = activeAsk
+    ? 'Waiting for your reply...'
+    : (runStatus ??
+      (chat.status === 'submitted'
         ? mode === 'plan'
           ? 'Reading and preparing your plan...'
-          : 'Working...'
-        : undefined)
+          : 'Getting ready...'
+        : chat.status === 'streaming'
+          ? mode === 'plan'
+            ? 'Reading and preparing your plan...'
+            : 'Working...'
+          : undefined))
   // The view is unmounted ONLY by an explicit session switch / New chat, and
   // App runs dispose there (before the remount) rather than in an effect
   // cleanup: StrictMode's simulated mount-unmount cycle would otherwise
@@ -287,7 +384,6 @@ function ChatView({
   // Esc stops the run (docs/04 §7). Settings owns Esc while open — it closes
   // the dialog only. `stop` is an instance method of the stable Chat object
   // (bound in the constructor), so the listener registers once per run.
-  const runActive = chat.status === 'submitted' || chat.status === 'streaming'
   const stop = chat.stop
   useEffect(() => {
     if (!runActive) return
@@ -311,6 +407,7 @@ function ChatView({
         mode={mode}
         onModeChange={onModeChange}
         modeDisabled={runActive || (modeDisabled ?? false)}
+        pendingAsk={activeAsk}
       />
     </AssistantRuntimeProvider>
   )
