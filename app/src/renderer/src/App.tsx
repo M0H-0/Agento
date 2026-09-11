@@ -1015,6 +1015,11 @@ function App(): React.JSX.Element {
   // loop (plan/approval/changes) is untouched.
   const [mainView, setMainView] = useState<'chat' | 'overview'>('chat')
   const [composerPrefill, setComposerPrefill] = useState<string | null>(null)
+  // Current folder for the Workspace Overview, pushed up from the sidebar's
+  // picker (mount + every switch) — the overview follows it even while
+  // mounted. Passing the raw setter keeps the picker's callback identity
+  // stable (its mount effect depends on it).
+  const [overviewWorkspace, setOverviewWorkspace] = useState<string | null>(null)
   const onPrefillConsumed = useCallback(() => setComposerPrefill(null), [])
 
   const openOverviewSession = useCallback(
@@ -1138,6 +1143,7 @@ function App(): React.JSX.Element {
         onRenameSession={handleRenameSession}
         onDeleteSession={handleDeleteSession}
         settingsOpen={settingsOpen}
+        onWorkspaceChanged={setOverviewWorkspace}
       />
       {/* Real three-column shell (UI_POLISH_PLAN.md): the thread lives in its
           own flex column (.chat-main), so messages can never render under the
@@ -1146,8 +1152,12 @@ function App(): React.JSX.Element {
           center column only; the rail hides while it is up. */}
       <main className="chat-main">
         {mainView === 'overview' ? (
+          // Keyed by folder: a switch while mounted remounts fresh (loading
+          // shimmer, no stale listing flashing through).
           <WorkspaceOverview
+            key={overviewWorkspace}
             sessions={sessions}
+            workspacePath={overviewWorkspace}
             onOpenSession={openOverviewSession}
             onNewChat={newChatFromOverview}
             onStartTask={startTaskFromOverview}

@@ -12,12 +12,15 @@ import {
 // for the current folder — what is here, folder-scoped activity the sidebar
 // never aggregates (chat/draft/token counts), one resume card instead of a
 // second recency list, and contextual task starters. Read-only composition
-// over existing IPC (`workspaces.get`, `workspace:list-files`, the sessions
-// prop); chips fill the composer only, never auto-send. No file tree, no
-// previews, no actions.
+// over existing IPC (`workspace:list-files`, the sessions prop; the current
+// folder arrives as a prop pushed up from the sidebar picker); chips fill
+// the composer only, never auto-send. No file tree, no previews, no actions.
 
 export interface WorkspaceOverviewProps {
   sessions: SessionSummary[]
+  /** Current folder, pushed up from the sidebar picker through App — the
+      overview never reads it itself, so a switch while mounted follows. */
+  workspacePath: string | null
   onOpenSession: (session: SessionSummary) => void
   onNewChat: () => void
   onStartTask: (prompt: string) => void
@@ -44,25 +47,25 @@ function formatRelativeTime(iso: string): string {
 
 export function WorkspaceOverview({
   sessions,
+  workspacePath,
   onOpenSession,
   onNewChat,
   onStartTask,
   onBack
 }: WorkspaceOverviewProps): React.JSX.Element {
-  const [workspacePath, setWorkspacePath] = useState<string | null>(null)
   const [files, setFiles] = useState<SnapshotFile[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [prompts, setPrompts] = useState<string[]>(() => genericPrompts())
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([
-      window.agento.workspaces.get(),
-      window.agento.workspaces.listFiles({ limit: 500 })
-    ])
-      .then(([snapshot, listing]) => {
+    // No folder yet (picker hasn't reported) — the title falls back to the
+    // pick-a-folder note until the prop lands and this re-runs.
+    if (!workspacePath) return
+    window.agento.workspaces
+      .listFiles({ limit: 500 })
+      .then((listing) => {
         if (cancelled) return
-        setWorkspacePath(snapshot.current)
         setFiles(listing.files)
         setPrompts(
           suggestPromptsFromScan(
@@ -83,7 +86,7 @@ export function WorkspaceOverview({
     }
     // sessions titles feed the pricing-chip evidence; re-scan when they change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions.length])
+  }, [sessions.length, workspacePath])
 
   const snapshot = files ? summarizeWorkspaceFiles(files) : null
   const isEmptyFolder = files !== null && files.length === 0

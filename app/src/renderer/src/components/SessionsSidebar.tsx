@@ -14,6 +14,8 @@ interface SessionsSidebarProps {
   onDeleteSession: (session: SessionSummary) => Promise<void>
   /** Whether the Settings dialog is currently open — refreshes the badge. */
   settingsOpen: boolean
+  /** Forwarded picker signal: fires on mount and every folder switch. */
+  onWorkspaceChanged?: (path: string | null) => void
 }
 
 // Settings attention badge (gap 2): lit ONLY when the active provider is a
@@ -208,7 +210,8 @@ function SessionsSidebar({
   onOpenOverview,
   onRenameSession,
   onDeleteSession,
-  settingsOpen
+  settingsOpen,
+  onWorkspaceChanged
 }: SessionsSidebarProps): React.JSX.Element {
   // Per-row menu state. Only one row is ever in a special state; ids are the
   // session's, which also means closing on re-render is never required.
@@ -267,20 +270,25 @@ function SessionsSidebar({
   }
 
   // Stable: WorkspacePicker's refresh() identity (and its mount effect)
-  // depends on this, so it must never change between renders.
-  const handleWorkspaceChanged = useCallback((path: string | null) => {
-    setCurrentWorkspace(path)
-    // Auto-expand the folder you just moved to, so you see where you went.
-    if (path) {
-      const key = folderKey(path)
-      setCollapsedKeys((prev) => {
-        if (!prev.has(key)) return prev
-        const next = new Set(prev)
-        next.delete(key)
-        return next
-      })
-    }
-  }, [])
+  // depends on this, so it must never change between renders — the parent
+  // must pass a stable callback (App passes the raw useState setter).
+  const handleWorkspaceChanged = useCallback(
+    (path: string | null) => {
+      setCurrentWorkspace(path)
+      onWorkspaceChanged?.(path)
+      // Auto-expand the folder you just moved to, so you see where you went.
+      if (path) {
+        const key = folderKey(path)
+        setCollapsedKeys((prev) => {
+          if (!prev.has(key)) return prev
+          const next = new Set(prev)
+          next.delete(key)
+          return next
+        })
+      }
+    },
+    [onWorkspaceChanged]
+  )
 
   useEffect(() => {
     try {
