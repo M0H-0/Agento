@@ -277,6 +277,8 @@ export interface SettingsSnapshot {
   models: string[]
   /** Every provider id → its model ids (built-in curated lists; one entry per custom profile). */
   providerModels: Record<string, string[]>
+  /** Masked key state for every provider (built-ins + customs); keyLast4 only, never the key itself. */
+  providerKeys: Record<string, { hasKey: boolean; keyLast4: string }>
   appearance: Appearance
   locale: Locale
   permissionDefaults: PermissionDefaults

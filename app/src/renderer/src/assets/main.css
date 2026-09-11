@@ -2171,6 +2171,26 @@
   gap: 0.5rem;
 }
 
+.settings-custom-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.settings-provider-badge {
+  flex-shrink: 0;
+  padding: 0.08rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  background: var(--accent);
+}
+
 .settings-custom-item {
   display: flex;
   flex-direction: column;

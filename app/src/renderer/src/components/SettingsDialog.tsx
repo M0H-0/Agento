@@ -33,6 +33,7 @@ interface SettingsSnapshot {
   providers: string[]
   models: string[]
   providerModels?: Record<string, string[]>
+  providerKeys: Record<string, { hasKey: boolean; keyLast4: string }>
   appearance: Appearance
   locale: Locale
   permissionDefaults: { risk1: 'auto' | 'ask'; risk2: 'auto' | 'ask' }
@@ -192,7 +193,10 @@ function SettingsDialog({
 
   const removeKey = (): void => {
     if (snapshot === null) return
-    const provider = snapshot.provider
+    removeKeyFor(snapshot.provider)
+  }
+
+  const removeKeyFor = (provider: string): void => {
     runGuarded(
       () => window.agento.settings.clearApiKey({ provider }).then(refresh),
       t('settings.removeKeyFailed')
@@ -424,6 +428,54 @@ function SettingsDialog({
   const activeCustom = snapshot?.customProviders.find((p) => p.id === snapshot.provider)
   const isCustomActive = activeCustom !== undefined
 
+  // Unified "Your providers" rows (docs/04 §3.7): built-ins first (fixed rows —
+  // Google/Groq are always available), then user-added custom profiles. Every row
+  // carries its own masked key state, so saving a Groq key lights up the Groq row
+  // wherever it sits in the list.
+  const rows: Array<{
+    id: string
+    kind: 'settings.builtIn' | 'settings.custom'
+    name: string
+    model: string
+    endpoint: string | null
+    hasKey: boolean
+    keyLast4: string
+    profile: CustomProviderSnapshot | null
+  }> =
+    snapshot === null
+      ? []
+      : [
+          ...snapshot.providers.map((id) => {
+            const keyState = snapshot.providerKeys[id] ?? {
+              hasKey: snapshot.provider === id ? snapshot.hasKey : false,
+              keyLast4: snapshot.provider === id ? snapshot.keyLast4 : ''
+            }
+            return {
+              id,
+              kind: 'settings.builtIn' as const,
+              name: PROVIDER_LABELS[id] ?? id,
+              model:
+                snapshot.provider === id
+                  ? snapshot.model
+                  : (snapshot.providerModels?.[id]?.[0] ?? ''),
+              endpoint: null,
+              hasKey: keyState.hasKey,
+              keyLast4: keyState.keyLast4,
+              profile: null
+            }
+          }),
+          ...snapshot.customProviders.map((profile) => ({
+            id: profile.id,
+            kind: 'settings.custom' as const,
+            name: profile.name,
+            model: profile.model,
+            endpoint: profile.baseUrl,
+            hasKey: profile.hasKey,
+            keyLast4: profile.keyLast4,
+            profile
+          }))
+        ]
+
   return (
     <div
       className="settings-overlay"
@@ -608,59 +660,86 @@ function SettingsDialog({
               </div>
 
               <div className="settings-field">
-                <span className="settings-label">{t('settings.customProviders')}</span>
-                {snapshot.customProviders.length === 0 ? (
-                  <p className="settings-note">{t('settings.noCustomProviders')}</p>
-                ) : (
-                  <ul className="settings-custom-list">
-                    {snapshot.customProviders.map((profile) => (
-                      <li key={profile.id} className="settings-custom-item">
+                <span className="settings-label">{t('settings.yourProviders')}</span>
+                <ul className="settings-custom-list">
+                  {rows.map((row) => {
+                    const profile = row.profile
+                    const active = row.id === snapshot.provider
+                    return (
+                      <li key={row.id} className="settings-custom-item">
+                        <div className="settings-custom-head">
+                          <strong>{row.name}</strong>
+                          <span className="settings-provider-badge">{t(row.kind)}</span>
+                        </div>
                         <div className="settings-custom-meta">
-                          <strong>{profile.name}</strong>
-                          <span className="settings-note">{profile.model}</span>
-                          <span className="settings-note">{profile.baseUrl}</span>
+                          <span className="settings-note">{row.model}</span>
+                          {row.endpoint !== null && (
+                            <span className="settings-note">{row.endpoint}</span>
+                          )}
                           <span className="settings-note">
-                            {profile.hasKey
-                              ? t('settings.keySaved', { last4: profile.keyLast4 })
+                            {row.hasKey
+                              ? t('settings.keySaved', { last4: row.keyLast4 })
                               : t('settings.noKeySaved')}
-                            {profile.id === snapshot.provider ? t('settings.inUse') : ''}
+                            {active ? t('settings.inUse') : ''}
                           </span>
                         </div>
                         <div className="settings-custom-actions">
                           <button
                             type="button"
                             className="settings-save"
-                            disabled={busy}
-                            onClick={() => changeProvider(profile.id)}
+                            disabled={busy || active}
+                            onClick={() => changeProvider(row.id)}
                           >
                             {t('settings.use')}
                           </button>
                           <button
                             type="button"
                             className="settings-save"
-                            disabled={busy}
-                            onClick={() => startEditCustom(profile)}
+                            disabled={busy || testing}
+                            onClick={() => testSaved(row.id)}
                           >
-                            {t('settings.edit')}
+                            {testing ? t('settings.testing') : t('settings.test')}
                           </button>
-                          <button
-                            type="button"
-                            className="settings-remove"
-                            disabled={busy || profile.id === snapshot.provider}
-                            title={t(
-                              profile.id === snapshot.provider
-                                ? 'settings.removeActiveProvider'
-                                : 'settings.removeProviderHint'
-                            )}
-                            onClick={() => removeCustom(profile.id)}
-                          >
-                            {t('settings.remove')}
-                          </button>
+                          {profile !== null && (
+                            <button
+                              type="button"
+                              className="settings-save"
+                              disabled={busy}
+                              onClick={() => startEditCustom(profile)}
+                            >
+                              {t('settings.edit')}
+                            </button>
+                          )}
+                          {profile !== null ? (
+                            <button
+                              type="button"
+                              className="settings-remove"
+                              disabled={busy || active}
+                              title={t(
+                                active
+                                  ? 'settings.removeActiveProvider'
+                                  : 'settings.removeProviderHint'
+                              )}
+                              onClick={() => removeCustom(profile.id)}
+                            >
+                              {t('settings.remove')}
+                            </button>
+                          ) : row.hasKey ? (
+                            <button
+                              type="button"
+                              className="settings-remove"
+                              disabled={busy}
+                              title={t('settings.removeKeyHint')}
+                              onClick={() => removeKeyFor(row.id)}
+                            >
+                              {t('settings.removeKey')}
+                            </button>
+                          ) : null}
                         </div>
                       </li>
-                    ))}
-                  </ul>
-                )}
+                    )
+                  })}
+                </ul>
                 {editingId === undefined ? (
                   <button
                     type="button"

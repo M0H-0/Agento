@@ -61,6 +61,8 @@ export interface SettingsSnapshot {
   models: string[]
   /** Every provider id → its model ids (built-in curated lists; one entry per custom profile). */
   providerModels: Record<string, string[]>
+  /** Masked key state for EVERY provider (built-ins + customs) — keyLast4 only, never the key itself. */
+  providerKeys: Record<string, { hasKey: boolean; keyLast4: string }>
   appearance: Appearance
   locale: Locale
   permissionDefaults: PermissionDefaults
@@ -286,6 +288,18 @@ export function getSettings(): SettingsSnapshot {
       : [...(PROVIDERS[prefs.provider]?.models ?? [])]
   const builtInModels: Record<string, string[]> = {}
   for (const [id, entry] of Object.entries(PROVIDERS)) builtInModels[id] = entry.models
+  // Key state for every provider — feeds the unified "Your providers" list in
+  // Settings (docs/04 §3.7) so built-ins appear alongside custom profiles with
+  // their own masked status. Same masking discipline as `keyLast4` above.
+  const providerKeys: Record<string, { hasKey: boolean; keyLast4: string }> = {}
+  for (const id of ENABLED_PROVIDERS) {
+    const providerKey = resolveProviderKey(id)
+    providerKeys[id] = { hasKey: providerKey !== undefined, keyLast4: maskKey(providerKey) }
+  }
+  for (const profile of prefs.customProviders) {
+    const profileKey = resolveProviderKey(profile.id)
+    providerKeys[profile.id] = { hasKey: profileKey !== undefined, keyLast4: maskKey(profileKey) }
+  }
   return {
     provider: prefs.provider,
     model: prefs.model,
@@ -295,6 +309,7 @@ export function getSettings(): SettingsSnapshot {
     providers: [...ENABLED_PROVIDERS],
     models,
     providerModels: buildProviderModels(builtInModels, prefs.customProviders),
+    providerKeys,
     appearance: prefs.appearance,
     locale: prefs.locale,
     permissionDefaults: { ...prefs.permissionDefaults },
