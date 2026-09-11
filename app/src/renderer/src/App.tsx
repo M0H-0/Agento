@@ -28,6 +28,7 @@ import { Onboarding } from './components/Onboarding'
 import ModelChip from './components/ModelChip'
 import QuickActions from './components/QuickActions'
 import FileAttach from './components/FileAttach'
+import SlashMenu from './components/SlashMenu'
 import { ToolUIRegistry } from './components/cards/ToolUIRegistry'
 
 // Plan panel state (M3.1 + M3.6 live): fed by the agent:event subscription
@@ -232,6 +233,7 @@ function Thread({
   attachments,
   onAttachmentsChange,
   sessionId,
+  onSlashMutated,
   homeGreeting,
   playHomeEntrance,
   onHomeEntrancePlayed
@@ -245,6 +247,7 @@ function Thread({
   attachments: string[]
   onAttachmentsChange: (next: string[]) => void
   sessionId: string | null
+  onSlashMutated: () => void
   homeGreeting: string
   playHomeEntrance: boolean
   onHomeEntrancePlayed: () => void
@@ -358,6 +361,10 @@ function Thread({
                 disabled={modeDisabled}
                 sessionId={sessionId}
               />
+              {/* Slash commands (docs/04 §3.5): `/` menu for undo + search
+                  shortcuts; template commands send through the normal
+                  transport, local ones run against the changes IPC. */}
+              <SlashMenu disabled={modeDisabled} sessionId={sessionId} onMutated={onSlashMutated} />
               <ComposerPrimitive.Input
                 className="composer-input"
                 placeholder={mode === 'plan' ? 'Ask for a read-only plan…' : 'Ask anything…'}
@@ -406,6 +413,7 @@ interface ChatViewProps {
   onAttachmentsChange: (next: string[]) => void
   getAttachments: () => string[]
   onAttachmentsConsumed: () => void
+  onSlashMutated: () => void
   homeGreeting: string
   playHomeEntrance: boolean
   onHomeEntrancePlayed: () => void
@@ -434,6 +442,7 @@ function ChatView({
   onAttachmentsChange,
   getAttachments,
   onAttachmentsConsumed,
+  onSlashMutated,
   homeGreeting,
   playHomeEntrance,
   onHomeEntrancePlayed
@@ -515,6 +524,7 @@ function ChatView({
         attachments={attachments}
         onAttachmentsChange={onAttachmentsChange}
         sessionId={sessionId}
+        onSlashMutated={onSlashMutated}
         homeGreeting={homeGreeting}
         playHomeEntrance={playHomeEntrance}
         onHomeEntrancePlayed={onHomeEntrancePlayed}
@@ -889,6 +899,12 @@ function App(): React.JSX.Element {
     setRunStatus(undefined)
   }, [refreshSessions])
 
+  // Slash-command undos land outside a run settle, so they bump the same
+  // Changes feed key directly (docs/04 §3.5).
+  const onSlashMutated = useCallback(() => {
+    setChangesRefreshKey((key) => key + 1)
+  }, [])
+
   // Ctrl+Z (docs/04 §7): undo the NEWEST change group — the same unit the
   // Changes panel's per-item undo restores (a move's two rows fan out
   // oldest-first, exactly like undoGroup there). Text-field undo is left
@@ -1070,6 +1086,7 @@ function App(): React.JSX.Element {
           onAttachmentsChange={handleAttachmentsChange}
           getAttachments={getAttachments}
           onAttachmentsConsumed={clearAttachments}
+          onSlashMutated={onSlashMutated}
           homeGreeting={homeGreeting}
           playHomeEntrance={!homeEntranceSpent}
           onHomeEntrancePlayed={markHomeEntranceSpent}
