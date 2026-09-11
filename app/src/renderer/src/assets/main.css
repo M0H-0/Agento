@@ -2081,6 +2081,7 @@
 .composer-input,
 .changes-panel__list,
 .slash-list,
+.workspace-overview,
 .message-markdown pre,
 .message-markdown table {
   scrollbar-gutter: stable;
@@ -2092,6 +2093,7 @@
 .composer-input::-webkit-scrollbar,
 .changes-panel__list::-webkit-scrollbar,
 .slash-list::-webkit-scrollbar,
+.workspace-overview::-webkit-scrollbar,
 .message-markdown pre::-webkit-scrollbar,
 .message-markdown table::-webkit-scrollbar {
   width: 8px;
@@ -2104,6 +2106,7 @@
 .composer-input::-webkit-scrollbar-track,
 .changes-panel__list::-webkit-scrollbar-track,
 .slash-list::-webkit-scrollbar-track,
+.workspace-overview::-webkit-scrollbar-track,
 .message-markdown pre::-webkit-scrollbar-track,
 .message-markdown table::-webkit-scrollbar-track {
   background: transparent;
@@ -2115,6 +2118,7 @@
 .composer-input::-webkit-scrollbar-thumb,
 .changes-panel__list::-webkit-scrollbar-thumb,
 .slash-list::-webkit-scrollbar-thumb,
+.workspace-overview::-webkit-scrollbar-thumb,
 .message-markdown pre::-webkit-scrollbar-thumb,
 .message-markdown table::-webkit-scrollbar-thumb {
   background: var(--border);
@@ -2127,6 +2131,7 @@
 .composer-input::-webkit-scrollbar-thumb:hover,
 .changes-panel__list::-webkit-scrollbar-thumb:hover,
 .slash-list::-webkit-scrollbar-thumb:hover,
+.workspace-overview::-webkit-scrollbar-thumb:hover,
 .message-markdown pre::-webkit-scrollbar-thumb:hover,
 .message-markdown table::-webkit-scrollbar-thumb:hover {
   background: color-mix(in oklab, var(--muted-foreground) 45%, transparent);
@@ -2142,6 +2147,7 @@
   .composer-input,
   .changes-panel__list,
   .slash-list,
+  .workspace-overview,
   .message-markdown pre,
   .message-markdown table {
     scrollbar-width: thin;
@@ -2736,4 +2742,196 @@
   border-radius: var(--radius);
   padding: 0.3rem 0.7rem;
   cursor: pointer;
+}
+
+/* Workspace Overview (demo destination): calm non-chat home for the current
+   folder — header, snapshot strip, recent work, task starters. Token grays
+   only, hairline borders, no new hues. The center column scrolls; chips reuse
+   the QuickActions treatment. */
+.sessions-overview-btn {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.sessions-overview-btn:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.workspace-overview {
+  width: 100%;
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 2rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.workspace-overview__back {
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 0.3rem 0.75rem;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.workspace-overview__back:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.workspace-overview__title {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.workspace-overview__path {
+  margin: -0.8rem 0 0;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-overview section + section {
+  border-top: 1px solid var(--border);
+  padding-top: 1.1rem;
+}
+
+.workspace-overview__heading {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--foreground);
+  user-select: none;
+}
+
+.workspace-overview__note {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+
+.workspace-overview__error {
+  margin: 0;
+  color: var(--destructive);
+  font-size: 0.85rem;
+}
+
+.workspace-overview__stats {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.workspace-overview__stats li {
+  flex: 1 1 6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--card);
+}
+
+.workspace-overview__stat-num {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.workspace-overview__stat-label {
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+}
+
+.workspace-overview__recent {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.workspace-overview__recent-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.workspace-overview__recent-item:hover {
+  background: var(--accent);
+}
+
+.workspace-overview__recent-title {
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-overview__recent-time {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+}
+
+.workspace-overview__open {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+.workspace-overview__recent-item:hover .workspace-overview__open {
+  color: inherit;
+}
+
+.workspace-overview__chips {
+  justify-content: flex-start;
+  margin: 0;
+  max-width: none;
+}
+
+.workspace-overview__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.workspace-overview__actions .sessions-new-chat {
+  flex: 0 0 auto;
 }

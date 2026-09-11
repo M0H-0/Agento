@@ -5,7 +5,8 @@ import {
   AssistantRuntimeProvider,
   ComposerPrimitive,
   MessagePrimitive,
-  ThreadPrimitive
+  ThreadPrimitive,
+  useThreadRuntime
 } from '@assistant-ui/react'
 import type { UIMessage } from 'ai'
 import { createIpcChatTransport } from './chat/transport'
@@ -29,7 +30,29 @@ import ModelChip from './components/ModelChip'
 import QuickActions from './components/QuickActions'
 import FileAttach from './components/FileAttach'
 import SlashMenu from './components/SlashMenu'
+import WorkspaceOverview from './components/WorkspaceOverview'
 import { ToolUIRegistry } from './components/cards/ToolUIRegistry'
+
+// Composer prefill (Workspace Overview task starters): fills the composer
+// once per provided prompt, never auto-sends. Lives inside the thread
+// runtime so it can call composer.setText; the parent clears the prompt on
+// first consumption so re-renders never re-fill over user typing.
+function ComposerPrefill({
+  text,
+  onConsumed
+}: {
+  text: string | null
+  onConsumed: () => void
+}): null {
+  const runtime = useThreadRuntime({ optional: true })
+  useEffect(() => {
+    if (!text || !runtime) return
+    runtime.composer.setText(text)
+    document.querySelector<HTMLInputElement>('.composer-input')?.focus()
+    onConsumed()
+  }, [text, runtime, onConsumed])
+  return null
+}
 
 // Plan panel state (M3.1 + M3.6 live): fed by the agent:event subscription
 // below. The runId disambiguates a fresh plan (new run) from a REVISED plan
@@ -236,7 +259,9 @@ function Thread({
   onSlashMutated,
   homeGreeting,
   playHomeEntrance,
-  onHomeEntrancePlayed
+  onHomeEntrancePlayed,
+  prefillPrompt,
+  onPrefillConsumed
 }: {
   error?: Error
   runStatus?: string
@@ -251,6 +276,8 @@ function Thread({
   homeGreeting: string
   playHomeEntrance: boolean
   onHomeEntrancePlayed: () => void
+  prefillPrompt: string | null
+  onPrefillConsumed: () => void
 }): React.JSX.Element {
   // Hint preview: hovering or keyboard-focusing the unselected Plan/Act tab
   // shows THAT mode's description, so users can compare before switching.
@@ -392,6 +419,7 @@ function Thread({
         <ThreadPrimitive.If empty>
           <QuickActions playEntrance={playEntrance} />
         </ThreadPrimitive.If>
+        <ComposerPrefill text={prefillPrompt} onConsumed={onPrefillConsumed} />
       </ThreadPrimitive.ViewportFooter>
     </ThreadPrimitive.Root>
   )
@@ -417,6 +445,8 @@ interface ChatViewProps {
   homeGreeting: string
   playHomeEntrance: boolean
   onHomeEntrancePlayed: () => void
+  prefillPrompt: string | null
+  onPrefillConsumed: () => void
 }
 
 // One conversation view. Remounted (keyed by an epoch that advances only on
@@ -445,7 +475,9 @@ function ChatView({
   onSlashMutated,
   homeGreeting,
   playHomeEntrance,
-  onHomeEntrancePlayed
+  onHomeEntrancePlayed,
+  prefillPrompt,
+  onPrefillConsumed
 }: ChatViewProps): React.JSX.Element {
   // Created once per mount: the transport carries this view's run state
   // (in-flight guard, active run's session id), so a per-render identity
@@ -528,6 +560,8 @@ function ChatView({
         homeGreeting={homeGreeting}
         playHomeEntrance={playHomeEntrance}
         onHomeEntrancePlayed={onHomeEntrancePlayed}
+        prefillPrompt={prefillPrompt}
+        onPrefillConsumed={onPrefillConsumed}
       />
     </AssistantRuntimeProvider>
   )
@@ -975,6 +1009,37 @@ function App(): React.JSX.Element {
     setThreadEpoch((epoch) => epoch + 1)
   }, [resetPlan, setModeBoth, clearAttachments])
 
+  // Workspace Overview (demo destination): idle navigation only — the center
+  // column swaps between the chat thread and the folder overview. Opening a
+  // session or starting a task always returns to the chat view; the trust
+  // loop (plan/approval/changes) is untouched.
+  const [mainView, setMainView] = useState<'chat' | 'overview'>('chat')
+  const [composerPrefill, setComposerPrefill] = useState<string | null>(null)
+  const onPrefillConsumed = useCallback(() => setComposerPrefill(null), [])
+
+  const openOverviewSession = useCallback(
+    (session: SessionSummary) => {
+      setMainView('chat')
+      void openSession(session)
+    },
+    [openSession]
+  )
+
+  const startTaskFromOverview = useCallback(
+    (prompt: string) => {
+      setComposerPrefill(prompt)
+      startNewChat()
+      setMainView('chat')
+    },
+    [startNewChat]
+  )
+
+  const newChatFromOverview = useCallback(() => {
+    setComposerPrefill(null)
+    startNewChat()
+    setMainView('chat')
+  }, [startNewChat])
+
   // Sidebar rename/delete (docs/04 §2). Rename patches the row in place; a
   // user rename also blocks the background auto-title main-side (title_renamed).
   // Delete of the ACTIVE chat first tears the view down (dispose → fresh chat)
@@ -1039,7 +1104,10 @@ function App(): React.JSX.Element {
       }
       event.preventDefault()
       if (key === 'z') void undoLastChange()
-      else startNewChat()
+      else {
+        startNewChat()
+        setMainView('chat')
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -1057,9 +1125,16 @@ function App(): React.JSX.Element {
       <SessionsSidebar
         sessions={sessions}
         activeSessionId={activeSessionId}
-        onNewChat={startNewChat}
-        onOpenSession={openSession}
+        onNewChat={() => {
+          startNewChat()
+          setMainView('chat')
+        }}
+        onOpenSession={(session) => {
+          setMainView('chat')
+          void openSession(session)
+        }}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenOverview={() => setMainView('overview')}
         onRenameSession={handleRenameSession}
         onDeleteSession={handleDeleteSession}
         settingsOpen={settingsOpen}
@@ -1067,37 +1142,51 @@ function App(): React.JSX.Element {
       {/* Real three-column shell (UI_POLISH_PLAN.md): the thread lives in its
           own flex column (.chat-main), so messages can never render under the
           panels; the right rail is in flow — Plan above Changes — so the two
-          panels can never overlap either. */}
+          panels can never overlap either. The Workspace Overview swaps the
+          center column only; the rail hides while it is up. */}
       <main className="chat-main">
-        <ChatView
-          key={threadEpoch}
-          getSessionId={getSessionId}
-          getMode={getMode}
-          mode={mode}
-          onModeChange={handleModeChange}
-          modeDisabled={modeSaving}
-          onSessionCreated={onSessionCreated}
-          onSettled={onSettled}
-          initialMessages={pendingMessages}
-          registerDispose={registerDispose}
-          runStatus={runStatus}
-          sessionId={activeSessionId}
-          attachments={attachments}
-          onAttachmentsChange={handleAttachmentsChange}
-          getAttachments={getAttachments}
-          onAttachmentsConsumed={clearAttachments}
-          onSlashMutated={onSlashMutated}
-          homeGreeting={homeGreeting}
-          playHomeEntrance={!homeEntranceSpent}
-          onHomeEntrancePlayed={markHomeEntranceSpent}
-        />
+        {mainView === 'overview' ? (
+          <WorkspaceOverview
+            sessions={sessions}
+            onOpenSession={openOverviewSession}
+            onNewChat={newChatFromOverview}
+            onStartTask={startTaskFromOverview}
+            onBack={() => setMainView('chat')}
+          />
+        ) : (
+          <ChatView
+            key={threadEpoch}
+            getSessionId={getSessionId}
+            getMode={getMode}
+            mode={mode}
+            onModeChange={handleModeChange}
+            modeDisabled={modeSaving}
+            onSessionCreated={onSessionCreated}
+            onSettled={onSettled}
+            initialMessages={pendingMessages}
+            registerDispose={registerDispose}
+            runStatus={runStatus}
+            sessionId={activeSessionId}
+            attachments={attachments}
+            onAttachmentsChange={handleAttachmentsChange}
+            getAttachments={getAttachments}
+            onAttachmentsConsumed={clearAttachments}
+            onSlashMutated={onSlashMutated}
+            homeGreeting={homeGreeting}
+            playHomeEntrance={!homeEntranceSpent}
+            onHomeEntrancePlayed={markHomeEntranceSpent}
+            prefillPrompt={composerPrefill}
+            onPrefillConsumed={onPrefillConsumed}
+          />
+        )}
       </main>
       {/* The rail collapses when there is no plan and no active session
-          (docs/04 §2); ChangesPanel itself returns null without a session.
+          (docs/04 §2), and hides entirely under the Workspace Overview;
+          ChangesPanel itself returns null without a session.
           Plain div wrapper — deliberately not a landmark: PlanPanel and
           ChangesPanel are the complementary regions (each has its own
           aria-label), avoiding three nested complementary landmarks. */}
-      {plan !== null || activeSessionId !== null ? (
+      {mainView === 'chat' && (plan !== null || activeSessionId !== null) ? (
         <div className="right-rail">
           {plan !== null ? (
             <PlanPanel

@@ -9,6 +9,7 @@ interface SessionsSidebarProps {
   onNewChat: () => void
   onOpenSession: (session: SessionSummary) => void
   onOpenSettings: () => void
+  onOpenOverview: () => void
   onRenameSession: (session: SessionSummary, title: string) => Promise<void>
   onDeleteSession: (session: SessionSummary) => Promise<void>
   /** Whether the Settings dialog is currently open — refreshes the badge. */
@@ -204,6 +205,7 @@ function SessionsSidebar({
   onNewChat,
   onOpenSession,
   onOpenSettings,
+  onOpenOverview,
   onRenameSession,
   onDeleteSession,
   settingsOpen
@@ -528,6 +530,9 @@ function SessionsSidebar({
           are app-level state, not per-session. onChanged keeps Folder mode's
           first-section pin + auto-expand following a switch. */}
       <WorkspacePicker onChanged={handleWorkspaceChanged} />
+      <button type="button" className="sessions-overview-btn" onClick={onOpenOverview}>
+        Workspace overview
+      </button>
       <button type="button" className="sessions-new-chat" onClick={onNewChat}>
         + New chat
       </button>

@@ -68,10 +68,16 @@ describe('suggestPrompts', () => {
     expect(suggestPrompts(singlePdf)).toEqual(['Make a one-page summary of the PDF in this folder'])
   })
 
-  it('falls back to generic prompts for an empty folder', () => {
+  it('asks onboarding questions for an empty folder, not "list the files"', () => {
     expect(suggestPrompts(signalsFromFiles([], false))).toEqual([
-      'List the files in this folder',
-      'What can you help me do here?'
+      'What can you help me do here?',
+      'How do I add files to this folder?'
     ])
+  })
+
+  it('falls back to generic prompts when files exist but no signal fires', () => {
+    expect(
+      suggestPrompts(signalsFromFiles([{ relativePath: 'notes.txt', isDir: false }], false))
+    ).toEqual(['List the files in this folder', 'What can you help me do here?'])
   })
 })

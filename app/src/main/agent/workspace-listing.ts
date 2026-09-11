@@ -64,8 +64,17 @@ export function signalsFromFiles(
 }
 
 /** Contextual prompt selection (docs/04 §3.5): evidence-backed chips first,
- * generic fallbacks only when the folder is empty or a signal is absent. */
+ * onboarding questions when the folder is empty ("List the files" is a
+ * nonsense suggestion there), generic fallbacks only when a signal is
+ * absent. The empty-folder strings are mirrored in the renderer's
+ * chat/suggestions.ts by contract — keep the two in sync. */
+export const EMPTY_FOLDER_PROMPTS = [
+  'What can you help me do here?',
+  'How do I add files to this folder?'
+]
+
 export function suggestPrompts(signals: PromptSignals): string[] {
+  if (signals.fileCount === 0) return [...EMPTY_FOLDER_PROMPTS]
   const prompts: string[] = []
   if (signals.pdfCount > 0) {
     prompts.push(

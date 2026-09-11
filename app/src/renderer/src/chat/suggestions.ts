@@ -10,7 +10,14 @@ export interface ScannedFile {
 
 const GENERIC_FALLBACKS = ['List the files in this folder', 'What can you help me do here?']
 
+// Empty-folder starters (kept in sync with EMPTY_FOLDER_PROMPTS in
+// src/main/agent/workspace-listing.ts by contract — the renderer cannot
+// import that module). "List the files" is a nonsense suggestion when the
+// folder is empty, so the empty case gets onboarding questions instead.
+const EMPTY_FOLDER_PROMPTS = ['What can you help me do here?', 'How do I add files to this folder?']
+
 export function suggestPromptsFromScan(files: ScannedFile[], titles: string[]): string[] {
+  if (files.length === 0) return [...EMPTY_FOLDER_PROMPTS]
   let pdfCount = 0
   const extensions = new Set<string>()
   let pricingEvidence = titles.some((title) => title.toLowerCase().includes('pric'))
