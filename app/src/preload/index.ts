@@ -344,6 +344,22 @@ export interface SystemOpenPathPayload {
   path: string
 }
 
+export interface WorkspaceListFilesPayload {
+  sessionId?: string
+  prefix?: string
+  limit?: number
+}
+
+export interface WorkspaceFileEntry {
+  relativePath: string
+  isDir: boolean
+}
+
+export interface WorkspaceListFilesResult {
+  files: WorkspaceFileEntry[]
+  truncated: boolean
+}
+
 const agento = {
   chat: {
     send: (payload: ChatSendPayload): Promise<void> => ipcRenderer.invoke('chat:send', payload),
@@ -423,7 +439,10 @@ const agento = {
     pick: (): Promise<{ path: string } | null> => ipcRenderer.invoke('workspace:pick'),
     /** Re-apply a path from our own recents list. */
     set: (payload: WorkspaceSetPayload): Promise<{ path: string }> =>
-      ipcRenderer.invoke('workspace:set', payload)
+      ipcRenderer.invoke('workspace:set', payload),
+    /** Sandboxed workspace-relative file enumeration for the composer picker. */
+    listFiles: (payload?: WorkspaceListFilesPayload): Promise<WorkspaceListFilesResult> =>
+      ipcRenderer.invoke('workspace:list-files', payload ?? {})
   },
   settings: {
     get: (): Promise<SettingsSnapshot> => ipcRenderer.invoke('settings:get'),

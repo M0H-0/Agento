@@ -270,6 +270,22 @@ export interface AgentoSessions {
   plan: (payload: SessionMessagesPayload) => Promise<AgentPlanStep[]>
 }
 
+export interface WorkspaceListFilesPayload {
+  sessionId?: string
+  prefix?: string
+  limit?: number
+}
+
+export interface WorkspaceFileEntry {
+  relativePath: string
+  isDir: boolean
+}
+
+export interface WorkspaceListFilesResult {
+  files: WorkspaceFileEntry[]
+  truncated: boolean
+}
+
 export interface AgentoWorkspaces {
   /** Invoke 'workspace:get' — current workspace + recents (docs/03 §4). */
   get: () => Promise<WorkspaceSnapshotPayload>
@@ -279,6 +295,8 @@ export interface AgentoWorkspaces {
   pick: () => Promise<{ path: string } | null>
   /** Invoke 'workspace:set' — applies a path from our own recents. */
   set: (payload: WorkspaceSetPayload) => Promise<{ path: string }>
+  /** Invoke 'workspace:list-files' — sandboxed workspace-relative enumeration for the composer picker. */
+  listFiles: (payload?: WorkspaceListFilesPayload) => Promise<WorkspaceListFilesResult>
 }
 
 export type SidecarStatus = 'starting' | 'healthy' | 'unhealthy'

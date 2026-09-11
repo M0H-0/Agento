@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SessionSummary } from '../chat/transport'
 import SidecarStatusDot from './SidecarStatusDot'
 import WorkspacePicker from './WorkspacePicker'
@@ -11,6 +11,32 @@ interface SessionsSidebarProps {
   onOpenSettings: () => void
   onRenameSession: (session: SessionSummary, title: string) => Promise<void>
   onDeleteSession: (session: SessionSummary) => Promise<void>
+  /** Whether the Settings dialog is currently open — refreshes the badge. */
+  settingsOpen: boolean
+}
+
+// Settings attention badge (gap 2): lit ONLY when the active provider is a
+// built-in (key-mandatory) provider with no stored key — custom profiles may
+// legally be keyless (main's providerRequiresKey rule, mirrored without new
+// IPC: built-ins in snapshot.providers always need keys). Dismissed once the
+// user visits Settings (per-provider localStorage flag); resolving the key
+// clears the condition itself.
+const SETTINGS_BADGE_DISMISS_PREFIX = 'agento.settings.badgeSeen:'
+
+function readBadgeDismissed(provider: string): boolean {
+  try {
+    return window.localStorage.getItem(`${SETTINGS_BADGE_DISMISS_PREFIX}${provider}`) !== null
+  } catch {
+    return false
+  }
+}
+
+function writeBadgeDismissed(provider: string): void {
+  try {
+    window.localStorage.setItem(`${SETTINGS_BADGE_DISMISS_PREFIX}${provider}`, '1')
+  } catch {
+    // Private-mode quota failures must never break the rail.
+  }
 }
 
 // Relative timestamps for the session list — small local helper, no
@@ -29,17 +55,85 @@ function formatRelativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString()
 }
 
-// The folder each chat is bound to (per-session workspace_path, docs/03 §8) —
-// the path itself, not just the leaf name, so chats in sibling folders are
-// tellable apart at a glance. Short paths render whole; longer ones keep the
-// last two segments recognizable with an ellipsis head (same treatment as the
-// workspace chip). '' placeholder rows (created before any pick) say so
-// honestly instead of inventing a folder; the full path stays in the tooltip.
-function formatWorkspacePath(path: string): string {
+// The folder tag for each chat (per-session workspace_path, docs/03 §8) —
+// folder name only, so consecutive chats in the same workspace no longer
+// repeat the full path down the rail. The full path stays in the row's
+// tooltip. '' placeholder rows (created before any pick) say so honestly.
+function workspaceFolderName(path: string): string {
   if (!path) return 'No folder'
-  if (path.length <= 46) return path
   const segments = path.split(/[\\/]/).filter(Boolean)
-  return `…\\${segments.slice(-2).join('\\')}`
+  return segments.length > 0 ? segments[segments.length - 1] : path
+}
+
+// Date groups for the session list (docs/04 §2) — local calendar days, no
+// date library. Today / Yesterday / Earlier this week (Monday–Sunday) /
+// Older. Invalid or future timestamps fall back to Today so a row never
+// vanishes into the wrong bucket.
+type DateGroupKey = 'Today' | 'Yesterday' | 'Earlier this week' | 'Older'
+
+function getDateGroup(iso: string): DateGroupKey {
+  const then = new Date(iso)
+  if (Number.isNaN(then.getTime())) return 'Today'
+  const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const startOfThen = new Date(then.getFullYear(), then.getMonth(), then.getDate())
+  const dayMs = 24 * 60 * 60 * 1000
+  const diffDays = Math.round((startOfToday.getTime() - startOfThen.getTime()) / dayMs)
+  if (diffDays <= 0) return 'Today'
+  if (diffDays === 1) return 'Yesterday'
+  // Monday-start week containing today; days since Monday (0 = Monday).
+  const dayOfWeek = (startOfToday.getDay() + 6) % 7
+  const startOfWeek = new Date(startOfToday.getTime() - dayOfWeek * dayMs)
+  if (startOfThen.getTime() >= startOfWeek.getTime()) return 'Earlier this week'
+  return 'Older'
+}
+
+const DATE_GROUP_ORDER: DateGroupKey[] = ['Today', 'Yesterday', 'Earlier this week', 'Older']
+
+// Sort toggle state (view preference — lives in localStorage, never IPC or
+// Settings). Default Recency; the last pick is remembered across reloads.
+type SortMode = 'recency' | 'folder'
+
+const SIDEBAR_SORT_KEY = 'agento.sidebar.sort'
+const SIDEBAR_COLLAPSED_KEY = 'agento.sidebar.collapsed'
+
+function readSortMode(): SortMode {
+  try {
+    return window.localStorage.getItem(SIDEBAR_SORT_KEY) === 'folder' ? 'folder' : 'recency'
+  } catch {
+    return 'recency'
+  }
+}
+
+function readCollapsedKeys(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY)
+    if (!raw) return new Set()
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return new Set()
+    return new Set(parsed.filter((entry): entry is string => typeof entry === 'string'))
+  } catch {
+    return new Set()
+  }
+}
+
+// Folder grouping key — case-insensitive so Windows case variants of the
+// same folder land in one section. '' (pre-pick rows) is its own group.
+function folderKey(path: string): string {
+  return path.toLowerCase()
+}
+
+// Section header label — bare leaf name, except when two visible folders
+// share a leaf (sibling checkouts both ending in `btw`): those get the last
+// two segments so they stay tellable apart. Full path is always in the
+// header tooltip regardless.
+function folderDisplayName(path: string, colliding: boolean): string {
+  if (!path) return 'No folder'
+  const segments = path.split(/[\\/]/).filter(Boolean)
+  if (segments.length === 0) return path
+  const leaf = segments[segments.length - 1]
+  if (!colliding || segments.length < 2) return leaf
+  return `${leaf} — ${segments.slice(-2).join('\\')}`
 }
 
 // One row's rename editor. Enter or blur commits, Escape cancels (docs/04 §2
@@ -95,10 +189,15 @@ function SessionRename({
   )
 }
 
-// Left rail (docs/04 §2/§4): new chat + chronological sessions, most recent
-// first, each with a hover "…" menu (rename / delete — the delete confirm
-// states that the chat's undo history goes too). The UI-polish shell pins
-// Settings + the sidecar status dot to this rail's footer.
+// Left rail (docs/04 §2/§4): new chat + sessions under a Recency | Folder
+// sort toggle. Recency groups under date headers (Today / Yesterday /
+// Earlier this week / Older), most recent first, each row with a compact
+// folder-name tag (full path in the tooltip). Folder groups each folder's
+// chats together (current folder first, newest inside) with the path once in
+// the section header. Both share the hover "…" menu (rename / delete — the
+// delete confirm states that the chat's undo history goes too). The
+// UI-polish shell pins Settings + the sidecar status dot to this rail's
+// footer.
 function SessionsSidebar({
   sessions,
   activeSessionId,
@@ -106,7 +205,8 @@ function SessionsSidebar({
   onOpenSession,
   onOpenSettings,
   onRenameSession,
-  onDeleteSession
+  onDeleteSession,
+  settingsOpen
 }: SessionsSidebarProps): React.JSX.Element {
   // Per-row menu state. Only one row is ever in a special state; ids are the
   // session's, which also means closing on re-render is never required.
@@ -115,6 +215,102 @@ function SessionsSidebar({
   const [deleteConfirmFor, setDeleteConfirmFor] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [menuError, setMenuError] = useState<string | null>(null)
+  const [sortMode, setSortMode] = useState<SortMode>(readSortMode)
+  // The picker's current workspace, used ONLY to pin its section first in
+  // Folder mode. Pushed up by <WorkspacePicker onChanged> on mount and every
+  // pick/set — plus the lazy fetch below for first paint — so the order
+  // follows a workspace switch immediately. A read failure degrades to
+  // newest-first ordering, never a broken list.
+  const [currentWorkspace, setCurrentWorkspace] = useState<string | null>(null)
+  // Collapsed sections — folder keys (case-insensitive paths, '' for No
+  // folder) plus 'date:<bucket>' keys for Recency mode. All expanded by
+  // default; the set persists in localStorage across reloads. A Windows path
+  // can never contain a colon, so the 'date:' prefix cannot collide with a
+  // folder key.
+  const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(readCollapsedKeys)
+  // Settings badge: the provider id needing a key, or null when nothing is
+  // actionable. Refreshed on mount and whenever the dialog closes (a key may
+  // have been saved). `dismissedTick` re-renders after a visit-dismiss.
+  const [needsKeyProvider, setNeedsKeyProvider] = useState<string | null>(null)
+  const [dismissedTick, setDismissedTick] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    window.agento.settings
+      .get()
+      .then((snapshot) => {
+        if (cancelled) return
+        const builtIn = snapshot.providers.includes(snapshot.provider)
+        setNeedsKeyProvider(builtIn && !snapshot.hasKey ? snapshot.provider : null)
+      })
+      .catch(() => {
+        // A settings read failure leaves the badge hidden, never stuck on.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [settingsOpen])
+
+  // `dismissedTick` has no value of its own — writing the dismiss flag to
+  // localStorage doesn't re-render, so the tick forces one.
+  void dismissedTick
+  const showSettingsBadge = needsKeyProvider !== null && !readBadgeDismissed(needsKeyProvider)
+
+  const handleOpenSettings = (): void => {
+    if (needsKeyProvider) {
+      writeBadgeDismissed(needsKeyProvider)
+      setDismissedTick((tick) => tick + 1)
+    }
+    onOpenSettings()
+  }
+
+  // Stable: WorkspacePicker's refresh() identity (and its mount effect)
+  // depends on this, so it must never change between renders.
+  const handleWorkspaceChanged = useCallback((path: string | null) => {
+    setCurrentWorkspace(path)
+    // Auto-expand the folder you just moved to, so you see where you went.
+    if (path) {
+      const key = folderKey(path)
+      setCollapsedKeys((prev) => {
+        if (!prev.has(key)) return prev
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_SORT_KEY, sortMode)
+    } catch {
+      // Private-mode style quota failures must never break the rail.
+    }
+  }, [sortMode])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, JSON.stringify([...collapsedKeys]))
+    } catch {
+      // Private-mode style quota failures must never break the rail.
+    }
+  }, [collapsedKeys])
+
+  useEffect(() => {
+    if (sortMode !== 'folder') return
+    let cancelled = false
+    window.agento.workspaces
+      .get()
+      .then((snapshot) => {
+        if (!cancelled) setCurrentWorkspace(snapshot.current)
+      })
+      .catch(() => {
+        // Deviation: never crash the rail on a workspace read failure.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [sortMode])
 
   const closeMenus = (): void => {
     setMenuFor(null)
@@ -150,141 +346,312 @@ function SessionsSidebar({
     }
   }
 
+  // Sessions arrive most-recent-first (main's updated_at DESC); grouping
+  // preserves that order inside each date bucket.
+  const groupedSessions: { key: DateGroupKey; items: SessionSummary[] }[] = DATE_GROUP_ORDER.map(
+    (key) => ({
+      key,
+      items: sessions.filter((session) => getDateGroup(session.updatedAt) === key)
+    })
+  ).filter((group) => group.items.length > 0)
+
+  // Folder mode: one section per workspace (first-seen order is already
+  // newest-first), pinned with the picker's current folder on top and the
+  // rest by their newest chat. Chats stay newest-first inside each folder.
+  const folderGroups: { key: string; path: string; label: string; items: SessionSummary[] }[] =
+    (() => {
+      const seen = new Map<string, { path: string; items: SessionSummary[] }>()
+      for (const session of sessions) {
+        const key = folderKey(session.workspacePath)
+        const group = seen.get(key)
+        if (group) group.items.push(session)
+        else seen.set(key, { path: session.workspacePath, items: [session] })
+      }
+      const leafCounts = new Map<string, number>()
+      for (const group of seen.values()) {
+        const leaf = workspaceFolderName(group.path).toLowerCase()
+        leafCounts.set(leaf, (leafCounts.get(leaf) ?? 0) + 1)
+      }
+      const groups = [...seen.entries()].map(([key, group]) => ({
+        key,
+        path: group.path,
+        label: folderDisplayName(
+          group.path,
+          (leafCounts.get(workspaceFolderName(group.path).toLowerCase()) ?? 0) > 1
+        ),
+        items: group.items
+      }))
+      const currentKey = currentWorkspace ? folderKey(currentWorkspace) : null
+      if (currentKey === null) return groups
+      return groups.sort((a, b) => {
+        if (a.key === currentKey && b.key !== currentKey) return -1
+        if (b.key === currentKey && a.key !== currentKey) return 1
+        return 0
+      })
+    })()
+
+  const renderRow = (session: SessionSummary, showFolderTag: boolean): React.JSX.Element => (
+    <li key={session.id} className="session-row">
+      {renamingId === session.id ? (
+        <SessionRename
+          session={session}
+          busy={busyId === session.id}
+          onCommit={(title) => void handleRenameCommit(session, title)}
+          onCancel={() => setRenamingId(null)}
+        />
+      ) : (
+        <>
+          <button
+            type="button"
+            className={
+              session.id === activeSessionId ? 'session-item session-item--active' : 'session-item'
+            }
+            onClick={() => onOpenSession(session)}
+            title={
+              session.workspacePath ? `${session.title}\n${session.workspacePath}` : session.title
+            }
+          >
+            <span className="session-item-title">{session.title}</span>
+            <span className="session-item-meta">
+              {showFolderTag ? (
+                <>
+                  <span
+                    className="session-item-folder"
+                    title={session.workspacePath ? session.workspacePath : undefined}
+                  >
+                    {workspaceFolderName(session.workspacePath)}
+                  </span>
+                  <span className="session-item-dot" aria-hidden="true">
+                    ·
+                  </span>
+                </>
+              ) : null}
+              <span className="session-item-time">{formatRelativeTime(session.updatedAt)}</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            className="session-menu-btn"
+            aria-label={`Chat options for ${session.title}`}
+            aria-haspopup="menu"
+            aria-expanded={menuFor === session.id}
+            onClick={() => {
+              if (menuFor === session.id) closeMenus()
+              else {
+                setMenuFor(session.id)
+                setDeleteConfirmFor(null)
+                setMenuError(null)
+              }
+            }}
+          >
+            …
+          </button>
+          {menuFor === session.id ? (
+            <div
+              className="session-menu"
+              role="menu"
+              aria-label={`Chat options for ${session.title}`}
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) closeMenus()
+              }}
+            >
+              {deleteConfirmFor === session.id ? (
+                <>
+                  <p className="session-menu-confirm">
+                    Delete this chat? Its undo history goes too.
+                  </p>
+                  {menuError ? <p className="session-menu-error">{menuError}</p> : null}
+                  <div className="session-menu-actions">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="session-menu-danger"
+                      onClick={() => void handleDeleteConfirm(session)}
+                      disabled={busyId !== null}
+                    >
+                      Delete
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={closeMenus}
+                      disabled={busyId !== null}
+                    >
+                      Keep
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {menuError ? <p className="session-menu-error">{menuError}</p> : null}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setRenamingId(session.id)
+                      closeMenus()
+                    }}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setDeleteConfirmFor(session.id)
+                      setMenuError(null)
+                    }}
+                  >
+                    Delete
+                  </button>
+                </>
+              )}
+            </div>
+          ) : null}
+        </>
+      )}
+    </li>
+  )
+
+  const toggleSectionCollapsed = (key: string): void => {
+    setCollapsedKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
   return (
     <nav className="sessions-sidebar" aria-label="Sessions">
       {/* M2.2: the workspace chip + recents live at the top of the rail — they
-          are app-level state, not per-session. */}
-      <WorkspacePicker />
+          are app-level state, not per-session. onChanged keeps Folder mode's
+          first-section pin + auto-expand following a switch. */}
+      <WorkspacePicker onChanged={handleWorkspaceChanged} />
       <button type="button" className="sessions-new-chat" onClick={onNewChat}>
         + New chat
       </button>
-      <h2 className="sessions-section-label">Conversations</h2>
-      <ul className="sessions-list">
-        {sessions.map((session) => (
-          <li key={session.id} className="session-row">
-            {renamingId === session.id ? (
-              <SessionRename
-                session={session}
-                busy={busyId === session.id}
-                onCommit={(title) => void handleRenameCommit(session, title)}
-                onCancel={() => setRenamingId(null)}
-              />
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className={
-                    session.id === activeSessionId
-                      ? 'session-item session-item--active'
-                      : 'session-item'
-                  }
-                  onClick={() => onOpenSession(session)}
-                  title={
-                    session.workspacePath
-                      ? `${session.title}\n${session.workspacePath}`
-                      : session.title
-                  }
-                >
-                  <span className="session-item-title">{session.title}</span>
-                  <span className="session-item-workspace">
-                    {formatWorkspacePath(session.workspacePath)}
-                  </span>
-                  <span className="session-item-time">{formatRelativeTime(session.updatedAt)}</span>
-                </button>
-                <button
-                  type="button"
-                  className="session-menu-btn"
-                  aria-label={`Chat options for ${session.title}`}
-                  aria-haspopup="menu"
-                  aria-expanded={menuFor === session.id}
-                  onClick={() => {
-                    if (menuFor === session.id) closeMenus()
-                    else {
-                      setMenuFor(session.id)
-                      setDeleteConfirmFor(null)
-                      setMenuError(null)
-                    }
-                  }}
-                >
-                  …
-                </button>
-                {menuFor === session.id ? (
-                  <div
-                    className="session-menu"
-                    role="menu"
-                    aria-label={`Chat options for ${session.title}`}
-                    onBlur={(event) => {
-                      if (!event.currentTarget.contains(event.relatedTarget)) closeMenus()
-                    }}
-                  >
-                    {deleteConfirmFor === session.id ? (
-                      <>
-                        <p className="session-menu-confirm">
-                          Delete this chat? Its undo history goes too.
-                        </p>
-                        {menuError ? <p className="session-menu-error">{menuError}</p> : null}
-                        <div className="session-menu-actions">
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="session-menu-danger"
-                            onClick={() => void handleDeleteConfirm(session)}
-                            disabled={busyId !== null}
-                          >
-                            Delete
-                          </button>
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={closeMenus}
-                            disabled={busyId !== null}
-                          >
-                            Keep
-                          </button>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        {menuError ? <p className="session-menu-error">{menuError}</p> : null}
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            setRenamingId(session.id)
-                            closeMenus()
-                          }}
-                        >
-                          Rename
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            setDeleteConfirmFor(session.id)
-                            setMenuError(null)
-                          }}
-                        >
-                          Delete
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ) : null}
-              </>
-            )}
-          </li>
-        ))}
-      </ul>
+      <div className="sessions-header-row">
+        <h2 className="sessions-section-label">Conversations</h2>
+        <div className="sort-toggle" role="group" aria-label="Sort conversations">
+          <button
+            type="button"
+            className={
+              sortMode === 'recency' ? 'sort-toggle-btn sort-toggle-btn--active' : 'sort-toggle-btn'
+            }
+            aria-pressed={sortMode === 'recency'}
+            onClick={() => setSortMode('recency')}
+          >
+            Recency
+          </button>
+          <button
+            type="button"
+            className={
+              sortMode === 'folder' ? 'sort-toggle-btn sort-toggle-btn--active' : 'sort-toggle-btn'
+            }
+            aria-pressed={sortMode === 'folder'}
+            onClick={() => setSortMode('folder')}
+          >
+            Folder
+          </button>
+        </div>
+      </div>
+      <div className="sessions-list">
+        {sortMode === 'recency'
+          ? groupedSessions.map((group) => {
+              const key = `date:${group.key}`
+              const collapsed = collapsedKeys.has(key)
+              return (
+                <section key={group.key} aria-label={group.key} className="sessions-group">
+                  <h3 className="sessions-date-header sessions-folder-header">
+                    <button
+                      type="button"
+                      className="sessions-section-toggle"
+                      aria-expanded={!collapsed}
+                      aria-label={`${collapsed ? 'Expand' : 'Collapse'} chats from ${group.key}`}
+                      onClick={() => toggleSectionCollapsed(key)}
+                    >
+                      <span
+                        className={
+                          collapsed
+                            ? 'sessions-section-chevron sessions-section-chevron--collapsed'
+                            : 'sessions-section-chevron'
+                        }
+                        aria-hidden="true"
+                      >
+                        ▸
+                      </span>
+                      <span className="sessions-section-text">
+                        {group.key} · {group.items.length}
+                      </span>
+                    </button>
+                  </h3>
+                  {collapsed ? null : (
+                    <ul className="sessions-group-list">
+                      {group.items.map((session) => renderRow(session, true))}
+                    </ul>
+                  )}
+                </section>
+              )
+            })
+          : folderGroups.map((group) => {
+              const collapsed = collapsedKeys.has(group.key)
+              return (
+                <section key={group.key} aria-label={group.label} className="sessions-group">
+                  <h3 className="sessions-date-header sessions-folder-header">
+                    <button
+                      type="button"
+                      className="sessions-section-toggle"
+                      aria-expanded={!collapsed}
+                      aria-label={`${collapsed ? 'Expand' : 'Collapse'} chats in ${group.label}`}
+                      title={group.path ? group.path : undefined}
+                      onClick={() => toggleSectionCollapsed(group.key)}
+                    >
+                      <span
+                        className={
+                          collapsed
+                            ? 'sessions-section-chevron sessions-section-chevron--collapsed'
+                            : 'sessions-section-chevron'
+                        }
+                        aria-hidden="true"
+                      >
+                        ▸
+                      </span>
+                      <span className="sessions-section-text">
+                        {group.label} · {group.items.length}
+                      </span>
+                    </button>
+                  </h3>
+                  {collapsed ? null : (
+                    <ul className="sessions-group-list">
+                      {group.items.map((session) => renderRow(session, false))}
+                    </ul>
+                  )}
+                </section>
+              )
+            })}
+      </div>
       <footer className="sessions-footer">
         <SidecarStatusDot />
-        <button
-          type="button"
-          className="sessions-footer-settings"
-          onClick={onOpenSettings}
-          aria-haspopup="dialog"
-        >
-          Settings
-        </button>
+        <span className="sessions-settings-wrap">
+          <button
+            type="button"
+            className="sessions-footer-settings"
+            onClick={handleOpenSettings}
+            aria-haspopup="dialog"
+            aria-label={
+              showSettingsBadge ? 'Settings — no API key yet, open Settings to add one' : 'Settings'
+            }
+            title={
+              showSettingsBadge
+                ? 'No API key for this provider — open Settings → Providers to add one.'
+                : 'Settings'
+            }
+          >
+            Settings
+          </button>
+          {showSettingsBadge ? <span className="sessions-settings-dot" aria-hidden="true" /> : null}
+        </span>
       </footer>
     </nav>
   )

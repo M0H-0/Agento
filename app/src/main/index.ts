@@ -8,6 +8,7 @@ import { registerSidecarIpc } from './ipc/sidecar'
 import { registerChangesIpc } from './ipc/changes'
 import { registerSystemIpc } from './ipc/system'
 import { registerWorkspacesIpc } from './ipc/workspaces'
+import { registerWorkspaceFilesIpc } from './ipc/workspace-files'
 import { getCurrentWorkspace } from './workspaces'
 import { initSettings } from './settings'
 import { dbFilePath, openDatabase, runSmokeQuery } from './storage/db'
@@ -130,6 +131,7 @@ app.whenReady().then(async () => {
   // owned by main — 'workspace:get' / 'workspace:pick' / 'workspace:set' /
   // 'workspace:list'.
   registerWorkspacesIpc()
+  registerWorkspaceFilesIpc(getCurrentWorkspace)
 
   // Settings contract (docs/03 §4): 'settings:get' + 'settings:set-api-key' +
   // 'settings:set-model' + 'settings:clear-api-key' invokes.

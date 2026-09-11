@@ -27,6 +27,7 @@ import { ChangesPanel } from './components/ChangesPanel'
 import { Onboarding } from './components/Onboarding'
 import ModelChip from './components/ModelChip'
 import QuickActions from './components/QuickActions'
+import FileAttach from './components/FileAttach'
 import { ToolUIRegistry } from './components/cards/ToolUIRegistry'
 
 // Plan panel state (M3.1 + M3.6 live): fed by the agent:event subscription
@@ -202,7 +203,10 @@ function Thread({
   mode,
   onModeChange,
   modeDisabled,
-  pendingAsk
+  pendingAsk,
+  attachments,
+  onAttachmentsChange,
+  sessionId
 }: {
   error?: Error
   runStatus?: string
@@ -210,6 +214,9 @@ function Thread({
   onModeChange: (mode: SessionMode) => void
   modeDisabled: boolean
   pendingAsk: PendingAsk | null
+  attachments: string[]
+  onAttachmentsChange: (next: string[]) => void
+  sessionId: string | null
 }): React.JSX.Element {
   // Hint preview: hovering or keyboard-focusing the unselected Plan/Act tab
   // shows THAT mode's description, so users can compare before switching.
@@ -297,12 +304,25 @@ function Thread({
           {pendingAsk ? (
             <ReplyComposer key={pendingAsk.toolCallId} ask={pendingAsk} />
           ) : (
-            <ComposerPrimitive.Input
-              className="composer-input"
-              placeholder={mode === 'plan' ? 'Ask for a read-only plan…' : 'Message Agento…'}
-              rows={1}
-              autoFocus
-            />
+            <>
+              {/* File references (FileAttach): paperclip + @-mention share one
+                  workspace-scoped picker; chips clear on send (transport). */}
+              {/* Keyed by session so the picker's file cache resets with the
+                  workspace it lists — no reset effect needed. */}
+              <FileAttach
+                key={sessionId ?? 'no-session'}
+                attachments={attachments}
+                onChange={onAttachmentsChange}
+                disabled={modeDisabled}
+                sessionId={sessionId}
+              />
+              <ComposerPrimitive.Input
+                className="composer-input"
+                placeholder={mode === 'plan' ? 'Ask for a read-only plan…' : 'Message Agento…'}
+                rows={1}
+                autoFocus
+              />
+            </>
           )}
           {/* docs/04 §3.5: stop replaces send mid-run. The Cancel primitive is
               gated by ThreadPrimitive.If because composer canCancel is a
@@ -339,6 +359,11 @@ interface ChatViewProps {
   initialMessages: UIMessage[]
   registerDispose: (dispose: (() => void) | null) => void
   runStatus?: string
+  sessionId: string | null
+  attachments: string[]
+  onAttachmentsChange: (next: string[]) => void
+  getAttachments: () => string[]
+  onAttachmentsConsumed: () => void
 }
 
 // One conversation view. Remounted (keyed by an epoch that advances only on
@@ -358,15 +383,30 @@ function ChatView({
   onSettled,
   initialMessages,
   registerDispose,
-  runStatus
+  runStatus,
+  sessionId,
+  attachments,
+  onAttachmentsChange,
+  getAttachments,
+  onAttachmentsConsumed
 }: ChatViewProps): React.JSX.Element {
   // Created once per mount: the transport carries this view's run state
   // (in-flight guard, active run's session id), so a per-render identity
   // would be a lie. getMode is App-stable (useCallback over a ref), so it can
   // be handed to the transport directly — a tab switch before the first send
   // still stamps the lazy-created session correctly.
+  // The transport is created once per mount from App-owned prop callbacks
+  // (never the view's own refs — react-hooks/refs forbids reading refs
+  // during render, which a useState initializer would do).
   const [ipc] = useState(() =>
-    createIpcChatTransport({ getSessionId, getMode, onSessionCreated, onSettled })
+    createIpcChatTransport({
+      getSessionId,
+      getMode,
+      onSessionCreated,
+      onSettled,
+      getAttachments,
+      onAttachmentsConsumed
+    })
   )
   const chat = useChat({ transport: ipc.transport, messages: initialMessages })
   const runtime = useAISDKRuntime(chat)
@@ -424,6 +464,9 @@ function ChatView({
         onModeChange={onModeChange}
         modeDisabled={runActive || (modeDisabled ?? false)}
         pendingAsk={activeAsk}
+        attachments={attachments}
+        onAttachmentsChange={onAttachmentsChange}
+        sessionId={sessionId}
       />
     </AssistantRuntimeProvider>
   )
@@ -546,6 +589,23 @@ function App(): React.JSX.Element {
   // which is also restored on session open so a reviewed plan survives a
   // restart.
   const [plan, setPlan] = useState<PlanPanelState | null>(null)
+
+  // Composer file references (FileAttach chips): App-owned so ChatView can
+  // hand stable prop callbacks to its transport initializer (a transport
+  // created in useState must never close over the view's own refs). Cleared
+  // on every session switch / new chat / successful send-consumption, so
+  // chips never leak across conversations.
+  const [attachments, setAttachments] = useState<string[]>([])
+  const attachmentsRef = useRef<string[]>([])
+  const handleAttachmentsChange = useCallback((next: string[]) => {
+    attachmentsRef.current = next
+    setAttachments(next)
+  }, [])
+  const getAttachments = useCallback(() => attachmentsRef.current, [])
+  const clearAttachments = useCallback(() => {
+    attachmentsRef.current = []
+    setAttachments([])
+  }, [])
 
   // ── Execution mode tabs (docs/03 §2, docs/04 §3.5) ─────────────────────────
   // Session-owned: new chats start in Act; opening a session restores its
@@ -799,6 +859,7 @@ function App(): React.JSX.Element {
       if (session.id === activeSessionIdRef.current) return
       chatDisposeRef.current?.()
       resetPlan()
+      clearAttachments()
       try {
         const [messages, savedPlan] = await Promise.all([
           window.agento.sessions.messages({ sessionId: session.id }),
@@ -825,18 +886,19 @@ function App(): React.JSX.Element {
         console.error('session:messages failed:', error)
       }
     },
-    [resetPlan, setModeBoth]
+    [resetPlan, setModeBoth, clearAttachments]
   )
 
   const startNewChat = useCallback(() => {
     chatDisposeRef.current?.()
     resetPlan()
+    clearAttachments()
     activeSessionIdRef.current = null
     setActiveSessionId(null)
     setModeBoth('act')
     setPendingMessages([])
     setThreadEpoch((epoch) => epoch + 1)
-  }, [resetPlan, setModeBoth])
+  }, [resetPlan, setModeBoth, clearAttachments])
 
   // Sidebar rename/delete (docs/04 §2). Rename patches the row in place; a
   // user rename also blocks the background auto-title main-side (title_renamed).
@@ -925,6 +987,7 @@ function App(): React.JSX.Element {
         onOpenSettings={() => setSettingsOpen(true)}
         onRenameSession={handleRenameSession}
         onDeleteSession={handleDeleteSession}
+        settingsOpen={settingsOpen}
       />
       {/* Real three-column shell (UI_POLISH_PLAN.md): the thread lives in its
           own flex column (.chat-main), so messages can never render under the
@@ -943,6 +1006,11 @@ function App(): React.JSX.Element {
           initialMessages={pendingMessages}
           registerDispose={registerDispose}
           runStatus={runStatus}
+          sessionId={activeSessionId}
+          attachments={attachments}
+          onAttachmentsChange={handleAttachmentsChange}
+          getAttachments={getAttachments}
+          onAttachmentsConsumed={clearAttachments}
         />
       </main>
       {/* The rail collapses when there is no plan and no active session

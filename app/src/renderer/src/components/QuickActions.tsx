@@ -1,21 +1,38 @@
+import { useEffect, useState } from 'react'
 import { useThreadRuntime } from '@assistant-ui/react'
+import { genericPrompts, suggestPromptsFromScan } from '../chat/suggestions'
 
-// Example prompts for the empty thread (docs/04 §3.5/§3.8, P1). The copy
-// mirrors the scripted demo scenario (docs/07 §4) — one chip per headline
-// capability (batch file work, document summarization, semantic search) —
-// so the cold-open screen doubles as a one-click demo cue.
-const QUICK_ACTIONS = [
-  'Organize this folder by file type',
-  'Make a one-page summary of every PDF in this folder',
-  'Where did I write about pricing?'
-]
-
-// QuickActions chips fill the composer and focus it — they NEVER auto-send
-// (docs/04 §3.5). They render inside the empty-thread welcome, i.e. within
-// ThreadPrimitive.Root, so the thread runtime (and its composer) exists;
-// the optional hook just degrades to nothing outside that scope.
+// Example prompts for the empty thread (docs/04 §3.5/§3.8, P1). Generated
+// from a lightweight scan of the current workspace folder (one capped
+// `workspace:list-files` + session titles for the pricing keyword) instead
+// of hardcoded assumptions: PDF chips need PDFs, the organize chip needs a
+// real mix, and the pricing chip needs filename or title evidence. Generic
+// fallbacks cover empty folders and scan failures — and render immediately
+// so the chips never flash a wrong guess while scanning.
 function QuickActions(): React.JSX.Element | null {
   const runtime = useThreadRuntime({ optional: true })
+  const [prompts, setPrompts] = useState<string[]>(() => genericPrompts())
+
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([window.agento.workspaces.listFiles({ limit: 500 }), window.agento.sessions.list()])
+      .then(([listing, sessions]) => {
+        if (cancelled) return
+        setPrompts(
+          suggestPromptsFromScan(
+            listing.files,
+            sessions.map((session) => session.title)
+          )
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setPrompts(genericPrompts())
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   if (!runtime) return null
   const fillComposer = (prompt: string): void => {
     runtime.composer.setText(prompt)
@@ -23,7 +40,7 @@ function QuickActions(): React.JSX.Element | null {
   }
   return (
     <div className="quick-actions" role="list" aria-label="Example prompts">
-      {QUICK_ACTIONS.map((prompt) => (
+      {prompts.map((prompt) => (
         <button
           key={prompt}
           type="button"

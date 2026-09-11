@@ -36,7 +36,11 @@ function formatRecentTime(iso: string): string {
   return new Date(iso).toLocaleDateString()
 }
 
-export default function WorkspacePicker(): React.JSX.Element {
+export default function WorkspacePicker({
+  onChanged
+}: {
+  onChanged?: (path: string | null) => void
+}): React.JSX.Element {
   const [current, setCurrent] = useState<string | null>(null)
   const [recents, setRecents] = useState<WorkspaceRecent[]>([])
   const [open, setOpen] = useState(false)
@@ -47,14 +51,19 @@ export default function WorkspacePicker(): React.JSX.Element {
       const snapshot = await window.agento.workspaces.get()
       setCurrent(snapshot.current)
       setRecents(snapshot.recents)
+      // The sidebar's Folder mode pins this folder's section first — push
+      // the fresh value up so its order follows a switch immediately.
+      onChanged?.(snapshot.current)
     } catch {
       // Deviation: never crash the rail on a workspace read failure.
     }
-  }, [])
+  }, [onChanged])
 
   useEffect(() => {
     // StrictMode-safe: state lands in the promise callbacks, never
-    // synchronously inside the effect (the M1.3 renderer rule).
+    // synchronously inside the effect (the M1.3 renderer rule). The parent
+    // learns the initial value here too, so Folder mode pins correctly on
+    // first paint without waiting for a pick.
     let cancelled = false
     window.agento.workspaces
       .get()
@@ -62,6 +71,7 @@ export default function WorkspacePicker(): React.JSX.Element {
         if (cancelled) return
         setCurrent(snapshot.current)
         setRecents(snapshot.recents)
+        onChanged?.(snapshot.current)
       })
       .catch(() => {
         // Deviation: never crash the rail on a workspace read failure.
@@ -69,7 +79,7 @@ export default function WorkspacePicker(): React.JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [onChanged])
 
   const choose = useCallback(async () => {
     setError(null)

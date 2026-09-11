@@ -1,4 +1,5 @@
 import type { ChatTransport, TextUIPart, UIMessage, UIMessageChunk } from 'ai'
+import { formatContextBlock } from './attachments'
 
 // Structural mirror of SessionInfo in src/preload/index.d.ts — the renderer
 // consumes window.agento typed globally and doesn't import preload.
@@ -58,6 +59,36 @@ export interface IpcChatTransportHooks {
   getMode?: () => SessionMode
   onSessionCreated?: (session: SessionSummary) => void
   onSettled?: () => void
+  /** Workspace-relative paths attached in the composer (FileAttach chips). */
+  getAttachments?: () => string[]
+  /** Called once the attachments have been folded into an outgoing send. */
+  onAttachmentsConsumed?: () => void
+}
+
+// Fold composer attachments into the outgoing messages as reference text
+// (chat/attachments.ts): appended to the last user text part so the model
+// can fetch content via read_file. The title is derived BEFORE injection so
+// sidebar titles never carry the context block.
+function injectAttachments(messages: UIMessage[], attachments: string[]): UIMessage[] {
+  const block = formatContextBlock(attachments)
+  if (!block) return messages
+  const last = messages[messages.length - 1]
+  if (!last || last.role !== 'user') return messages
+  const parts = [...last.parts]
+  let textIndex = -1
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (parts[i].type === 'text') {
+      textIndex = i
+      break
+    }
+  }
+  if (textIndex >= 0) {
+    const part = parts[textIndex] as TextUIPart
+    parts[textIndex] = { ...part, text: `${part.text}${block}` }
+  } else {
+    parts.push({ type: 'text', text: block.trim() } as TextUIPart)
+  }
+  return [...messages.slice(0, -1), { ...last, parts }]
 }
 
 export interface IpcChatTransport {
@@ -151,6 +182,11 @@ export function createIpcChatTransport(hooks: IpcChatTransportHooks): IpcChatTra
                   hooks.onSessionCreated?.(session)
                 }
                 if (closed || disposed) return
+                // Composer attachments (FileAttach chips): fold into a copy
+                // of the outgoing messages, then clear the chips.
+                const attachments = hooks.getAttachments?.() ?? []
+                const outgoing = injectAttachments(messages, attachments)
+                if (attachments.length > 0) hooks.onAttachmentsConsumed?.()
                 activeSessionId = sessionId
                 activeRunSessionId = sessionId
                 abortSignal?.addEventListener('abort', onAbort, { once: true })
@@ -180,7 +216,7 @@ export function createIpcChatTransport(hooks: IpcChatTransportHooks): IpcChatTra
                     closeStream()
                   }
                 })
-                await window.agento.chat.send({ sessionId: activeSessionId, messages })
+                await window.agento.chat.send({ sessionId: activeSessionId, messages: outgoing })
                 // send() resolved. If the stream already saw its end part the
                 // controller is closed; the only remaining case is main
                 // returning without forwarding anything (no known path, closed
