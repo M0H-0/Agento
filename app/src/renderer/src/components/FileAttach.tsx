@@ -164,7 +164,7 @@ function FileAttach({
     .slice(0, MAX_SHOWN)
 
   return (
-    <div className="file-attach" ref={rootRef}>
+    <>
       {attachments.length > 0 ? (
         <div className="composer-attachments" aria-label="Attached files">
           {attachments.map((path) => (
@@ -183,86 +183,91 @@ function FileAttach({
           ))}
         </div>
       ) : null}
-      <button
-        type="button"
-        className="attach-btn"
-        aria-label="Attach a file from the workspace"
-        aria-haspopup="listbox"
-        aria-expanded={open && mentionQuery === null}
-        title="Attach a file from the workspace (@ to mention)"
-        disabled={disabled}
-        onClick={() => {
-          if (open && mentionQuery === null) {
-            setOpen(false)
-          } else {
-            load()
-            setMentionQuery(null)
-            setQuery('')
-            setActiveIndex(0)
-            setOpen(true)
-          }
-        }}
-      >
-        <PaperclipIcon />
-      </button>
-      {open ? (
-        <div className="attach-popover" role="listbox" aria-label="Workspace files">
-          {mentionQuery === null ? (
-            <input
-              ref={searchRef}
-              className="attach-search"
-              placeholder="Search files…"
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value)
-                setActiveIndex(0)
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'ArrowDown') {
-                  event.preventDefault()
-                  setActiveIndex((i) => Math.min(i + 1, Math.max(matches.length - 1, 0)))
-                } else if (event.key === 'ArrowUp') {
-                  event.preventDefault()
-                  setActiveIndex((i) => Math.max(i - 1, 0))
-                } else if (event.key === 'Enter') {
-                  event.preventDefault()
-                  const pick = matches[activeIndex]
-                  if (pick) add(pick.relativePath)
-                }
-              }}
-              aria-label="Search workspace files"
-            />
-          ) : null}
-          <div className="attach-list">
-            {loading ? <p className="attach-empty">Loading files…</p> : null}
-            {error ? <p className="attach-error">{error}</p> : null}
-            {!loading && !error && matches.length === 0 ? (
-              <p className="attach-empty">
-                {files !== null && files.length === 0
-                  ? 'No files in this workspace yet.'
-                  : 'No files match.'}
-              </p>
+      {/* Anchor sits inline in the composer's input row (paperclip · input ·
+          Send) so the button never takes its own line; only the chips above
+          span the full width. */}
+      <div className="attach-anchor" ref={rootRef}>
+        <button
+          type="button"
+          className="attach-btn"
+          aria-label="Attach a file from the workspace"
+          aria-haspopup="listbox"
+          aria-expanded={open && mentionQuery === null}
+          title="Attach a file from the workspace (@ to mention)"
+          disabled={disabled}
+          onClick={() => {
+            if (open && mentionQuery === null) {
+              setOpen(false)
+            } else {
+              load()
+              setMentionQuery(null)
+              setQuery('')
+              setActiveIndex(0)
+              setOpen(true)
+            }
+          }}
+        >
+          <PaperclipIcon />
+        </button>
+        {open ? (
+          <div className="attach-popover" role="listbox" aria-label="Workspace files">
+            {mentionQuery === null ? (
+              <input
+                ref={searchRef}
+                className="attach-search"
+                placeholder="Search files…"
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value)
+                  setActiveIndex(0)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowDown') {
+                    event.preventDefault()
+                    setActiveIndex((i) => Math.min(i + 1, Math.max(matches.length - 1, 0)))
+                  } else if (event.key === 'ArrowUp') {
+                    event.preventDefault()
+                    setActiveIndex((i) => Math.max(i - 1, 0))
+                  } else if (event.key === 'Enter') {
+                    event.preventDefault()
+                    const pick = matches[activeIndex]
+                    if (pick) add(pick.relativePath)
+                  }
+                }}
+                aria-label="Search workspace files"
+              />
             ) : null}
-            {matches.map((file, index) => (
-              <button
-                key={file.relativePath}
-                type="button"
-                role="option"
-                aria-selected={index === activeIndex}
-                className={
-                  index === activeIndex ? 'attach-item attach-item--active' : 'attach-item'
-                }
-                title={file.relativePath}
-                onMouseEnter={() => setActiveIndex(index)}
-                onClick={() => add(file.relativePath)}
-              >
-                {file.relativePath}
-              </button>
-            ))}
+            <div className="attach-list">
+              {loading ? <p className="attach-empty">Loading files…</p> : null}
+              {error ? <p className="attach-error">{error}</p> : null}
+              {!loading && !error && matches.length === 0 ? (
+                <p className="attach-empty">
+                  {files !== null && files.length === 0
+                    ? 'No files in this workspace yet.'
+                    : 'No files match.'}
+                </p>
+              ) : null}
+              {matches.map((file, index) => (
+                <button
+                  key={file.relativePath}
+                  type="button"
+                  role="option"
+                  aria-selected={index === activeIndex}
+                  className={
+                    index === activeIndex ? 'attach-item attach-item--active' : 'attach-item'
+                  }
+                  title={file.relativePath}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={() => add(file.relativePath)}
+                >
+                  {file.relativePath}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-      ) : null}
-    </div>
+        ) : null}
+      </div>
+    </>
   )
 }
 

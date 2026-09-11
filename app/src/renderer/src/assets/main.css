@@ -1400,18 +1400,21 @@
 }
 
 /* File attachments (composer @-mention / paperclip): chips span the full
-   composer width above the input row; the picker opens UPWARD like the
-   model-chip menu so it never runs off-screen. */
-.file-attach {
-  flex-basis: 100%;
-  position: relative;
-}
-
+   composer width above the input row; the paperclip button itself sits inline
+   in the input row (paperclip · input · Send). The picker opens UPWARD like
+   the model-chip menu so it never runs off-screen. */
 .composer-attachments {
+  flex-basis: 100%;
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
   padding: 0.1rem 0.35rem 0.3rem;
+}
+
+.attach-anchor {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
 }
 
 .attach-chip {
@@ -1458,6 +1461,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   border: 1px solid transparent;
   border-radius: 0.4rem;
   background: transparent;
@@ -1483,7 +1487,8 @@
   left: 0;
   display: flex;
   flex-direction: column;
-  width: min(22rem, 100%);
+  width: 22rem;
+  max-width: min(22rem, calc(100vw - 3rem));
   max-height: 18rem;
   border: 1px solid var(--border);
   border-radius: 0.5rem;
