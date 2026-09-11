@@ -211,6 +211,12 @@ function Thread({
   modeDisabled: boolean
   pendingAsk: PendingAsk | null
 }): React.JSX.Element {
+  // Hint preview: hovering or keyboard-focusing the unselected Plan/Act tab
+  // shows THAT mode's description, so users can compare before switching.
+  // Cleared on leave/blur back to the selected mode's copy. Text-only swap —
+  // grayscale treatment untouched, reduced-motion safe.
+  const [hintPreview, setHintPreview] = useState<SessionMode | null>(null)
+  const hintMode = hintPreview ?? mode
   return (
     <ThreadPrimitive.Root className="thread">
       <ThreadPrimitive.Viewport className="thread-viewport">
@@ -248,9 +254,14 @@ function Thread({
               type="button"
               role="tab"
               aria-selected={mode === 'plan'}
+              aria-describedby="mode-hint"
               className={mode === 'plan' ? 'mode-tab mode-tab--active' : 'mode-tab'}
               disabled={modeDisabled}
               onClick={() => onModeChange('plan')}
+              onMouseEnter={() => setHintPreview('plan')}
+              onMouseLeave={() => setHintPreview(null)}
+              onFocus={() => setHintPreview('plan')}
+              onBlur={() => setHintPreview(null)}
               title="Read files and prepare a plan. Nothing will be changed."
             >
               Plan
@@ -259,15 +270,20 @@ function Thread({
               type="button"
               role="tab"
               aria-selected={mode === 'act'}
+              aria-describedby="mode-hint"
               className={mode === 'act' ? 'mode-tab mode-tab--active' : 'mode-tab'}
               disabled={modeDisabled}
               onClick={() => onModeChange('act')}
+              onMouseEnter={() => setHintPreview('act')}
+              onMouseLeave={() => setHintPreview(null)}
+              onFocus={() => setHintPreview('act')}
+              onBlur={() => setHintPreview(null)}
               title="Carry out work. Agento asks before risky changes."
             >
               Act
             </button>
-            <span className="mode-hint">
-              {mode === 'plan' ? 'Read-only — nothing will change.' : 'Carries out work.'}
+            <span className="mode-hint" id="mode-hint">
+              {hintMode === 'plan' ? 'Read-only — nothing will change.' : 'Carries out work.'}
             </span>
           </div>
           {/* Model chip (docs/04 §2): a sibling of the tablist (a non-tab

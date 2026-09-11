@@ -296,15 +296,133 @@
   user-select: none;
 }
 
+/* Header row: "Conversations" label + Recency | Folder sort toggle. */
+.sessions-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.sort-toggle {
+  display: flex;
+  gap: 0.15rem;
+  padding: 0.15rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--secondary);
+}
+
+.sort-toggle-btn {
+  padding: 0.1rem 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.sort-toggle-btn:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.sort-toggle-btn--active {
+  background: var(--accent);
+  border-color: var(--border);
+  color: var(--foreground);
+  font-weight: 600;
+}
+
 .sessions-list {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+}
+
+.sessions-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+/* Date bucket header — quieter than the "Conversations" label, same
+   small-caps treatment. Folder headers reuse it with ellipsis, since the
+   full path is one hover away in the tooltip. */
+.sessions-date-header {
+  margin: 0;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
+  user-select: none;
+}
+
+.sessions-folder-header {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Collapsible section toggle (date buckets + folder sections) — full-width
+   button inheriting the header's small-caps treatment; chevron points right
+   when shut. */
+.sessions-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sessions-section-toggle:hover .sessions-section-text {
+  color: var(--foreground);
+}
+
+.sessions-section-chevron {
+  display: inline-block;
+  font-size: 0.7rem;
+  line-height: 1;
+  transition: transform 150ms ease;
+  transform: rotate(90deg);
+  flex-shrink: 0;
+}
+
+.sessions-section-chevron--collapsed {
+  transform: rotate(0deg);
+}
+
+.sessions-section-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sessions-group-list {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
   margin: 0;
   padding: 0;
   list-style: none;
-  overflow-y: auto;
 }
 
 /* Per-row rename/delete (docs/04 §2): each li anchors an absolutely
@@ -335,8 +453,21 @@
 }
 
 .session-item--active {
-  background: var(--accent);
-  border-color: var(--border);
+  background: color-mix(in oklab, var(--foreground) 12%, var(--card));
+  border-color: color-mix(in oklab, var(--foreground) 25%, transparent);
+}
+
+/* Active-row title pops at a glance (variant C — fill + bold, no stripe,
+   grayscale only). The folder tag flattens to plain text inside the active
+   row so a pill never nests inside the filled card. */
+.session-item--active .session-item-title {
+  font-weight: 600;
+}
+
+.session-item--active .session-item-folder {
+  background: transparent;
+  border-color: transparent;
+  padding: 0;
 }
 
 .session-item-title {
@@ -346,19 +477,37 @@
   text-overflow: ellipsis;
 }
 
-/* The folder this chat is bound to (docs/03 §8 per-session workspace_path).
-   Same muted treatment the old token line had — a quiet factual row. */
-.session-item-workspace {
+/* Row meta: compact folder-name tag + relative time (docs/04 §2). The tag is
+   the only workspace signal per row — the full path lives in the tooltip. */
+.session-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
   font-size: 0.72rem;
-  color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+  color: var(--muted-foreground);
+}
+
+.session-item-folder {
+  max-width: 7.5rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--secondary);
+  color: var(--muted-foreground);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.session-item-dot {
+  user-select: none;
+}
+
 .session-item-time {
-  font-size: 0.72rem;
-  color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Hover "…" affordance: invisible until the row (or keyboard focus) is on it,
@@ -488,7 +637,7 @@
 
 .session-rename-hint {
   font-size: 0.68rem;
-  color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+  color: var(--muted-foreground);
 }
 
 /* UI polish (UI_POLISH_PLAN.md): the thread's own flex column — flex:1 fills
@@ -952,7 +1101,8 @@
 @media (prefers-reduced-motion: reduce) {
   .message,
   .thinking-indicator [class*='animate-'],
-  .scroll-to-bottom {
+  .scroll-to-bottom,
+  .sessions-section-chevron {
     animation: none !important;
     transition: none !important;
   }
@@ -1025,9 +1175,10 @@
 }
 
 .mode-tab--active {
-  background: var(--secondary);
-  color: var(--secondary-foreground);
-  border-color: var(--border);
+  background: var(--foreground);
+  color: var(--background);
+  border-color: var(--foreground);
+  font-weight: 700;
 }
 
 .mode-tab:disabled {
@@ -1168,7 +1319,7 @@
 }
 
 .composer-input::placeholder {
-  color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+  color: color-mix(in oklab, var(--muted-foreground) 55%, transparent);
 }
 
 .composer-send {
