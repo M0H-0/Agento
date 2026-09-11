@@ -19,7 +19,7 @@ describe('buildLanguageModel routing', () => {
       buildLanguageModel({ provider: 'google', model: 'gemini-2.5-flash', apiKey: 'k' })
     ).not.toThrow()
     expect(() =>
-      buildLanguageModel({ provider: 'groq', model: 'llama-3.3-70b-versatile', apiKey: 'k' })
+      buildLanguageModel({ provider: 'groq', model: 'openai/gpt-oss-120b', apiKey: 'k' })
     ).not.toThrow()
   })
 

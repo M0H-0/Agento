@@ -32,6 +32,7 @@ interface SettingsSnapshot {
   storageAvailable: boolean
   providers: string[]
   models: string[]
+  providerModels?: Record<string, string[]>
   appearance: Appearance
   locale: Locale
   permissionDefaults: { risk1: 'auto' | 'ask'; risk2: 'auto' | 'ask' }

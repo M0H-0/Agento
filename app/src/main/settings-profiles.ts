@@ -138,6 +138,20 @@ export function nowIso(): string {
   return new Date().toISOString()
 }
 
+// Model ids per provider for the composer flyout (ModelChip): built-in curated
+// lists verbatim (copied, never shared by reference) plus one single-model
+// entry per custom profile. Pure so vitest can cover it — settings.ts
+// (Electron safeStorage) cannot load under vitest.
+export function buildProviderModels(
+  builtInModels: Record<string, string[]>,
+  customs: CustomProviderProfile[]
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  for (const [id, models] of Object.entries(builtInModels)) out[id] = [...models]
+  for (const profile of customs) out[profile.id] = [profile.model]
+  return out
+}
+
 export function newCustomProviderId(): string {
   // randomUUID is imported by the caller (settings.ts) to keep this module
   // dependency-light; this helper only formats. Kept here for one obvious place.

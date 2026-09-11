@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildProviderModels,
   isCustomProviderId,
   migratePrefs,
   normalizeAppearance,
@@ -17,7 +18,7 @@ import {
 function resolveModel(provider: string, model: unknown): string {
   if (provider === 'google')
     return typeof model === 'string' && model.startsWith('gemini-') ? model : 'gemini-2.5-flash'
-  if (provider === 'groq') return 'llama-3.3-70b-versatile'
+  if (provider === 'groq') return 'openai/gpt-oss-120b'
   if (provider.startsWith('custom:'))
     return typeof model === 'string' && model.trim() !== '' ? model : 'model'
   return 'gemini-2.5-flash'
@@ -124,12 +125,12 @@ describe('locale', () => {
 describe('v1 → v2 migration', () => {
   it('migrates a v1 file losslessly with safe defaults for the new fields', () => {
     const migrated = migratePrefs(
-      { version: 1, provider: 'groq', model: 'llama-3.3-70b-versatile' },
+      { version: 1, provider: 'groq', model: 'openai/gpt-oss-120b' },
       resolveModel
     )
     expect(migrated.version).toBe(2)
     expect(migrated.provider).toBe('groq')
-    expect(migrated.model).toBe('llama-3.3-70b-versatile')
+    expect(migrated.model).toBe('openai/gpt-oss-120b')
     expect(migrated.appearance).toBe('dark')
     expect(migrated.permissionDefaults).toEqual({ risk1: 'auto', risk2: 'ask' })
     expect(migrated.customProviders).toEqual([])
@@ -179,5 +180,29 @@ describe('v1 → v2 migration', () => {
       resolveModel
     )
     expect(migrated.provider).toBe('google')
+  })
+})
+
+describe('provider models map (composer flyout)', () => {
+  const custom = {
+    id: 'custom:abc123',
+    name: 'Local',
+    baseUrl: 'http://127.0.0.1:11434/v1',
+    model: 'llama3.1:8b',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z'
+  }
+  it('copies built-in lists and adds one single-model entry per custom profile', () => {
+    const builtIns = { google: ['g-a', 'g-b'], groq: ['q-a'] }
+    const map = buildProviderModels(builtIns, [custom])
+    expect(map).toEqual({ google: ['g-a', 'g-b'], groq: ['q-a'], 'custom:abc123': ['llama3.1:8b'] })
+    // Copies, never shared references — mutating the result leaves input alone.
+    map.google.push('g-c')
+    expect(builtIns.google).toEqual(['g-a', 'g-b'])
+  })
+  it('reflects a renamed custom model on the next build', () => {
+    const builtIns = { google: ['g-a'] }
+    const renamed = { ...custom, model: 'qwen3:8b' }
+    expect(buildProviderModels(builtIns, [renamed])['custom:abc123']).toEqual(['qwen3:8b'])
   })
 })

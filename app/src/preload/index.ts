@@ -275,6 +275,8 @@ export interface SettingsSnapshot {
   providers: string[]
   /** Model ids for the active provider (curated list, or [profile.model] for customs). */
   models: string[]
+  /** Every provider id → its model ids (built-in curated lists; one entry per custom profile). */
+  providerModels: Record<string, string[]>
   appearance: Appearance
   locale: Locale
   permissionDefaults: PermissionDefaults

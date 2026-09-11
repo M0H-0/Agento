@@ -6,6 +6,7 @@ import {
   BUILT_IN_PROVIDERS,
   DEFAULT_PERMISSIONS,
   SETTINGS_VERSION,
+  buildProviderModels,
   isCustomProviderId,
   migratePrefs,
   normalizeAppearance,
@@ -58,6 +59,8 @@ export interface SettingsSnapshot {
   providers: string[]
   /** Model ids for the active provider: curated list for built-ins, [profile.model] for customs. */
   models: string[]
+  /** Every provider id → its model ids (built-in curated lists; one entry per custom profile). */
+  providerModels: Record<string, string[]>
   appearance: Appearance
   locale: Locale
   permissionDefaults: PermissionDefaults
@@ -76,26 +79,36 @@ const SECRETS_VERSION = 1
 const DEFAULT_PROVIDER = 'google'
 
 // Curated Google AI Studio (Gemini API) model ids for a chat agent — text
-// generation only (no image/TTS/live/embedding variants), verified 2026-09-03
-// against ai.google.dev/gemini-api/docs/models; deprecated gemini-2.0-* ids
-// excluded. M1.2 revalidates this list against the provider package.
+// generation only (no image/TTS/live/embedding variants), re-verified
+// 2026-09-12 against ai.google.dev/gemini-api/docs/models (page last updated
+// 2026-09-04): the current stable lineup is 2.5 → 3.1 Flash-Lite → 3.5 →
+// 3.5-Lite → 3.6 → 3.7 → 3.8 Flash. gemini-3.1-pro-preview is dropped (no
+// 3.1-series Pro exists in the catalog; stored prefs naming it self-heal to
+// the default via resolveModelForPrefs on load). The default stays
+// gemini-2.5-flash — still Google's price-performance workhorse.
 const GOOGLE_MODEL_IDS = [
   'gemini-2.5-flash',
   'gemini-2.5-flash-lite',
   'gemini-2.5-pro',
-  'gemini-3.5-flash',
   'gemini-3.1-flash-lite',
-  'gemini-3.1-pro-preview'
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.6-flash',
+  'gemini-3.7-flash',
+  'gemini-3.8-flash'
 ]
 
 // Curated Groq model ids — chat-capable, tool-calling models only (no
 // whisper/orpheus audio, no prompt-guard classifiers, no groq/compound
-// agentic systems whose tool semantics differ), verified 2026-09-05 against
-// console.groq.com/docs/models via the models.dev catalog. Served through the
-// OpenAI-compatible endpoint (STACK.md's Groq row: @ai-sdk/openai-compatible).
+// agentic systems whose tool semantics differ), re-verified 2026-09-11:
+// Groq shut down llama-3.3-70b-versatile + llama-3.1-8b-instant on
+// 2026-08-16 (console.groq.com/docs/models now lists only the gpt-oss
+// pair among chat models), so both Llama ids are dropped and the default
+// moves to Groq's recommended flagship replacement. Stored prefs naming a
+// retired id self-heal to the default via resolveModelForPrefs on load.
+// Served through the OpenAI-compatible endpoint (STACK.md's Groq row:
+// @ai-sdk/openai-compatible).
 const GROQ_MODEL_IDS = [
-  'llama-3.3-70b-versatile',
-  'llama-3.1-8b-instant',
   'openai/gpt-oss-120b',
   'openai/gpt-oss-20b',
   'qwen/qwen3.6-27b',
@@ -107,7 +120,7 @@ const GROQ_MODEL_IDS = [
 // §3.7); the renderer renders what this says, nothing more.
 const PROVIDERS: Record<string, { models: string[]; defaultModel: string }> = {
   google: { models: GOOGLE_MODEL_IDS, defaultModel: 'gemini-2.5-flash' },
-  groq: { models: GROQ_MODEL_IDS, defaultModel: 'llama-3.3-70b-versatile' }
+  groq: { models: GROQ_MODEL_IDS, defaultModel: 'openai/gpt-oss-120b' }
 }
 const ENABLED_PROVIDERS: string[] = [...BUILT_IN_PROVIDERS]
 
@@ -271,6 +284,8 @@ export function getSettings(): SettingsSnapshot {
     activeCustom !== undefined
       ? [activeCustom.model]
       : [...(PROVIDERS[prefs.provider]?.models ?? [])]
+  const builtInModels: Record<string, string[]> = {}
+  for (const [id, entry] of Object.entries(PROVIDERS)) builtInModels[id] = entry.models
   return {
     provider: prefs.provider,
     model: prefs.model,
@@ -279,6 +294,7 @@ export function getSettings(): SettingsSnapshot {
     storageAvailable,
     providers: [...ENABLED_PROVIDERS],
     models,
+    providerModels: buildProviderModels(builtInModels, prefs.customProviders),
     appearance: prefs.appearance,
     locale: prefs.locale,
     permissionDefaults: { ...prefs.permissionDefaults },
