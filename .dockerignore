@@ -1,0 +1,23 @@
+# Agento .dockerignore — keeps the sidecar build context lean.
+# Mirrors root .gitignore (local-only artifacts never belong in the image).
+node_modules/
+out/
+dist/
+.venv/
+__pycache__/
+.pytest_cache/
+*.db
+*.db-wal
+*.db-shm
+*.log
+.env
+.git/
+.zcode/
+phase-reports/
+demo/demo-workspace/
+.report-work/
+app/node_modules/
+app/out/
+app/dist/
+services/intelligence/.venv/
+services/intelligence/__pycache__/

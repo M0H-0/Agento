@@ -1,0 +1,52 @@
+# Agento — Docker Compose (sidecar-only, dev/eval).
+#
+# The Electron app (app/) is NOT containerized: it is a Windows desktop GUI
+# (window, safeStorage, better-sqlite3 Electron-ABI, %APPDATA%/Agento,
+# Windows-path sandbox). Run it natively with `npm run dev` from app/.
+#
+# This file runs ONLY the Python intelligence sidecar so CI, evals, or
+# non-Windows contributors can exercise the HTTP contract (docs/02 §2.4,
+# docs/05 §1): FastAPI on port 7891, every request carrying X-Agento-Token,
+# fail-closed 403 when the token is missing/wrong.
+#
+# Usage (PowerShell and Git Bash):
+#   $env:AGENTO_INTELLIGENCE_TOKEN = "dev-token"   # PowerShell
+#   export AGENTO_INTELLIGENCE_TOKEN=dev-token     # Git Bash
+#   docker compose up --build -d
+#   curl -H "X-Agento-Token: dev-token" http://localhost:7891/health
+#   docker compose run --rm intelligence uv run pytest -q
+#   docker compose down
+#
+# Native Electron keeps working unchanged: point it at this container, or keep
+# using its own `uv run` spawn — absent sidecar degrades honestly (banner,
+# verification skipped, doc tools refuse plainly).
+
+services:
+  intelligence:
+    build:
+      context: .
+      dockerfile: services/intelligence/Dockerfile
+    ports:
+      - "7891:7891"
+    environment:
+      AGENTO_INTELLIGENCE_TOKEN: ${AGENTO_INTELLIGENCE_TOKEN:-dev-token}
+      FASTEMBED_CACHE_PATH: /data/fastembed
+      HF_HUB_OFFLINE: "1"
+    volumes:
+      - fastembed-cache:/data/fastembed
+    healthcheck:
+      # stdlib-only (slim has no curl): GET /health with the per-launch token.
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os,urllib.request; t=os.environ.get('AGENTO_INTELLIGENCE_TOKEN',''); r=urllib.request.Request('http://127.0.0.1:7891/health', headers={'X-Agento-Token': t}); assert urllib.request.urlopen(r, timeout=3).status == 200\""
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+volumes:
+  fastembed-cache:
+    # Persists the ~90 MB fastembed all-MiniLM-L6-v2 model across restarts,
+    # mirroring the native FASTEMBED_CACHE_PATH pin (app/src/main/sidecar.ts).
