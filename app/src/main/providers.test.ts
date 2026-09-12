@@ -9,17 +9,21 @@ describe('provider key requirements', () => {
   it('requires keys for built-ins, allows keyless custom endpoints', () => {
     expect(providerRequiresKey('google')).toBe(true)
     expect(providerRequiresKey('groq')).toBe(true)
+    expect(providerRequiresKey('ollama')).toBe(true)
     expect(providerRequiresKey('custom:abc123')).toBe(false)
   })
 })
 
 describe('buildLanguageModel routing', () => {
-  it('builds google and groq clients without a base URL', () => {
+  it('builds google, groq, and ollama clients without a base URL', () => {
     expect(() =>
       buildLanguageModel({ provider: 'google', model: 'gemini-2.5-flash', apiKey: 'k' })
     ).not.toThrow()
     expect(() =>
       buildLanguageModel({ provider: 'groq', model: 'openai/gpt-oss-120b', apiKey: 'k' })
+    ).not.toThrow()
+    expect(() =>
+      buildLanguageModel({ provider: 'ollama', model: 'gpt-oss:20b', apiKey: 'k' })
     ).not.toThrow()
   })
 
@@ -44,6 +48,7 @@ describe('buildLanguageModel routing', () => {
   it('refuses missing keys for built-ins, missing endpoints for customs, and unknown providers', () => {
     expect(() => buildLanguageModel({ provider: 'google', model: 'm' })).toThrow(/key/i)
     expect(() => buildLanguageModel({ provider: 'groq', model: 'm' })).toThrow(/key/i)
+    expect(() => buildLanguageModel({ provider: 'ollama', model: 'm' })).toThrow(/key/i)
     expect(() => buildLanguageModel({ provider: 'custom:x', model: 'm' })).toThrow(/endpoint/i)
     expect(() => buildLanguageModel({ provider: 'openai', model: 'm', apiKey: 'k' })).toThrow(
       /unsupported/i

@@ -60,7 +60,7 @@ export interface SettingsSnapshot {
   hasKey: boolean
   keyLast4: string
   storageAvailable: boolean
-  /** Built-in provider ids ('google', 'groq') — main is the source of truth. */
+  /** Built-in provider ids ('google', 'groq', 'ollama') — main is the source of truth. */
   providers: string[]
   /** Model ids for the active provider: curated list for built-ins, [profile.model] for customs. */
   models: string[]
@@ -129,12 +129,28 @@ const GROQ_MODEL_IDS = [
   'qwen/qwen3.8-27b'
 ]
 
+// Curated Ollama Cloud model ids (M6.5, user-requested 2026-09-12) —
+// chat-capable, tool-calling models served through Ollama's hosted
+// OpenAI-compatible endpoint (STACK.md's Ollama row:
+// @ai-sdk/openai-compatible over https://ollama.com/v1). Local Ollama
+// servers stay on custom profiles (keyless loopback-http). Stored prefs
+// naming an unknown id self-heal to the default via resolveModelForPrefs.
+const OLLAMA_MODEL_IDS = [
+  'gemma4:31b',
+  'gpt-oss:120b',
+  'gpt-oss:20b',
+  'nemotron-3-nano:30b',
+  'nemotron-3-super',
+  'nemotron-3-ultra'
+]
+
 // Providers enabled this phase + their curated model lists. Main is the
 // source of truth for both the provider list and the model list (docs/04
 // §3.7); the renderer renders what this says, nothing more.
 const PROVIDERS: Record<string, { models: string[]; defaultModel: string }> = {
   google: { models: GOOGLE_MODEL_IDS, defaultModel: 'gemini-2.5-flash' },
-  groq: { models: GROQ_MODEL_IDS, defaultModel: 'openai/gpt-oss-120b' }
+  groq: { models: GROQ_MODEL_IDS, defaultModel: 'openai/gpt-oss-120b' },
+  ollama: { models: OLLAMA_MODEL_IDS, defaultModel: 'gpt-oss:120b' }
 }
 const ENABLED_PROVIDERS: string[] = [...BUILT_IN_PROVIDERS]
 
@@ -171,7 +187,7 @@ export function requireDataDir(): string {
 }
 
 function resolveModelForPrefs(provider: string, model: unknown): string {
-  if (provider === 'google' || provider === 'groq') {
+  if (provider === 'google' || provider === 'groq' || provider === 'ollama') {
     const list = PROVIDERS[provider]
     return typeof model === 'string' && list.models.includes(model) ? model : list.defaultModel
   }
@@ -410,7 +426,7 @@ export function setProvider(provider: string): void {
   if (cleanProvider === prefs.provider) return
   let model = prefs.model
   if (ENABLED_PROVIDERS.includes(cleanProvider)) {
-    const next = PROVIDERS[cleanProvider as 'google' | 'groq']
+    const next = PROVIDERS[cleanProvider]
     model = next.models.includes(prefs.model) ? prefs.model : next.defaultModel
   } else {
     const profile = prefs.customProviders.find((p) => p.id === cleanProvider)
@@ -422,8 +438,8 @@ export function setProvider(provider: string): void {
 
 export function setModel(model: string): void {
   const cleanModel = model.trim()
-  if (prefs.provider === 'google' || prefs.provider === 'groq') {
-    const valid = PROVIDERS[prefs.provider as 'google' | 'groq'].models.includes(cleanModel)
+  if (prefs.provider === 'google' || prefs.provider === 'groq' || prefs.provider === 'ollama') {
+    const valid = PROVIDERS[prefs.provider].models.includes(cleanModel)
     if (!valid) {
       throw new Error(`Unknown model: ${cleanModel === '' ? '(empty)' : cleanModel}`)
     }

@@ -271,7 +271,7 @@ export interface SettingsSnapshot {
   hasKey: boolean
   keyLast4: string
   storageAvailable: boolean
-  /** Built-in provider ids ('google', 'groq') — main is the source of truth. */
+  /** Built-in provider ids ('google', 'groq', 'ollama') — main is the source of truth. */
   providers: string[]
   /** Model ids for the active provider (curated list, or [profile.model] for customs). */
   models: string[]

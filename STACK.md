@@ -79,7 +79,7 @@
 | OpenRouter | `@ai-sdk/openai-compatible` | Free model variants available; one key, many models |
 | OpenAI | `@ai-sdk/openai` | |
 | Anthropic | `@ai-sdk/anthropic` | |
-| Ollama (local) | `@ai-sdk/openai-compatible` @ `127.0.0.1:11434/v1` | Fully local option; tool-capable models required |
+| Ollama Cloud | `@ai-sdk/openai-compatible` @ `https://ollama.com/v1` | Keyed built-in; six curated tool-capable models (local servers stay on keyless custom profiles @ `127.0.0.1:11434/v1`) |
 
 Agent capability requires **tool calling** — the model picker warns on models without it.
 

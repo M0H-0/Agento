@@ -10,7 +10,8 @@ import { useLocale } from './locale-context'
 
 const PROVIDER_LABELS: Record<string, string> = {
   google: 'Google AI Studio',
-  groq: 'Groq'
+  groq: 'Groq',
+  ollama: 'Ollama Cloud'
 }
 
 // Structural mirror of the preload snapshots — window.agento is typed

@@ -188,10 +188,12 @@ export function registerSettingsIpc(): void {
         providerId = payload.provider.trim()
         if (providerId !== snapshot.provider) {
           const custom = snapshot.customProviders.find((p) => p.id === providerId)
-          if (providerId !== 'google' && providerId !== 'groq' && !custom) {
+          if (!snapshot.providers.includes(providerId) && !custom) {
             throw new Error('That provider no longer exists.')
           }
-          model = custom ? custom.model : (snapshot.models[0] ?? snapshot.model)
+          model = custom
+            ? custom.model
+            : (snapshot.providerModels?.[providerId]?.[0] ?? snapshot.model)
           baseUrl = custom?.baseUrl
         } else {
           model = snapshot.model

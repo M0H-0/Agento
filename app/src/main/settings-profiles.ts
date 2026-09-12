@@ -43,7 +43,7 @@ export const DEFAULT_APPEARANCE: Appearance = 'dark'
 export const DEFAULT_LOCALE: Locale = 'en'
 export const DEFAULT_PERMISSIONS: PermissionDefaults = { risk1: 'auto', risk2: 'ask' }
 
-export const BUILT_IN_PROVIDERS = ['google', 'groq'] as const
+export const BUILT_IN_PROVIDERS = ['google', 'groq', 'ollama'] as const
 export type BuiltInProvider = (typeof BUILT_IN_PROVIDERS)[number]
 
 export function isBuiltInProvider(id: string): boolean {

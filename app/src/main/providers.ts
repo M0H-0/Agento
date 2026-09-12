@@ -9,6 +9,10 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 
 export const GROQ_BASE_URL = 'https://api.groq.com/openai/v1'
 
+// First-class Ollama Cloud (M6.5): hosted OpenAI-compatible endpoint.
+// Keyed like Google/Groq — local servers stay on custom profiles.
+export const OLLAMA_BASE_URL = 'https://ollama.com/v1'
+
 export interface CustomProviderDescriptor {
   id: string
   baseUrl: string
@@ -17,7 +21,7 @@ export interface CustomProviderDescriptor {
 
 /** Built-ins always need a key; custom endpoints may be keyless (local servers). */
 export function providerRequiresKey(providerId: string): boolean {
-  return providerId === 'google' || providerId === 'groq'
+  return providerId === 'google' || providerId === 'groq' || providerId === 'ollama'
 }
 
 export function buildLanguageModel(input: {
@@ -39,6 +43,15 @@ export function buildLanguageModel(input: {
       apiKey: input.apiKey
     })
     return groq(model)
+  }
+  if (provider === 'ollama') {
+    if (!input.apiKey) throw new Error('Missing API key.')
+    const ollama = createOpenAICompatible({
+      name: 'ollama',
+      baseURL: input.baseUrl ?? OLLAMA_BASE_URL,
+      apiKey: input.apiKey
+    })
+    return ollama(model)
   }
   if (provider.startsWith('custom:')) {
     if (!input.baseUrl) throw new Error('This custom provider has no endpoint URL.')

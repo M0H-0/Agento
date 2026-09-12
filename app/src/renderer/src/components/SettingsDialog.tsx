@@ -50,7 +50,8 @@ interface DataSummary {
 
 const PROVIDER_LABELS: Record<string, string> = {
   google: 'Google AI Studio',
-  groq: 'Groq'
+  groq: 'Groq',
+  ollama: 'Ollama Cloud'
 }
 
 function providerLabel(id: string, customs: CustomProviderSnapshot[]): string {
