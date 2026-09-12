@@ -2724,6 +2724,101 @@
   font-size: 0.78rem;
 }
 
+/* History (docs/04 §3.4): scrub across the session's stops. Grayscale
+   only — the one accent is the inherited `.changes-panel__restored` green.
+   The range input stays dir="ltr" (see the component) so time always flows
+   left-to-right; every label around it translates. */
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.history__title {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.history__hint,
+.history__present {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.history__stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.history__arrow {
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--foreground);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.history__arrow:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.history__counter {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  min-width: 3rem;
+  text-align: center;
+}
+
+.history__preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+}
+
+.history__position {
+  font-weight: 500;
+}
+
+.history__before-label {
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+}
+
+.history__excerpt {
+  max-height: 6rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.history__later {
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+}
+
+.history__actions {
+  font-size: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+
 /* M3.1: Plan panel (docs/04 §3.3) — top of the in-flow right rail; capped at
    half the rail height with an internally scrolling __list so it can never
    hide the Changes panel (the old 45vh fixed-offset hack is gone). */
@@ -3223,6 +3318,7 @@
    and keep their base transform. */
 [dir='rtl'] .sessions-section-chevron--collapsed,
 [dir='rtl'] .tool-card__chevron,
+[dir='rtl'] .history__arrow-glyph,
 [dir='rtl'] .workspace-overview__open {
   transform: scaleX(-1);
 }

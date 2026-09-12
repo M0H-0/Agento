@@ -3,6 +3,7 @@ import type { ChangeEntry } from '../../../preload/index'
 import { relativeTime } from '../chat/locale'
 import type { StringKey } from '../chat/locale'
 import { useLocale } from './locale-context'
+import { HistorySection } from './HistorySection'
 
 // Changes panel (M2.8; docs/04 §3.4): session checkpoints with per-item undo
 // and Undo all. Rows sharing a groupKey are one mutation (M2.7: a move lands
@@ -202,6 +203,31 @@ export function ChangesPanel({
 
   const groups = groupEntries(entries)
 
+  // Time travel ("restore to here"): rewind an ordered list of checkpoint ids
+  // through the same per-row `changes:undo` channel the per-item undo uses —
+  // no new IPC. The order comes from the caller (newest group first); a
+  // mid-run refusal surfaces as the panel error, exactly like undo-all.
+  const restoreIds = (ids: string[]): void => {
+    if (ids.length === 0) return
+    setBusyKey('__history')
+    setError(null)
+    const run = async (): Promise<void> => {
+      const outcomes: { ok: boolean; error?: string }[] = []
+      for (const id of ids) {
+        try {
+          const result = await window.agento.changes.undo({ checkpointId: id })
+          for (const item of result.results) outcomes.push(item)
+        } catch (err: unknown) {
+          outcomes.push({ ok: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      }
+      setError(failMessages(outcomes))
+      setBusyKey(null)
+      reload()
+    }
+    void run()
+  }
+
   return (
     <aside className="changes-panel" aria-label={t('changes.title')}>
       <h2 className="changes-panel__title">
@@ -232,6 +258,7 @@ export function ChangesPanel({
         </div>
       ) : null}
       {error ? <div className="changes-panel__error">{error}</div> : null}
+      <HistorySection entries={entries} busy={busyKey !== null} onRestore={restoreIds} />
       {groups.length === 0 && !error ? (
         <div className="changes-panel__empty">{t('changes.empty')}</div>
       ) : (
