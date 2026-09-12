@@ -35,6 +35,7 @@ Two kinds of claims matter in this project: **"it cannot hurt your files"** (a s
 - [ ] No API key → onboarding, not errors
 - [ ] >10 MB file → honest explanation, not a hang
 - [ ] Windows path torture: Unicode filenames, deep paths, spaces, oneDrive-redirected folders
+- [ ] Clean-machine install (M6.6): the `-setup.exe` installs per-user with no admin prompt → app launches → dot shows one-time setup → sidecar healthy → a PDF parses and one semantic search succeeds → uninstall leaves no process on 7891 (SmartScreen click-through expected: unsigned build)
 
 ## 3. The eval harness (thesis numbers)
 

@@ -1,6 +1,9 @@
 node_modules/
 dist/
 out/
+# NSIS build cache (M6.6): pinned uv binary + staging — re-fetchable via
+# `npm run fetch:uv` in app/, never committed.
+app/build-cache/
 *.log
 .env
 __pycache__/

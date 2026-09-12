@@ -9,6 +9,30 @@ files:
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  # The pinned uv binary must not be duplicated inside app.asar — it ships
+  # once, via extraResources below. (M6.6)
+  - '!build-cache/*'
+# M6.6 clean-machine payload (docs/02 §5). Everything here lands in
+# <resources>/ of the installed app, outside app.asar:
+#   sidecar/  sidecar sources (pyproject + uv.lock; no .venv, no tests)
+#   drizzle/  SQLite migrations for openDatabase()
+#   bin/      pinned uv bootstrap binary (fetch with `npm run fetch:uv`;
+#             the build fails honestly if it is missing)
+extraResources:
+  - from: ../services/intelligence/agento_intelligence
+    to: sidecar/agento_intelligence
+    filter:
+      - '**/*'
+      - '!**/__pycache__/**'
+      - '!**/*.pyc'
+  - from: ../services/intelligence/pyproject.toml
+    to: sidecar/pyproject.toml
+  - from: ../services/intelligence/uv.lock
+    to: sidecar/uv.lock
+  - from: drizzle
+    to: drizzle
+  - from: build-cache/uv/uv.exe
+    to: bin/uv.exe
 asarUnpack:
   - resources/**
 win:
@@ -18,6 +42,17 @@ nsis:
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
+  # M6.6 decision (locked with the user): per-user install — no admin prompt,
+  # %LocalAppData%, user data in %APPDATA% survives uninstall. Unsigned build:
+  # expect the Windows SmartScreen click-through on a clean machine.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: false
+  packElevateHelper: false
+  deleteAppDataOnUninstall: false
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
 mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:

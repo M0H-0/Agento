@@ -12,7 +12,25 @@ import { registerWorkspaceFilesIpc } from './ipc/workspace-files'
 import { getCurrentWorkspace } from './workspaces'
 import { initSettings } from './settings'
 import { dbFilePath, openDatabase, runSmokeQuery } from './storage/db'
-import { generateSidecarToken, killSidecar, onSidecarStatusChange, startSidecar } from './sidecar'
+import {
+  announceSetupFailed,
+  announceSetupProgress,
+  generateSidecarToken,
+  killSidecar,
+  onSidecarStatusChange,
+  startSidecar
+} from './sidecar'
+import {
+  bootstrapSidecar,
+  packagedSidecarEnv,
+  BOOTSTRAP_STEP_TIMEOUT_MS
+} from './sidecar-bootstrap'
+import {
+  isSidecarBootstrapped,
+  resolveMigrationsFolder,
+  resolveSidecarCwd,
+  resolveUvBinary
+} from './sidecar-paths'
 import { warmEmbeddingModel } from './ipc/sidecar-calls'
 import { initWorkspaces } from './workspaces'
 
@@ -96,8 +114,17 @@ app.whenReady().then(async () => {
   // say so plainly and quit; the repos report their own errors afterwards.
   // The migrations folder lives beside the sources in dev; how it reaches a
   // packaged build is an M6.6 question (app is dev-only until then).
+  // M6.6 packaged layout (docs/02 §5): resources/drizzle in the installed
+  // build, <app>/drizzle in dev. resolveMigrationsFolder prefers the packaged
+  // copy only when it actually exists, so a damaged install falls back
+  // honestly instead of crashing.
+  const layout = {
+    isPackaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath
+  }
   try {
-    const migrationsFolder = join(app.getAppPath(), 'drizzle')
+    const migrationsFolder = resolveMigrationsFolder(layout)
     const db = await openDatabase(app.getPath('userData'), migrationsFolder)
     runSmokeQuery(db)
     const journalMode = db.pragma('journal_mode', { simple: true })
@@ -171,15 +198,48 @@ app.whenReady().then(async () => {
     void warmEmbeddingModel()
   })
 
-  // Sidecar lifecycle (docs/02 §2.4): per-launch token, spawn, /health polling.
-  // Dev layout: services/intelligence sits beside app/; packaged layout is M6.6.
-  // The fastembed cache is pinned to a durable app-owned dir (a TEMP default
-  // would get cleaned) — see sidecar.ts for the offline-mode rationale.
-  startSidecar(
-    generateSidecarToken(),
-    resolve(app.getAppPath(), '..', 'services', 'intelligence'),
-    resolve(app.getPath('userData'), 'fastembed')
-  )
+  // Sidecar lifecycle (docs/02 §2.4–2.5): per-launch token, spawn, /health polling.
+  // Dev layout: services/intelligence sits beside app/. Packaged NSIS layout
+  // (docs/02 §5): sources + pinned uv live in resources/, the venv in userData.
+  // On a clean machine the one-time download runs AFTER the window opens, so
+  // first paint never waits on it — the dot shows progress, file tools work
+  // immediately, and document tools answer honestly offline until healthy.
+  const sidecarToken = generateSidecarToken()
+  const sidecarCwd = resolveSidecarCwd(layout)
+  const fastembedCachePath = resolve(app.getPath('userData'), 'fastembed')
+  if (app.isPackaged) {
+    const sidecarDataDir = resolve(app.getPath('userData'), 'sidecar')
+    const uvBinary = resolveUvBinary(layout)
+    if (isSidecarBootstrapped(sidecarDataDir)) {
+      startSidecar(sidecarToken, sidecarCwd, fastembedCachePath, {
+        uvBinary,
+        extraEnv: packagedSidecarEnv(sidecarDataDir)
+      })
+    } else {
+      announceSetupProgress(
+        'Setting up document tools — one-time download…',
+        2 * BOOTSTRAP_STEP_TIMEOUT_MS
+      )
+      void bootstrapSidecar({
+        uvBinary,
+        sidecarSourceDir: sidecarCwd,
+        sidecarDataDir,
+        onProgress: (detail) => announceSetupProgress(detail, BOOTSTRAP_STEP_TIMEOUT_MS)
+      }).then((result) => {
+        if (!result.ok) {
+          console.error('[sidecar] first-run bootstrap failed:', result.detail)
+          announceSetupFailed(`${result.detail} File tools keep working.`)
+          return
+        }
+        startSidecar(sidecarToken, sidecarCwd, fastembedCachePath, {
+          uvBinary,
+          extraEnv: packagedSidecarEnv(sidecarDataDir)
+        })
+      })
+    }
+  } else {
+    startSidecar(sidecarToken, sidecarCwd, fastembedCachePath)
+  }
 
   createWindow()
 

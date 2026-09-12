@@ -11,7 +11,7 @@
 | **Electron** | latest stable | Desktop shell, window, IPC, safeStorage, printToPDF | MIT |
 | **electron-vite** | latest | Dev server + build for main/preload/renderer | MIT |
 | **electron-builder** | latest | Packaging — **NSIS installer, Windows primary target** | MIT |
-| **uv** | latest | Python project + dependency + script runner | Apache-2.0 |
+| **uv** | latest (build pins win-x64 `0.12.8` via `app/scripts/fetch-uv.mjs`) | Python project + dependency + script runner; the pinned `bin/uv.exe` inside the NSIS payload bootstraps CPython 3.12 + the locked venv on clean machines (M6.6) | Apache-2.0 |
 | npm | bundled with Node | Package manager (no workspaces; one JS package) | — |
 
 ## UI layer (`app/src/renderer`) — React

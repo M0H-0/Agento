@@ -157,8 +157,12 @@ Everything in the right column is small, documented here, and owned by us. That 
 
 ## 5. Packaging & distribution
 
-- **Target: Windows first.** electron-builder → NSIS installer; app name `Agento`, appId `com.agento.app`.
-- Sidecar distribution for the demo: run-from-source (`uv run …`) is acceptable and documented; a PyInstaller one-dir bundle shipped inside the installer's resources is the stretch goal (M6). The degradation contract exists precisely so the app never *requires* Python to function.
+- **Target: Windows first.** electron-builder → NSIS installer; app name `Agento`, appId `com.agento.app`. **Per-user install** (`%LocalAppData%`, no admin prompt, user data in `%APPDATA%` survives uninstall), **unsigned** (expect the SmartScreen click-through on a clean machine). M6.6 shipped this.
+- **Clean-machine sidecar (M6.6, "download on first run").** The installer cannot assume Python or uv, so it ships both seeds and downloads the rest once:
+  - *In the installer* (`extraResources` → `<resources>/`): the sidecar sources (`sidecar/agento_intelligence` + `pyproject.toml` + `uv.lock`, no `.venv`/tests), the drizzle migrations (`drizzle/`), and a pinned `uv` binary (`bin/uv.exe`, fetched by `npm run fetch:uv`, version = the dev toolchain, sha256 on record in the Devlog).
+  - *On first launch (packaged only):* `src/main/sidecar-paths.ts` resolves the packaged layout, `src/main/sidecar-bootstrap.ts` runs `uv python install 3.12` + `uv sync --frozen` into `<userData>/sidecar/` (venv + caches + marker file), then the normal `startSidecar` spawns through the pinned binary with `UV_OFFLINE=1`. The window opens FIRST — the status dot shows setup progress, file tools work immediately, document tools answer honestly offline until healthy. Any bootstrap failure pins the dot red with a plain-language retry-on-restart message, never a crash (docs/05 §6).
+  - *The ~90 MB fastembed model* stays on-demand (pinned `<userData>/fastembed` cache, boot-time warmup); first semantic search downloads it once.
+- Dev layout is unchanged (`uv` from PATH, `services/intelligence` beside `app/`); `resolveSidecarCwd`/`resolveMigrationsFolder`/`resolveUvBinary` prefer the packaged copy only when it exists, so a damaged install degrades honestly. Teardown is the existing `taskkill /T /F` tree-kill (verified against the packaged chain: one call reaps uv→uvicorn→python and frees 7891).
 - Auto-update: out of scope for v1.
 
 ## 6. Decision log

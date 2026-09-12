@@ -125,7 +125,40 @@ async function poll(): Promise<void> {
   }
 }
 
-export function startSidecar(token: string, sidecarCwd: string, fastembedCachePath?: string): void {
+/**
+ * Progress copy for the first-run packaged bootstrap (docs/02 §5): surfaces
+ * as the status-dot detail (the renderer already renders `detail`) while the
+ * one-time download runs. Also extends the boot ceiling so the 15 s watchdog
+ * doesn't declare 'unhealthy' mid-download.
+ */
+export function announceSetupProgress(detail: string, extendBootByMs: number): void {
+  bootDeadline = Math.max(bootDeadline, Date.now() + extendBootByMs)
+  status = { status: 'starting', detail }
+  for (const listener of statusListeners) listener(status)
+}
+
+/** Terminal state for a failed first-run bootstrap: the app stays usable in
+ * degraded mode (docs/05 §6) and a restart retries. No poll timer is running
+ * yet (startSidecar was never called), so this just pins the dot red with
+ * the plain-language reason. */
+export function announceSetupFailed(detail: string): void {
+  status = { status: 'unhealthy', detail }
+  for (const listener of statusListeners) listener(status)
+}
+
+export interface PackagedSpawn {
+  /** Pinned uv binary (resources/bin/uv.exe) — clean machines have no uv on PATH. */
+  uvBinary: string
+  /** Extra env (venv reuse + offline flag) for the packaged `uv run`. */
+  extraEnv?: Record<string, string>
+}
+
+export function startSidecar(
+  token: string,
+  sidecarCwd: string,
+  fastembedCachePath?: string,
+  packaged?: PackagedSpawn
+): void {
   if (child !== null) return
   authToken = token
   bootDeadline = Date.now() + BOOT_CEILING_MS
@@ -133,13 +166,17 @@ export function startSidecar(token: string, sidecarCwd: string, fastembedCachePa
   // Spawn contract (docs/02 §2.4, M0.4 report): exact command, and cwd =
   // services/intelligence because uvicorn resolves agento_intelligence off
   // the cwd on sys.path — the project is unpackaged.
+  // Packaged NSIS builds (docs/02 §5) spawn through the pinned uv binary so
+  // a clean machine with no uv on PATH still works; dev keeps bare 'uv'.
+  const command = packaged?.uvBinary ?? 'uv'
   child = spawn(
-    'uv',
+    command,
     ['run', 'uvicorn', 'agento_intelligence.main:app', '--port', String(SIDECAR_PORT)],
     {
       cwd: sidecarCwd,
       env: {
         ...process.env,
+        ...(packaged?.extraEnv ?? {}),
         AGENTO_INTELLIGENCE_TOKEN: token,
         UV_LINK_MODE: 'copy',
         // MVP semantic search (2026-09-10): fastembed 0.8 defaults its cache
