@@ -36,7 +36,12 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => {
+    // A hidden-parent launch can leave the window minimized even though we
+    // asked to show it — force a normal, frontmost window regardless of how
+    // the app was started.
+    if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.show()
+    mainWindow.focus()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
