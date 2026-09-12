@@ -34,6 +34,7 @@ interface SettingsSnapshot {
   models: string[]
   providerModels?: Record<string, string[]>
   providerKeys: Record<string, { hasKey: boolean; keyLast4: string }>
+  searchKeys?: Record<string, { hasKey: boolean; keyLast4: string }>
   appearance: Appearance
   locale: Locale
   permissionDefaults: { risk1: 'auto' | 'ask'; risk2: 'auto' | 'ask' }
@@ -80,6 +81,7 @@ function SettingsDialog({
   const { t } = useLocale()
   const [snapshot, setSnapshot] = useState<SettingsSnapshot | null>(null)
   const [keyDraft, setKeyDraft] = useState('')
+  const [tavilyKeyDraft, setTavilyKeyDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -130,6 +132,7 @@ function SettingsDialog({
         setError(null)
         setNotice(null)
         setTestResult(null)
+        setTavilyKeyDraft('')
         setEditingId(undefined)
         setActiveTab('providers')
       })
@@ -199,6 +202,31 @@ function SettingsDialog({
   const removeKeyFor = (provider: string): void => {
     runGuarded(
       () => window.agento.settings.clearApiKey({ provider }).then(refresh),
+      t('settings.removeKeyFailed')
+    )
+  }
+
+  // Web-search key (docs/06 §7): stored under the plain 'tavily' id through
+  // the same key surface — no new IPC. Plaintext leaves renderer state the
+  // moment main has it, like the provider key above.
+  const saveTavilyKey = (): void => {
+    if (snapshot === null || tavilyKeyDraft.trim() === '') return
+    runGuarded(
+      () =>
+        window.agento.settings
+          .setApiKey({ provider: 'tavily', key: tavilyKeyDraft })
+          .then(() => {
+            setTavilyKeyDraft('')
+            return refresh()
+          })
+          .then(() => setNotice(null)),
+      t('settings.saveKeyFailed')
+    )
+  }
+
+  const removeTavilyKey = (): void => {
+    runGuarded(
+      () => window.agento.settings.clearApiKey({ provider: 'tavily' }).then(refresh),
       t('settings.removeKeyFailed')
     )
   }
@@ -425,6 +453,8 @@ function SettingsDialog({
   if (!open) return null
 
   const maskedKey = snapshot?.keyLast4 === '' ? '••••' : `•••• ${snapshot?.keyLast4 ?? ''}`
+  const tavilyState = snapshot?.searchKeys?.['tavily'] ?? { hasKey: false, keyLast4: '' }
+  const maskedTavilyKey = tavilyState.keyLast4 === '' ? '••••' : `•••• ${tavilyState.keyLast4}`
   const activeCustom = snapshot?.customProviders.find((p) => p.id === snapshot.provider)
   const isCustomActive = activeCustom !== undefined
 
@@ -837,6 +867,63 @@ function SettingsDialog({
                       </button>
                     </div>
                   </div>
+                )}
+              </div>
+
+              <div className="settings-field">
+                <span className="settings-label" id="settings-tavily-key-label">
+                  {t('settings.webSearch')}
+                </span>
+                <p className="settings-note">{t('settings.webSearchNote')}</p>
+                {snapshot.searchKeys === undefined ? (
+                  <p className="settings-note">{t('settings.searchKeysRestart')}</p>
+                ) : (
+                  <>
+                    <p className="settings-note">
+                      {tavilyState.hasKey
+                        ? t('settings.keySaved', { last4: tavilyState.keyLast4 })
+                        : t('settings.noKeySaved')}
+                    </p>
+                    {tavilyState.hasKey ? (
+                      <div className="settings-key-row">
+                        <span
+                          className="settings-key-display"
+                          aria-label={t('settings.storedKeyMasked')}
+                        >
+                          {maskedTavilyKey}
+                        </span>
+                        <button
+                          type="button"
+                          className="settings-remove"
+                          onClick={removeTavilyKey}
+                          disabled={busy}
+                        >
+                          {t('settings.removeKey')}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="settings-key-row">
+                        <input
+                          type="password"
+                          className="settings-input"
+                          value={tavilyKeyDraft}
+                          onChange={(event) => setTavilyKeyDraft(event.target.value)}
+                          placeholder={t('settings.pasteTavilyKey')}
+                          autoComplete="off"
+                          spellCheck={false}
+                          aria-labelledby="settings-tavily-key-label"
+                        />
+                        <button
+                          type="button"
+                          className="settings-save"
+                          onClick={saveTavilyKey}
+                          disabled={busy || tavilyKeyDraft.trim() === ''}
+                        >
+                          {t('settings.save')}
+                        </button>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
 

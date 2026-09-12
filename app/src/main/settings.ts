@@ -49,6 +49,11 @@ export interface CustomProviderSnapshot {
   updatedAt: string
 }
 
+export interface SearchKeyState {
+  hasKey: boolean
+  keyLast4: string
+}
+
 export interface SettingsSnapshot {
   provider: string
   model: string
@@ -63,6 +68,10 @@ export interface SettingsSnapshot {
   providerModels: Record<string, string[]>
   /** Masked key state for EVERY provider (built-ins + customs) — keyLast4 only, never the key itself. */
   providerKeys: Record<string, { hasKey: boolean; keyLast4: string }>
+  /** Optional search-provider keys (docs/06 §7): 'tavily' powers web_search's
+   * primary; absent a key the tool runs its keyless fallback. Same
+   * secrets.bin envelope + masking discipline as provider keys. */
+  searchKeys: Record<string, SearchKeyState>
   appearance: Appearance
   locale: Locale
   permissionDefaults: PermissionDefaults
@@ -79,6 +88,9 @@ interface SecretsEnvelope {
 
 const SECRETS_VERSION = 1
 const DEFAULT_PROVIDER = 'google'
+// Search-provider key ids with first-class Settings state (docs/06 §7).
+// 'tavily' is the only one today — web_search's primary.
+const SEARCH_KEY_IDS = ['tavily'] as const
 
 // Curated Google AI Studio (Gemini API) model ids for a chat agent — text
 // generation only (no image/TTS/live/embedding variants), re-verified
@@ -300,6 +312,14 @@ export function getSettings(): SettingsSnapshot {
     const profileKey = resolveProviderKey(profile.id)
     providerKeys[profile.id] = { hasKey: profileKey !== undefined, keyLast4: maskKey(profileKey) }
   }
+  // Search-provider keys (docs/06 §7): 'tavily' is the only one today. Stored
+  // under the plain id via the same setApiKey/clearApiKey surface — the
+  // renderer passes provider: 'tavily', so no new IPC is needed.
+  const searchKeys: Record<string, SearchKeyState> = {}
+  for (const id of SEARCH_KEY_IDS) {
+    const searchKey = resolveProviderKey(id)
+    searchKeys[id] = { hasKey: searchKey !== undefined, keyLast4: maskKey(searchKey) }
+  }
   return {
     provider: prefs.provider,
     model: prefs.model,
@@ -310,6 +330,7 @@ export function getSettings(): SettingsSnapshot {
     models,
     providerModels: buildProviderModels(builtInModels, prefs.customProviders),
     providerKeys,
+    searchKeys,
     appearance: prefs.appearance,
     locale: prefs.locale,
     permissionDefaults: { ...prefs.permissionDefaults },

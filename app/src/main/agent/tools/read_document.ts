@@ -5,8 +5,10 @@ import { wrapUntrusted } from '../untrusted'
 import { readDocumentText } from '../document-text'
 
 // MVP tool (MVP_PLAN.md): read a document as plain text. Binary formats
-// (.pdf/.docx) ride the intelligence sidecar; text files read directly so
-// they keep working with the sidecar down (docs/05 §6 degraded doctrine).
+// (.pdf/.docx/.pptx/.xlsx) ride the intelligence sidecar; text files
+// (.txt/.md/.csv) read directly so they keep working with the sidecar down
+// (docs/05 §6 degraded doctrine). Images (.png/.jpg/…) come back as a
+// model-generated description via ctx.vision. The tool caps the text BELOW
 // The tool caps the text BELOW the wrapper's 8 KB output cap
 // (MAX_TOOL_OUTPUT_BYTES) — past it the wrapper would replace the whole
 // result with a generic "large" hint and the honest `truncated` marker
@@ -19,7 +21,7 @@ export const readDocumentTool: ToolDefinition<
 > = {
   name: 'read_document',
   description:
-    "Read a document from the user's workspace as plain text (path relative to the workspace root). Handles .pdf and .docx (via the intelligence service) plus text files like .txt and .md.",
+    "Read a document from the user's workspace as plain text (path relative to the workspace root). Handles .pdf, .docx, .pptx, and .xlsx (via the intelligence service), text files like .txt, .md, and .csv, and images (.png/.jpg/.gif/.bmp/.webp/.tiff) — images come back as a description written by the AI model.",
   access: 'read',
   inputSchema: z.object({
     path: z.string().min(1)

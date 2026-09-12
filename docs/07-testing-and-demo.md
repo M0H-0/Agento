@@ -18,6 +18,7 @@ Two kinds of claims matter in this project: **"it cannot hurt your files"** (a s
 | Agent loop | scripted e2e — fake provider emitting a deterministic tool-call script against a fixture workspace | plan→approve→execute→verify→undo; cancel mid-run; MAX_STEPS; degraded mode (sidecar down) |
 | Intelligence service | pytest + respx | contract shapes, fallback paths, structured-output validation, token auth |
 | Eval harness | `uv run eval` | the thesis numbers (doc 05 §5) |
+| App e2e + screenshots | Playwright (`npm run e2e` in `app/`, HTML report) | launch, first paint, per-step screenshots attached to the report |
 | Manual | checklist below, before every demo | the "stranger test" |
 
 **Manual checklist (run before every demo):**

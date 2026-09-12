@@ -33,9 +33,11 @@ import {
   cachePathForWorkspace,
   copyPathTool,
   createDirTool,
+  createDocumentTool,
   createToolRegistry,
   createWorkspaceFs,
   deletePathTool,
+  editDocumentTool,
   editExcerpts,
   editFileTool,
   emitPlanTool,
@@ -55,7 +57,9 @@ import {
   summarizeDocumentTool,
   verifyStep,
   webFetchTool,
-  writeFileTool
+  webSearchTool,
+  writeFileTool,
+  parseTavilyResults
 } from '../agent'
 import type { PlanStep, RunContextBundle, ToolRegistry } from '../agent'
 import {
@@ -68,7 +72,14 @@ import {
   emitVerificationFinished
 } from './agent-events'
 import { buildSystemPrompt } from './system-prompt'
-import { classifyIntent, classifySafety, embedTexts, extractDocument } from './sidecar-calls'
+import {
+  classifyIntent,
+  classifySafety,
+  createDocument,
+  editDocxDocument,
+  embedTexts,
+  extractDocument
+} from './sidecar-calls'
 
 // The run loop itself (streamText calls, stream forwarding, provider error
 // classification, step guard) lives in src/main/agent/plan-run.ts — this
@@ -267,6 +278,40 @@ function llmCompleter(model: LanguageModel): (prompt: string) => Promise<string>
   }
 }
 
+// Demo: the vision-model describer backing ctx.vision — the run's configured
+// provider/model, called from the Electron main process only (pixels never
+// cross to the sidecar). A text-only model (or an image it refuses) throws
+// inside generateText and becomes the tool's honest "can't describe" answer.
+function visionDescriber(
+  model: LanguageModel
+): (image: { data: Buffer; mimeType: string }) => Promise<string> {
+  return async ({ data, mimeType }) => {
+    try {
+      const dataUrl = `data:${mimeType};base64,${data.toString('base64')}`
+      const { text } = await generateText({
+        model,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'Describe this image in clear, plain language: what it shows, any visible text, and anything notable.'
+              },
+              { type: 'image', image: dataUrl }
+            ]
+          }
+        ]
+      })
+      return text
+    } catch {
+      throw new Error(
+        'That image could not be described — the configured model may not support images. Check your provider settings.'
+      )
+    }
+  }
+}
+
 // MVP (MVP_PLAN.md step 4): SSRF-guarded HTTP GET for web_fetch — 10 s
 // timeout, 2 MB streaming cap, decoded as UTF-8. Loopback / private /
 // link-local / multicast destinations and redirects to them are refused;
@@ -339,6 +384,55 @@ async function webFetch(
   throw new Error('That page redirected too many times.')
 }
 
+// Keyed Tavily web search (docs/03 §5 primary, docs/06 §8): plain POST to
+// api.tavily.com with the stored key — no SDK dep (STACK.md stays unchanged).
+// `basic` depth costs 1 credit per call; no answer synthesis (the card shows
+// snippets, and the model opens results with web_fetch). Throws a
+// plain-language Error on any failure — the web_search tool catches it and
+// falls back to the keyless path. The key travels main → Tavily only: never
+// IPC, SQLite, the sidecar, or logs (docs/06 §7).
+const TAVILY_SEARCH_URL = 'https://api.tavily.com/search'
+const TAVILY_SEARCH_TIMEOUT_MS = 15_000
+
+async function tavilySearch(
+  apiKey: string,
+  query: string,
+  maxResults: number
+): Promise<{ title: string; url: string; snippet: string }[]> {
+  let response: Response
+  try {
+    response = await fetch(TAVILY_SEARCH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        query,
+        max_results: Math.min(Math.max(maxResults, 1), 8),
+        search_depth: 'basic',
+        include_answer: false
+      }),
+      signal: AbortSignal.timeout(TAVILY_SEARCH_TIMEOUT_MS)
+    })
+  } catch {
+    throw new Error('The Tavily search could not run — check your connection.')
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new Error('The Tavily key was refused — check it in Settings → Web search.')
+  }
+  if (response.status === 402 || response.status === 429) {
+    throw new Error('Tavily is out of credits or rate-limiting this key.')
+  }
+  if (!response.ok) {
+    throw new Error(`Tavily answered with status ${response.status}.`)
+  }
+  let data: unknown
+  try {
+    data = await response.json()
+  } catch {
+    throw new Error('The Tavily answer could not be read.')
+  }
+  return parseTavilyResults(data)
+}
+
 // Per-run active context. The run ctx exposes the ask_user answer resolver
 // (so the `tool:answer` IPC can settle the pending promise) and the abort
 // callback (so the renderer-initiated `chat:stop` aborts the AI SDK stream
@@ -365,7 +459,10 @@ function buildGlobalRegistry(): ReturnType<typeof createToolRegistry> {
   registry.define(readFileTool)
   registry.define(readDocumentTool)
   registry.define(summarizeDocumentTool)
+  registry.define(editDocumentTool)
+  registry.define(createDocumentTool)
   registry.define(webFetchTool)
+  registry.define(webSearchTool)
   registry.define(semanticSearchTool)
   registry.define(searchFilesTool)
   registry.define(askUserTool)
@@ -552,6 +649,18 @@ export function registerChatIpc(): void {
     const sessionWorkspace = session.workspacePath?.trim() ? session.workspacePath : null
     const workspaceRoot = sessionWorkspace ?? getCurrentWorkspace() ?? ''
 
+    // Tavily key for this run's web_search primary (docs/06 §7: same
+    // secrets.bin store as provider keys, id 'tavily'). Never logged, never
+    // forwarded — only the tavilySearch closure below sees it. The const
+    // alias keeps the undefined-narrowing inside that closure.
+    let tavilyKey: string | undefined
+    try {
+      tavilyKey = resolveProviderKey('tavily')
+    } catch {
+      tavilyKey = undefined
+    }
+    const storedTavilyKey = tavilyKey
+
     // Auto title (docs/03 §4): on the FIRST send only — messages holds the
     // full history, so length 1 means exactly the opening user message — ask
     // the model for a real topic title in the user's language. Fire-and-forget
@@ -655,13 +764,33 @@ export function registerChatIpc(): void {
           console.error('[approval] emitting resolution failed:', error)
         }
       },
-      // MVP (MVP_PLAN.md step 2): .pdf/.docx extraction rides the sidecar.
-      // Failures throw plain-language errors the tool answers honestly.
-      documents: { extract: extractDocument },
+      // MVP (MVP_PLAN.md step 2): .pdf/.docx/.pptx/.xlsx extraction rides
+      // the sidecar. Failures throw plain-language errors the tool answers
+      // honestly. Demo: .docx anchor edits ride the same sidecar
+      // (edit_document).
+      documents: { extract: extractDocument, edit: editDocxDocument, create: createDocument },
       // MVP (MVP_PLAN.md step 3): summarize_document's one-shot completion.
       llm: { complete: llmCompleter(languageModel) },
-      // MVP (MVP_PLAN.md step 4): web_fetch's plain HTTP GET.
-      web: { fetch: webFetch },
+      // Demo: read_document on images — the run's vision model describes the
+      // pixels (data URL keeps the call to one well-typed part). A text-only
+      // model throws inside generateText and the tool answers honestly.
+      vision: { describeImage: visionDescriber(languageModel) },
+      // MVP (MVP_PLAN.md step 4): web_fetch's plain HTTP GET, plus the
+      // keyed Tavily primary for web_search (docs/03 §5). The key resolves
+      // per run — like the provider key above — so a key saved mid-session
+      // applies to the very next message. Absent without a stored key, and
+      // the tool then runs the keyless path only.
+      web: {
+        fetch: webFetch,
+        ...(storedTavilyKey !== undefined
+          ? {
+              tavily: {
+                search: (query: string, maxResults: number) =>
+                  tavilySearch(storedTavilyKey, query, maxResults)
+              }
+            }
+          : {})
+      },
       // MVP (MVP_PLAN.md step 5): on-device semantic search (undefined
       // without a workspace pick).
       semantic,

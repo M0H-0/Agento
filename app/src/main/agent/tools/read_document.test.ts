@@ -94,6 +94,72 @@ describe('read_document — read-only', () => {
     expect(outcome.message).toContain('could not be read')
   })
 
+  it('routes .pptx through the injected sidecar capability', async () => {
+    ws.write('deck.pptx', 'not-really-a-deck')
+    const outcome = await harness.registry.run({
+      tool: 'read_document',
+      args: { path: 'deck.pptx' },
+      ctx: {
+        ...harness.ctx,
+        documents: {
+          extract: async () => ({ text: 'SLIDE BODY TEXT', truncated: false })
+        }
+      }
+    })
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok || !outcome.result) throw new Error('expected result')
+    const result = outcome.result as { text: string; truncated: boolean }
+    expect(result.text).toContain('SLIDE BODY TEXT')
+  })
+
+  it('describes an image through the injected vision capability', async () => {
+    ws.write('photo.png', 'not-really-pixels')
+    const outcome = await harness.registry.run({
+      tool: 'read_document',
+      args: { path: 'photo.png' },
+      ctx: {
+        ...harness.ctx,
+        vision: {
+          describeImage: async () => 'A red bicycle leaning on a fence.'
+        }
+      }
+    })
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok || !outcome.result) throw new Error('expected result')
+    const result = outcome.result as { text: string; truncated: boolean }
+    expect(result.text).toContain('A red bicycle leaning on a fence.')
+    expect(result.truncated).toBe(false)
+  })
+
+  it('answers honestly for images when no vision capability is injected', async () => {
+    ws.write('photo.png', 'not-really-pixels')
+    const outcome = await harness.registry.run({
+      tool: 'read_document',
+      args: { path: 'photo.png' },
+      ctx: harness.ctx
+    })
+    expect(outcome.ok).toBe(false)
+    expect(outcome.message).toContain('AI model')
+  })
+
+  it('passes the vision error detail through as a plain-language refusal', async () => {
+    ws.write('photo.jpg', 'not-really-pixels')
+    const outcome = await harness.registry.run({
+      tool: 'read_document',
+      args: { path: 'photo.jpg' },
+      ctx: {
+        ...harness.ctx,
+        vision: {
+          describeImage: async () => {
+            throw new Error('the configured model may not support images')
+          }
+        }
+      }
+    })
+    expect(outcome.ok).toBe(false)
+    expect(outcome.message).toContain('may not support images')
+  })
+
   it('refuses a workspace escape', async () => {
     const outcome = await harness.registry.run({
       tool: 'read_document',

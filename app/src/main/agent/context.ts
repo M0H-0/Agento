@@ -15,6 +15,7 @@ import type {
   SemanticCapabilities,
   SnapshotStore,
   ToolExecutionContext,
+  VisionCapabilities,
   WebCapabilities
 } from './types'
 
@@ -67,12 +68,16 @@ export interface RunContextDeps {
     durationMs: number
   }) => void
   /** MVP (MVP_PLAN.md step 2): sidecar-backed document extraction for
-   * .pdf/.docx. Injected by the IPC layer; absent in tests/degraded mode —
-   * tools then answer honestly for binary formats (docs/05 §6). */
+   * .pdf/.docx/.pptx/.xlsx. Injected by the IPC layer; absent in
+   * tests/degraded mode — tools then answer honestly for binary formats
+   * (docs/05 §6). */
   documents?: DocumentCapabilities
   /** MVP (MVP_PLAN.md step 3): one-shot LLM completion over the run's
    * provider/model. Injected by the IPC layer; absent in tests. */
   llm?: LlmCapabilities
+  /** Demo: vision-model description of image files for read_document.
+   * IPC-injected; absent in tests. */
+  vision?: VisionCapabilities
   /** MVP (MVP_PLAN.md step 4): plain HTTP GET for web_fetch. IPC-injected. */
   web?: WebCapabilities
   /** MVP (MVP_PLAN.md step 5): on-device semantic search. IPC-injected;
@@ -498,6 +503,7 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
     fs,
     documents: deps.documents,
     llm: deps.llm,
+    vision: deps.vision,
     web: deps.web,
     semantic: deps.semantic
   }

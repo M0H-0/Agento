@@ -18,6 +18,8 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 
 from agento_intelligence.auth import TokenAuthMiddleware
+from agento_intelligence.create import create_document
+from agento_intelligence.edit import edit_document
 from agento_intelligence.embed import EmbeddingError, embed_texts
 from agento_intelligence.extract import ExtractionError, extract_text
 from agento_intelligence.heuristics import classify_intent, classify_safety
@@ -25,6 +27,10 @@ from agento_intelligence.schemas import (
     Capabilities,
     CompletionVerifyRequest,
     CompletionVerifyResponse,
+    CreateDocumentRequest,
+    CreateDocumentResponse,
+    EditDocumentRequest,
+    EditDocumentResponse,
     EmbedRequest,
     EmbedResponse,
     ExtractRequest,
@@ -76,6 +82,28 @@ async def document_extract(request: ExtractRequest) -> ExtractResponse:
     except ExtractionError as error:
         raise HTTPException(status_code=error.status_code, detail=str(error)) from error
     return ExtractResponse(text=text, truncated=truncated)
+
+
+@app.post("/document/edit", response_model=EditDocumentResponse)
+async def document_edit(request: EditDocumentRequest) -> EditDocumentResponse:
+    try:
+        before, after, applied = edit_document(
+            request.path, [item.model_dump() for item in request.edits]
+        )
+    except ExtractionError as error:
+        raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+    return EditDocumentResponse(
+        before_excerpt=before, after_excerpt=after, edits_applied=applied
+    )
+
+
+@app.post("/document/create", response_model=CreateDocumentResponse)
+async def document_create(request: CreateDocumentRequest) -> CreateDocumentResponse:
+    try:
+        excerpt, size = create_document(request.path, request.title, request.items)
+    except ExtractionError as error:
+        raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+    return CreateDocumentResponse(after_excerpt=excerpt, size_bytes=size)
 
 
 @app.post("/embed/embed", response_model=EmbedResponse)

@@ -65,7 +65,7 @@ File contents and web pages are **data, never instructions**. Layers:
 
 - `settings.json` (data dir, doc 03 §8): preferences only; no telemetry field exists. Shape v2: `{ version: 2, provider, model, appearance: dark|light|system, permissionDefaults: { risk1: auto|ask, risk2: auto|ask }, customProviders: [{ id: custom:<uuid>, name, baseUrl, model, createdAt, updatedAt }] }` — created on first save; absent/corrupt resets to defaults; v1 files migrate losslessly (new fields take safe defaults; unknown providers fall back to google). Written temp-file + atomic rename.
 - `workspaces.json` (same data dir, M2.2): workspace selection + recents. Shape: `{ version, current: string | null, recents: [{ path, lastOpenedAt }] }` (recents capped at 10) — written temp-file + atomic rename; absent/corrupt resets to the empty state. Paths are stored realpath-canonicalized (the sandbox's comparison base, doc 03 §4).
-- `secrets.bin` (same data dir as `settings.json` — the Electron userData dir, `%APPDATA%/Agento` on Windows): safeStorage-encrypted key map (DPAPI on Windows) — model-provider keys and optional search-provider keys (Tavily/Brave) live here. Shape: JSON envelope `{ version, keys: { <providerId>: <base64 safeStorage ciphertext> } }`, written mode 0600; decrypted only in the main-process settings module, on demand. Custom providers store under their opaque `custom:<uuid>` id (never the editable name/URL); deleting a profile deletes its key too. If OS encryption is unavailable, keys stay in-memory for the session only — never written plaintext.
+- `secrets.bin` (same data dir as `settings.json` — the Electron userData dir, `%APPDATA%/Agento` on Windows): safeStorage-encrypted key map (DPAPI on Windows) — model-provider keys and optional search-provider keys live here. Shape: JSON envelope `{ version, keys: { <providerId>: <base64 safeStorage ciphertext> } }`, written mode 0600; decrypted only in the main-process settings module, on demand. Custom providers store under their opaque `custom:<uuid>` id (never the editable name/URL); the Tavily web-search key stores under the plain id `tavily` (Settings → Providers → Web search section; reused `setApiKey`/`clearApiKey` surface, masked `searchKeys` snapshot); deleting a profile deletes its key too. If OS encryption is unavailable, keys stay in-memory for the session only — never written plaintext.
 - Key hygiene: keys are sent only to the provider endpoint and (when "use my key for classification" is on) the localhost sidecar. Logs scrub key-shaped strings and the sidecar token.
 - Retention: snapshots pruned on session delete + "purge snapshots" in Settings; sessions user-deleted only; WAL checkpoint on quit.
 
@@ -76,7 +76,8 @@ Everything Agento can send anywhere, by design:
 | Destination | Content | When |
 |---|---|---|
 | Model provider (user's key) | conversation + tool results (truncated) | every turn |
-| Search API (optional key) | query strings | web_search |
+| Tavily Search API (stored key) | query strings | web_search primary (POST api.tavily.com, Bearer key, `basic` depth) |
+| Keyless search endpoint | query strings | web_search fallback (DuckDuckGo HTML, no key; also the whole path when no Tavily key is stored) |
 | Docling model host | model download, once | first parse |
 | `127.0.0.1:7891` | intelligence calls (never leaves the machine) | per loop |
 

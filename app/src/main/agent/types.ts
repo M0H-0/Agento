@@ -42,6 +42,22 @@ export interface DocumentCapabilities {
    * Throws a plain-language Error on failure — tool bodies catch and answer
    * with ok:false (the wrapper never catches execute exceptions). */
   extract(path: string): Promise<{ text: string; truncated: boolean }>
+  /** Anchor-text edit of a `.docx`/`.pptx`/`.xlsx` file (absolute,
+   * sandbox-resolved path). Returns before/after excerpts for the card.
+   * Throws plain-language. Optional like every other capability — absent
+   * in tests/degraded mode. */
+  edit?: (
+    path: string,
+    edits: { anchor: string; replacement: string }[]
+  ) => Promise<{ beforeExcerpt: string; afterExcerpt: string; editsApplied: number }>
+  /** Build a `.pptx`/`.xlsx` file from a title plus plain-text items
+   * (absolute, sandbox-resolved path). Returns the card excerpt + byte size.
+   * Throws plain-language. Optional — absent in tests/degraded mode. */
+  create?: (
+    path: string,
+    title: string,
+    items: string[]
+  ) => Promise<{ afterExcerpt: string; sizeBytes: number }>
 }
 
 export interface LlmCapabilities {
@@ -50,10 +66,31 @@ export interface LlmCapabilities {
   complete(prompt: string): Promise<string>
 }
 
+export interface VisionCapabilities {
+  /** Describe an image with the run's configured vision model (MVP: images in
+   * read_document). Runs in main only — keys never cross to the sidecar.
+   * Throws a plain-language Error on failure (e.g. a text-only model). */
+  describeImage(image: { data: Buffer; mimeType: string }): Promise<string>
+}
+
+export interface TavilySearchHit {
+  title: string
+  url: string
+  snippet: string
+}
+
 export interface WebCapabilities {
   /** HTTP GET returning the raw body (capped) — MVP: web_fetch. Throws a
    * plain-language Error on network failure. */
   fetch(url: string): Promise<{ status: number; body: string; contentType: string }>
+  /** Keyed Tavily search (injected by the IPC layer only when a Tavily key
+   * is stored in Settings — chat.ts resolves it per run via
+   * resolveProviderKey('tavily')). Throws on any failure (bad key, no
+   * credits, rate limit, network) so the web_search tool falls back to the
+   * keyless path. Absent when no key is stored. */
+  tavily?: {
+    search(query: string, maxResults: number): Promise<TavilySearchHit[]>
+  }
 }
 
 export interface SemanticCapabilities {
@@ -149,10 +186,12 @@ export interface ToolExecutionContext {
     options?: string[]
   }): Promise<string>
   fs: WorkspaceFs
-  /** MVP: sidecar-backed extraction for .pdf/.docx (injected by the IPC layer). */
+  /** MVP: sidecar-backed extraction for .pdf/.docx/.pptx/.xlsx (injected by the IPC layer). */
   documents?: DocumentCapabilities
   /** MVP: one-shot LLM completion over the run's provider/model (IPC-injected). */
   llm?: LlmCapabilities
+  /** MVP: vision-model description of image files for read_document (IPC-injected). */
+  vision?: VisionCapabilities
   /** MVP: plain HTTP GET for web_fetch (IPC-injected, Node global fetch). */
   web?: WebCapabilities
   /** MVP: on-device semantic search (IPC-injected, fastembed via sidecar). */

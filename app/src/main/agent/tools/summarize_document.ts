@@ -5,7 +5,8 @@ import { wrapUntrusted } from '../untrusted'
 import { readDocumentText } from '../document-text'
 
 // MVP tool (MVP_PLAN.md): summarize a document. Extraction rides the same
-// ladder as read_document (text direct, .pdf/.docx via the sidecar); the
+// ladder as read_document (text direct, .pdf/.docx/.pptx/.xlsx via the
+// sidecar, images via model vision); the summarization itself is a one-shot
 // summarization itself is a one-shot LLM call over the user's configured
 // provider through ctx.llm (keys never leave the Electron main process).
 // MVP-sized files only: a hard 12k-char extract cap, no chunking strategy.

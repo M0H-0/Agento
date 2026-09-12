@@ -135,6 +135,64 @@ def test_extract_docx(server, tmp_path):
     assert "cell-a\tcell-b" in body["text"]
 
 
+def test_extract_pptx(server, tmp_path):
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[1])
+    slide.shapes.title.text = "Quarterly Review"
+    slide.placeholders[1].text = "Revenue is up"
+    table_slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+    graphic = table_slide.shapes.add_table(1, 2, Inches(1), Inches(1), Inches(4), Inches(1))
+    graphic.table.cell(0, 0).text = "item"
+    graphic.table.cell(0, 1).text = "price"
+    target = tmp_path / "deck.pptx"
+    presentation.save(str(target))
+
+    status, body = _post("/document/extract", {"path": str(target)})
+    assert status == 200
+    assert body["truncated"] is False
+    assert "--- Slide 1 ---" in body["text"]
+    assert "Quarterly Review" in body["text"]
+    assert "Revenue is up" in body["text"]
+    assert "--- Slide 2 ---" in body["text"]
+    assert "item\tprice" in body["text"]
+    assert body["text"].index("Quarterly Review") < body["text"].index("item\tprice")
+
+
+def test_extract_xlsx(server, tmp_path):
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    prices = workbook.active
+    prices.title = "Prices"
+    prices.append(["item", "price"])
+    prices.append(["apples", 10])
+    prices.append([])
+    meta = workbook.create_sheet("Meta")
+    meta.append(["owner", "sarah"])
+    target = tmp_path / "prices.xlsx"
+    workbook.save(str(target))
+
+    status, body = _post("/document/extract", {"path": str(target)})
+    assert status == 200
+    assert body["truncated"] is False
+    assert "--- Sheet: Prices ---" in body["text"]
+    assert "item\tprice" in body["text"]
+    assert "apples\t10" in body["text"]
+    assert "--- Sheet: Meta ---" in body["text"]
+    assert "owner\tsarah" in body["text"]
+
+
+def test_extract_legacy_office_is_422(server, tmp_path):
+    target = tmp_path / "old.xls"
+    target.write_bytes(b"not really excel")
+    status, body = _post("/document/extract", {"path": str(target)})
+    assert status == 422
+    assert ".xlsx" in body["detail"]
+
+
 def test_extract_missing_file(server, tmp_path):
     status, body = _post("/document/extract", {"path": str(tmp_path / "nope.pdf")})
     assert status == 404

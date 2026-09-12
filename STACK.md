@@ -54,6 +54,7 @@
 | **@mozilla/readability** | Article extraction for web pages | Apache-2.0 |
 | **@vscode/ripgrep** | Prebuilt ripgrep binary for file search | MIT |
 | typescript / vitest / eslint | Language, tests, lint (in devDependencies) | Apache-2.0 / MIT |
+| **@playwright/test** | Electron e2e: app launch, screenshots, HTML report (`npm run e2e`) | Apache-2.0 |
 
 ## Python sidecar (`services/intelligence`)
 
@@ -65,6 +66,8 @@
 | **pypdf** | `.pdf` text extraction (MVP cut — see PROGRESS.md Devlog; Docling stays the M4.7 choice for structured parsing) | BSD-3 |
 | **fastembed** | On-device sentence embeddings (`all-MiniLM-L6-v2` via ONNX) for MVP semantic search | Apache-2.0 |
 | **python-docx** | `.docx` text extraction (MVP cut) + edit round-trips (text-level) | MIT |
+| **python-pptx** | `.pptx` text extraction + edit round-trips (text-level) + deck creation (demo slice, 2026-09-12) | MIT |
+| **openpyxl** | `.xlsx` text extraction + whole-cell edits + workbook creation (demo slice, 2026-09-12) | MIT |
 | pytest | Tests + eval harness | MIT |
 
 ## Model providers (user supplies keys; all optional)

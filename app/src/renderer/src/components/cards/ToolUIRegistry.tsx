@@ -5,6 +5,7 @@ import { AskUserCard } from './AskUserCard'
 import { CopyPathCard } from './CopyPathCard'
 import { CreateDirCard } from './CreateDirCard'
 import { DeletePathCard } from './DeletePathCard'
+import { EditDocumentCard } from './EditDocumentCard'
 import { EditFileCard } from './EditFileCard'
 import { GenericToolCard } from './GenericToolCard'
 import { ListDirCard } from './ListDirCard'
@@ -15,6 +16,7 @@ import { SearchFilesCard } from './SearchFilesCard'
 import { SemanticSearchCard } from './SemanticSearchCard'
 import { SummarizeDocumentCard } from './SummarizeDocumentCard'
 import { WebFetchCard } from './WebFetchCard'
+import { WebSearchCard } from './WebSearchCard'
 import { WriteFileCard } from './WriteFileCard'
 import type { ToolCardStatus } from './BaseToolCard'
 import { useLocale } from '../locale-context'
@@ -92,6 +94,8 @@ function titleKeyFromToolName(toolName: string): StringKey | null {
       return 'cards.tool.summarize'
     case 'web_fetch':
       return 'cards.tool.webFetch'
+    case 'web_search':
+      return 'cards.tool.webSearch'
     case 'search_files':
       return 'cards.tool.searchFiles'
     case 'semantic_search':
@@ -100,10 +104,14 @@ function titleKeyFromToolName(toolName: string): StringKey | null {
       return 'cards.tool.askUser'
     case 'write_file':
       return 'cards.tool.writeFile'
+    case 'create_document':
+      return 'cards.tool.createDocument'
     case 'create_dir':
       return 'cards.tool.createDir'
     case 'edit_file':
       return 'cards.tool.editFile'
+    case 'edit_document':
+      return 'cards.tool.editDocument'
     case 'move_path':
       return 'cards.tool.move'
     case 'copy_path':
@@ -186,6 +194,31 @@ function asWebFetch(value: unknown): {
   return { pageTitle, text: value.text, truncated: value.truncated }
 }
 
+function asWebSearch(value: unknown): {
+  query: string
+  results: { title: string; url: string; snippet: string }[]
+  provider?: 'tavily' | 'duckduckgo'
+} | null {
+  if (!isRecord(value)) return null
+  if (typeof value.query !== 'string' || !Array.isArray(value.results)) return null
+  const results = value.results.flatMap((entry) => {
+    if (!isRecord(entry)) return []
+    if (
+      typeof entry.title !== 'string' ||
+      typeof entry.url !== 'string' ||
+      typeof entry.snippet !== 'string'
+    ) {
+      return []
+    }
+    return [{ title: entry.title, url: entry.url, snippet: entry.snippet }]
+  })
+  const provider =
+    value.provider === 'tavily' || value.provider === 'duckduckgo' ? value.provider : undefined
+  return provider === undefined
+    ? { query: value.query, results }
+    : { query: value.query, results, provider }
+}
+
 function asSemanticResults(value: unknown): {
   query: string
   results: { path: string; snippet: string; score: number }[]
@@ -251,6 +284,23 @@ function asEditFile(value: unknown): {
     return null
   }
   return { beforeExcerpt: value.beforeExcerpt, afterExcerpt: value.afterExcerpt }
+}
+
+function asEditDocument(value: unknown): {
+  beforeExcerpt: string
+  afterExcerpt: string
+  editsApplied: number
+} | null {
+  if (!isRecord(value)) return null
+  if (typeof value.beforeExcerpt !== 'string' || typeof value.afterExcerpt !== 'string') {
+    return null
+  }
+  if (typeof value.editsApplied !== 'number') return null
+  return {
+    beforeExcerpt: value.beforeExcerpt,
+    afterExcerpt: value.afterExcerpt,
+    editsApplied: value.editsApplied
+  }
 }
 
 function asMovePath(value: unknown): {
@@ -347,6 +397,19 @@ function renderWebFetchCard(part: AuiToolPart, title: string): React.JSX.Element
   )
 }
 
+function renderWebSearchCard(part: AuiToolPart, title: string): React.JSX.Element | null {
+  const result = asWebSearch(part.result)
+  if (!result) return null
+  return (
+    <WebSearchCard
+      title={title}
+      status={statusFor(part.status)}
+      toolCallId={part.toolCallId}
+      {...result}
+    />
+  )
+}
+
 function renderSemanticSearchCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   const result = asSemanticResults(part.result)
   if (!result) return null
@@ -432,6 +495,19 @@ function renderEditFileCard(part: AuiToolPart, title: string): React.JSX.Element
   )
 }
 
+function renderEditDocumentCard(part: AuiToolPart, title: string): React.JSX.Element | null {
+  const result = asEditDocument(part.result)
+  if (!result) return null
+  return (
+    <EditDocumentCard
+      title={title}
+      status={statusFor(part.status)}
+      toolCallId={part.toolCallId}
+      {...result}
+    />
+  )
+}
+
 function renderMovePathCard(part: AuiToolPart, title: string): React.JSX.Element | null {
   const result = asMovePath(part.result)
   if (!result) return null
@@ -494,6 +570,10 @@ function renderToolCard(part: AuiToolPart, title: string, stepFailed: string): R
     const card = renderWebFetchCard(part, title)
     if (card) return card
   }
+  if (part.toolName === 'web_search') {
+    const card = renderWebSearchCard(part, title)
+    if (card) return card
+  }
   if (part.toolName === 'semantic_search') {
     const card = renderSemanticSearchCard(part, title)
     if (card) return card
@@ -510,12 +590,22 @@ function renderToolCard(part: AuiToolPart, title: string, stepFailed: string): R
     const card = renderWriteFileCard(part, title)
     if (card) return card
   }
+  // create_document returns the write_file result shape ({size,
+  // beforeExcerpt: null, afterExcerpt}) — the same card, new title.
+  if (part.toolName === 'create_document') {
+    const card = renderWriteFileCard(part, title)
+    if (card) return card
+  }
   if (part.toolName === 'create_dir') {
     const card = renderCreateDirCard(part, title)
     if (card) return card
   }
   if (part.toolName === 'edit_file') {
     const card = renderEditFileCard(part, title)
+    if (card) return card
+  }
+  if (part.toolName === 'edit_document') {
+    const card = renderEditDocumentCard(part, title)
     if (card) return card
   }
   if (part.toolName === 'move_path') {
@@ -587,11 +677,14 @@ export function ToolUIRegistry(): null {
       'read_file',
       'read_document',
       'summarize_document',
+      'edit_document',
       'semantic_search',
       'web_fetch',
+      'web_search',
       'search_files',
       'ask_user',
       'write_file',
+      'create_document',
       'create_dir',
       'edit_file',
       'move_path',

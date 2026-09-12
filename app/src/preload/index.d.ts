@@ -340,6 +340,11 @@ export interface PermissionDefaults {
   risk2: 'auto' | 'ask'
 }
 
+export interface SearchKeyState {
+  hasKey: boolean
+  keyLast4: string
+}
+
 export interface SettingsSnapshot {
   provider: string
   model: string
@@ -357,6 +362,8 @@ export interface SettingsSnapshot {
   providerModels: Record<string, string[]>
   /** Masked key state for every provider (built-ins + customs); keyLast4 only, never the key itself. */
   providerKeys: Record<string, { hasKey: boolean; keyLast4: string }>
+  /** Optional search-provider keys ('tavily' today) — masked like provider keys (docs/06 §7). */
+  searchKeys: Record<string, SearchKeyState>
   appearance: Appearance
   locale: Locale
   permissionDefaults: PermissionDefaults

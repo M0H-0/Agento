@@ -32,6 +32,37 @@ export function extractDocument(path: string): Promise<{ text: string; truncated
   return postJson('/document/extract', { path }, 15_000)
 }
 
+/** POST /document/edit {path, edits} → excerpts (demo document editing).
+ * `.docx`/`.pptx`/`.xlsx` — text formats edit directly in TS. */
+export function editDocxDocument(
+  path: string,
+  edits: { anchor: string; replacement: string }[]
+): Promise<{ beforeExcerpt: string; afterExcerpt: string; editsApplied: number }> {
+  return postJson<{ before_excerpt: string; after_excerpt: string; edits_applied: number }>(
+    '/document/edit',
+    { path, edits },
+    15_000
+  ).then((body) => ({
+    beforeExcerpt: body.before_excerpt,
+    afterExcerpt: body.after_excerpt,
+    editsApplied: body.edits_applied
+  }))
+}
+
+/** POST /document/create {path, title, items} → excerpt + size (demo).
+ * `.pptx`/`.xlsx` — text files go through write_file. */
+export function createDocument(
+  path: string,
+  title: string,
+  items: string[]
+): Promise<{ afterExcerpt: string; sizeBytes: number }> {
+  return postJson<{ after_excerpt: string; size_bytes: number }>(
+    '/document/create',
+    { path, title, items },
+    15_000
+  ).then((body) => ({ afterExcerpt: body.after_excerpt, sizeBytes: body.size_bytes }))
+}
+
 /** POST /embed/embed {texts} → {vectors} (MVP step 5). The generous timeout
  * covers the first-call ~90 MB model download plus a full-workspace batch. */
 export function embedTexts(texts: string[]): Promise<number[][]> {

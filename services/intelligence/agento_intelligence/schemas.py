@@ -43,6 +43,33 @@ class EmbedResponse(BaseModel):
     vectors: list[list[float]]
 
 
+class DocumentEditItem(BaseModel):
+    anchor: str
+    replacement: str = ""
+
+
+class EditDocumentRequest(BaseModel):
+    path: str
+    edits: list[DocumentEditItem]
+
+
+class EditDocumentResponse(BaseModel):
+    before_excerpt: str = ""
+    after_excerpt: str = ""
+    edits_applied: int = 0
+
+
+class CreateDocumentRequest(BaseModel):
+    path: str
+    title: str = ""
+    items: list[str] = []
+
+
+class CreateDocumentResponse(BaseModel):
+    after_excerpt: str = ""
+    size_bytes: int = 0
+
+
 class IntentClassifyRequest(BaseModel):
     message: str
 
