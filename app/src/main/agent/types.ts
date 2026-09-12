@@ -100,6 +100,35 @@ export interface SemanticCapabilities {
   search(query: string, topK?: number): Promise<{ path: string; snippet: string; score: number }[]>
 }
 
+export interface HistoryMatch {
+  seq: number
+  role: string
+  excerpt: string
+}
+
+export interface HistoryRecent {
+  seq: number
+  role: string
+  text: string
+}
+
+// L1 session recall (same-session only): keyword search + recent listing over
+// the session's persisted transcript. Implemented in the IPC layer over the
+// storage repos (the agent tree stays storage-free); absent in tests unless
+// the harness injects a fake.
+export interface HistoryCapabilities {
+  /** Case-insensitive substring search over user+assistant text parts. */
+  search(query: string, limit?: number): Promise<HistoryMatch[]>
+  /** Newest N messages' text (newest-first), for semantic ranking + summary. */
+  listRecent(limit: number): Promise<HistoryRecent[]>
+}
+
+export interface EmbedCapabilities {
+  /** On-device sentence embeddings (fastembed via the sidecar). Throws a
+   * plain-language Error when the model is unavailable — callers fall back. */
+  embedTexts(texts: string[]): Promise<number[][]>
+}
+
 // The ONLY way a tool reaches the disk. Tools never import node:fs — the
 // registry wraps every mutation behind this facade, which itself refuses any
 // path outside the workspace root (defense in depth on top of the sandbox's
@@ -196,6 +225,12 @@ export interface ToolExecutionContext {
   web?: WebCapabilities
   /** MVP: on-device semantic search (IPC-injected, fastembed via sidecar). */
   semantic?: SemanticCapabilities
+  /** L1 session recall: keyword search + recent listing over this session's
+   * transcript (IPC-injected from the storage repos; absent in tests). */
+  history?: HistoryCapabilities
+  /** L1 semantic recall: raw embedder for ranking history candidates
+   * (IPC-injected; absent when the sidecar/model is down — tools fall back). */
+  embed?: EmbedCapabilities
 }
 
 export interface ToolResult<TOutput = unknown> {

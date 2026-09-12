@@ -141,7 +141,9 @@ export function chunkText(text: string, size = CHUNK_CHARS): string[] {
   return chunks
 }
 
-function cosine(a: number[], b: number[]): number {
+/** Cosine similarity — shared with the L1 session-recall tool so ranking
+ * math is defined once (file chunks and history candidates rank alike). */
+export function cosine(a: number[], b: number[]): number {
   let dot = 0
   let normA = 0
   let normB = 0

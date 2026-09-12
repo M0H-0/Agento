@@ -163,6 +163,102 @@ export function getSessionMessages(sessionId: string): UIMessage[] {
   return parsed
 }
 
+// L1 session recall: text extraction + keyword search over one session's
+// persisted transcript. Searches user + assistant text parts only (tool
+// outputs and system notices are not conversation memory). Corrupt rows are
+// skipped like getSessionMessages above — recall is never fatal.
+
+const HISTORY_EXCERPT_CHARS = 300
+
+function historyTextOf(message: UIMessage): string {
+  const parts = (message as { parts?: unknown }).parts
+  if (!Array.isArray(parts)) return ''
+  const texts: string[] = []
+  for (const part of parts) {
+    if (
+      typeof part === 'object' &&
+      part !== null &&
+      (part as { type?: unknown }).type === 'text' &&
+      typeof (part as { text?: unknown }).text === 'string'
+    ) {
+      texts.push((part as { text: string }).text)
+    }
+  }
+  return texts.join('\n')
+}
+
+function excerptOfHistory(text: string): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim()
+  return oneLine.length <= HISTORY_EXCERPT_CHARS
+    ? oneLine
+    : `${oneLine.slice(0, HISTORY_EXCERPT_CHARS)}…`
+}
+
+export interface HistorySearchHit {
+  seq: number
+  role: string
+  excerpt: string
+}
+
+export interface HistoryRecentEntry {
+  seq: number
+  role: string
+  text: string
+}
+
+function readSessionTranscript(sessionId: string): { seq: number; role: string; text: string }[] {
+  const rows = getDrizzle()
+    .select({ seq: messages.seq, role: messages.role, content: messages.content })
+    .from(messages)
+    .where(eq(messages.sessionId, sessionId))
+    .orderBy(asc(messages.seq))
+    .all()
+  const out: { seq: number; role: string; text: string }[] = []
+  for (const row of rows) {
+    if (row.role !== 'user' && row.role !== 'assistant') continue
+    try {
+      const text = historyTextOf(JSON.parse(row.content) as UIMessage).trim()
+      if (text) out.push({ seq: row.seq, role: row.role, text })
+    } catch (error) {
+      console.warn(`[storage] skipping unparseable message row in session ${sessionId}:`, error)
+    }
+  }
+  return out
+}
+
+/** Keyword recall: case-insensitive substring over user+assistant text, newest-first. */
+export function searchSessionMessages(
+  sessionId: string,
+  query: string,
+  limit = 5
+): HistorySearchHit[] {
+  const capped = Math.min(Math.max(limit, 1), 10)
+  const lowered = query.toLowerCase()
+  const transcript = readSessionTranscript(sessionId)
+  const hits: HistorySearchHit[] = []
+  for (let i = transcript.length - 1; i >= 0; i -= 1) {
+    const entry = transcript[i] as { seq: number; role: string; text: string }
+    const idx = entry.text.toLowerCase().indexOf(lowered)
+    if (idx === -1) continue
+    // Excerpt centers on the match so long messages show the relevant span.
+    const start = Math.max(0, idx - 120)
+    hits.push({
+      seq: entry.seq,
+      role: entry.role,
+      excerpt: excerptOfHistory(entry.text.slice(start))
+    })
+    if (hits.length >= capped) break
+  }
+  return hits
+}
+
+/** Newest N message texts (newest-first), for semantic ranking + summarization. */
+export function listRecentSessionTexts(sessionId: string, limit: number): HistoryRecentEntry[] {
+  const capped = Math.min(Math.max(limit, 1), 200)
+  const transcript = readSessionTranscript(sessionId)
+  return transcript.slice(-capped).reverse()
+}
+
 // Upsert by message id (ON CONFLICT DO UPDATE, M1.4): a stopped run persists
 // the PARTIAL assistant reply from the accumulator snapshot, so a re-persist
 // of the same message id must REPLACE its earlier row (content/role/seq/

@@ -15,7 +15,9 @@ import {
 import {
   appendMessage,
   getSession,
+  listRecentSessionTexts,
   normalizeSessionMode,
+  searchSessionMessages,
   setSessionTitle
 } from '../storage/sessions'
 import { insertUsage } from '../storage/usage'
@@ -52,9 +54,11 @@ import {
   runActTurn,
   runPlanModeTurn,
   searchFilesTool,
+  searchHistoryTool,
   semanticSearch,
   semanticSearchTool,
   summarizeDocumentTool,
+  summarizeHistoryTool,
   verifyStep,
   webFetchTool,
   webSearchTool,
@@ -465,6 +469,8 @@ function buildGlobalRegistry(): ReturnType<typeof createToolRegistry> {
   registry.define(webSearchTool)
   registry.define(semanticSearchTool)
   registry.define(searchFilesTool)
+  registry.define(searchHistoryTool)
+  registry.define(summarizeHistoryTool)
   registry.define(askUserTool)
   registry.define(writeFileTool)
   registry.define(createDirTool)
@@ -794,6 +800,17 @@ export function registerChatIpc(): void {
       // MVP (MVP_PLAN.md step 5): on-device semantic search (undefined
       // without a workspace pick).
       semantic,
+      // L1 session recall: keyword search + recent listing over this run's
+      // session transcript (storage repos — the agent tree stays
+      // storage-free), plus the raw embedder for semantic ranking. The
+      // embedder rides the same sidecar call as file search; when the
+      // model is down the tools fall back honestly (docs/05 §6).
+      history: {
+        search: (query: string, limit?: number) =>
+          Promise.resolve(searchSessionMessages(sessionId, query, limit)),
+        listRecent: (limit: number) => Promise.resolve(listRecentSessionTexts(sessionId, limit))
+      },
+      embed: { embedTexts },
       onSnapshot: (entry) => {
         // Fail-closed: recordCheckpoint throws on oversize/storage failure —
         // let it bubble so the registry refuses the mutation (docs/03 §7).

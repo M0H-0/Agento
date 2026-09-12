@@ -11,6 +11,8 @@ import type {
   ApprovalRequest,
   ApprovalDecision,
   DocumentCapabilities,
+  EmbedCapabilities,
+  HistoryCapabilities,
   LlmCapabilities,
   SemanticCapabilities,
   SnapshotStore,
@@ -83,6 +85,13 @@ export interface RunContextDeps {
   /** MVP (MVP_PLAN.md step 5): on-device semantic search. IPC-injected;
    * undefined when no workspace is picked (the tool answers honestly). */
   semantic?: SemanticCapabilities
+  /** L1 session recall: keyword search + recent listing over this run's
+   * session transcript. IPC-injected from the storage repos; absent in
+   * tests/degraded mode — tools then answer honestly. */
+  history?: HistoryCapabilities
+  /** L1 semantic recall: raw embedder for ranking history candidates.
+   * IPC-injected; undefined when the sidecar/model is down. */
+  embed?: EmbedCapabilities
   /** Approval event sink (Electron-free): the IPC layer routes these through
    * the central sequenced emitter (agent-events.ts). Absent in tests — the
    * promise gate still works, only the dialog event is skipped. */
@@ -505,7 +514,9 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
     llm: deps.llm,
     vision: deps.vision,
     web: deps.web,
-    semantic: deps.semantic
+    semantic: deps.semantic,
+    history: deps.history,
+    embed: deps.embed
   }
 
   return {
