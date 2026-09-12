@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { useMessagePartText } from '@assistant-ui/react'
 import type { CodeHeaderProps } from '@assistant-ui/react-markdown'
 import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown'
 import remarkGfm from 'remark-gfm'
+import { WORDS_PER_TICK, WORD_TICK_MS, nextDisplayed } from '../chat/word-pacing'
 import { useLocale } from './locale-context'
 
 // Plain-language names for fenced code blocks (docs/04 §8.3: "code — JavaScript
@@ -78,14 +80,43 @@ function CodeBlockHeader({ language, code }: CodeHeaderProps): React.JSX.Element
 // components prop changes identity).
 const markdownComponents = { CodeHeader: CodeBlockHeader }
 
-// Rendered as MessagePrimitive.Parts' Text component: the primitive pulls the
-// message part's text itself, so no props are needed here.
+// Rendered as MessagePrimitive.Parts' Text component: the part's full text
+// comes from useMessagePartText, and the word-by-word reveal rides the
+// primitive's `preprocess` (smooth={false} kills the fast built-in animator —
+// it catches up in ≤250ms, which still reads as chunk-at-once on large
+// provider deltas). Prose reveals at WORDS_PER_TICK / WORD_TICK_MS via
+// chat/word-pacing; fenced code blocks pop atomically; settled/history parts
+// and prefers-reduced-motion render full text instantly. Persistence is
+// untouched — main's accumulator stores the full reply either way.
 function MarkdownText(): React.JSX.Element {
+  const { text: fullText, status } = useMessagePartText()
+  const running = status.type === 'running'
+  const [displayed, setDisplayed] = useState(fullText)
+  // Settle, history, id-change, or reduced-motion: show the full text at once
+  // (also flushes any lag when Stop ends the run mid-reveal). Derived, not
+  // stored — so no synchronous setState inside the ticking effect below.
+  const reduceMotion =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const settled = !running || reduceMotion
+  const visible = settled ? fullText : displayed
+
+  useEffect(() => {
+    if (settled || displayed === fullText) return
+    const id = window.setTimeout(() => {
+      setDisplayed((prev) => nextDisplayed(prev, fullText, WORDS_PER_TICK))
+    }, WORD_TICK_MS)
+    return () => window.clearTimeout(id)
+  }, [displayed, fullText, settled])
+
   return (
     <MarkdownTextPrimitive
       className="message-markdown"
       remarkPlugins={[remarkGfm]}
       components={markdownComponents}
+      smooth={false}
+      preprocess={() => visible}
     />
   )
 }
