@@ -468,4 +468,16 @@ describe('buildFallbackDocumentPlan — obvious doc requests always plan', () =>
     expect(buildFallbackDocumentPlan('hello')).toBeNull()
     expect(buildFallbackDocumentPlan('organize my downloads')).toBeNull()
   })
+
+  it('returns null for organize/move prompts that merely mention PDFs', () => {
+    expect(
+      buildFallbackDocumentPlan(
+        'move every PDF invoice into a folder called Finance, every image into Pictures, and every presentation into Presentations. Keep the plan to 5 small steps.'
+      )
+    ).toBeNull()
+    expect(buildFallbackDocumentPlan('organize PDFs/images/presentations into folders')).toBeNull()
+    expect(
+      buildFallbackDocumentPlan('create a folder called Finance and move the PDFs there')
+    ).toBeNull()
+  })
 })

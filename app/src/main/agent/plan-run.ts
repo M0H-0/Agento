@@ -89,14 +89,26 @@ export function isLikelyMutatingRequest(text: string): boolean {
 // Deterministic fallback plan (2026-09-13): providers that refuse the forced
 // emit_plan call (Ollama gpt-oss:120b live: "make a plan to make a txt and
 // docx and pdf file of a fish story" → PLAN_FAILED_COPY) must not leave Plan
-// mode with no plan for an obvious document request. When the text names file
-// targets, synthesize the same write-then-convert steps the Act loop would
-// take — write the source text first, then convert to each other format.
+// mode with no plan for an obvious document request. When the text asks to
+// CREATE a document (creation verb + named target), synthesize the same
+// write-then-convert steps the Act loop would take — write the source text
+// first, then convert to each other format. Organize/move/sort requests never
+// take this path even when they mention "PDF" — they go through normal
+// planning instead of a fake "Create the .pdf file" step.
 // Structural safety is unchanged: the fallback only *proposes* steps for the
 // panel; execution still requires approval + wrapper snapshot per tool.
 export function buildFallbackDocumentPlan(text: string): PlanStep[] | null {
   const lower = text.toLowerCase()
   if (!isLikelyMutatingRequest(text)) return null
+  // Creation-only gate (2026-09-13 fix): a bare mention of "PDF"/"docx"/...
+  // is not intent to CREATE one. "move every PDF into Finance" must never
+  // synthesize "Create the .pdf file". Only fire on creation verbs, and never
+  // when organization verbs are present (those go through normal planning).
+  const hasCreation = /\b(create|make|write|generate|save|draft|convert)\b/.test(lower)
+  if (!hasCreation) return null
+  const hasOrganize =
+    /\b(move|copy|rename|organize|organise|tidy|sort|arrange|backup|delete|remove)\b/.test(lower)
+  if (hasOrganize) return null
   const wantsTxt = /\btxt\b|\.txt\b|text file/.test(lower)
   const wantsMd = /\bmd\b|\.md\b|markdown/.test(lower)
   const wantsDocx = /\bdocx?\b|\.docx\b/.test(lower)
