@@ -1,4 +1,4 @@
-import { basename } from 'node:path'
+import { basename, extname } from 'node:path'
 import { z } from 'zod'
 import type { ToolDefinition } from '../types'
 
@@ -34,6 +34,26 @@ export const writeFileTool: ToolDefinition<
       : { level: 1, reason: 'Creates a new file' },
   describe: (input) => ({ title: `Write ${basename(input.path)}`, group: 'files' }),
   execute: async (input, ctx) => {
+    // Binary document formats are never plain text: writing UTF-8 bytes to a
+    // `.docx` path produces a corrupt zip Word refuses to open. Redirect to
+    // the real document tools instead of creating an unreadable file.
+    const suffix = extname(input.path).toLowerCase()
+    if (suffix === '.docx' || suffix === '.pptx' || suffix === '.xlsx') {
+      return {
+        ok: false,
+        output: { path: input.path, size: 0, beforeExcerpt: null, afterExcerpt: '' },
+        error:
+          'Word, PowerPoint, and Excel files are not plain text — use create_document to make them or convert_document to convert into them. I left the file untouched.'
+      }
+    }
+    if (suffix === '.pdf') {
+      return {
+        ok: false,
+        output: { path: input.path, size: 0, beforeExcerpt: null, afterExcerpt: '' },
+        error:
+          'PDF files need proper page layout — use convert_document to make one. I left the file untouched.'
+      }
+    }
     // Existence probe goes through the fs facade (NOT ctx.exists) so the
     // harness risk-stage log stays exactly [risk, snapshot] — ctx.exists is
     // the risk stage's own probe and reusing it here would double-log.

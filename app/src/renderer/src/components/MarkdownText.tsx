@@ -4,6 +4,7 @@ import type { CodeHeaderProps } from '@assistant-ui/react-markdown'
 import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown'
 import remarkGfm from 'remark-gfm'
 import { WORDS_PER_TICK, WORD_TICK_MS, nextDisplayed } from '../chat/word-pacing'
+import { stripAskUserJsonEcho } from '../chat/ask'
 import { useLocale } from './locale-context'
 
 // Plain-language names for fenced code blocks (docs/04 §8.3: "code — JavaScript
@@ -89,7 +90,9 @@ const markdownComponents = { CodeHeader: CodeBlockHeader }
 // and prefers-reduced-motion render full text instantly. Persistence is
 // untouched — main's accumulator stores the full reply either way.
 function MarkdownText(): React.JSX.Element {
-  const { text: fullText, status } = useMessagePartText()
+  const { text: rawText, status } = useMessagePartText()
+  // Hide ask_user argument echoes some models emit as text (display only).
+  const fullText = stripAskUserJsonEcho(rawText)
   const running = status.type === 'running'
   const [displayed, setDisplayed] = useState(fullText)
   // Settle, history, id-change, or reduced-motion: show the full text at once

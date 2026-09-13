@@ -14,6 +14,7 @@ import type {
   EmbedCapabilities,
   HistoryCapabilities,
   LlmCapabilities,
+  PdfCapabilities,
   SemanticCapabilities,
   SnapshotStore,
   ToolExecutionContext,
@@ -92,6 +93,8 @@ export interface RunContextDeps {
   /** L1 semantic recall: raw embedder for ranking history candidates.
    * IPC-injected; undefined when the sidecar/model is down. */
   embed?: EmbedCapabilities
+  /** PDF export via hidden-window printToPDF (IPC-injected; absent in tests). */
+  pdf?: PdfCapabilities
   /** Approval event sink (Electron-free): the IPC layer routes these through
    * the central sequenced emitter (agent-events.ts). Absent in tests — the
    * promise gate still works, only the dialog event is skipped. */
@@ -516,7 +519,8 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
     web: deps.web,
     semantic: deps.semantic,
     history: deps.history,
-    embed: deps.embed
+    embed: deps.embed,
+    pdf: deps.pdf
   }
 
   return {

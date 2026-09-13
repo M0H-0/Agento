@@ -1322,6 +1322,29 @@
   text-overflow: ellipsis;
 }
 
+/* Narrow viewports (below the 960px min window): the absolutely positioned
+   chip would cover the Plan/Act tabs, so it drops into its own right-aligned
+   row above the input instead (the hint yields, the label already
+   ellipsizes). Direction-agnostic — the [dir='rtl'] mirror further down is
+   untouched. The menu is a child of the anchor, so it simply opens above the
+   composer here; the fixed flyout panel positions from the live row rect and
+   is unaffected. */
+@media (max-width: 600px) {
+  .mode-hint {
+    display: none;
+  }
+  .model-chip-anchor {
+    position: static;
+    flex-basis: 100%;
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 0.15rem;
+  }
+  .model-chip {
+    max-width: 8rem;
+  }
+}
+
 .model-menu {
   position: absolute;
   /* Opens UPWARD: the chip sits at the bottom of the window (composer row),

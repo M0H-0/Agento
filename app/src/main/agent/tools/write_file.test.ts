@@ -78,4 +78,17 @@ describe('write_file — before/after excerpts in the result', () => {
     expect(harness.stages.snapshots[0].content).toBe('old line 1\nold line 2')
     expect(ws.read('existing.md')).toBe('new content')
   })
+
+  it('refuses binary document formats instead of writing corrupt bytes', async () => {
+    for (const name of ['story.docx', 'deck.pptx', 'prices.xlsx', 'out.pdf']) {
+      const outcome = await harness.registry.run({
+        tool: 'write_file',
+        args: { path: name, content: 'plain text is not a document' },
+        ctx: harness.ctx
+      })
+      expect(outcome.ok).toBe(false)
+      if (outcome.ok) throw new Error(`expected refusal for ${name}`)
+      expect(outcome.message).toMatch(/create_document|convert_document/)
+    }
+  })
 })

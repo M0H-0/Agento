@@ -225,6 +225,84 @@ describe('runActTurn — execution without a planning phase', () => {
     expect(outcome.planEmitted).toBe(false)
     expect(outcome.aborted).toBe(false)
   })
+
+  it('a mutating request answered in prose with zero tool calls retries once, then fails loudly', async () => {
+    // The reported "says I'm doing it and does nothing": the model narrates
+    // the claim and never calls anything. stepsTaken counts round-trips, so
+    // the guard keys on real wrapper outcomes (callsMade) instead.
+    let executed = 0
+    const run = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-act-prose',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    const registry = createToolRegistry()
+    registry.define(emitPlanTool)
+    registry.define(
+      stubTool('stub_action', 'write', () => {
+        executed += 1
+      })
+    )
+    const toAiSdkToolsSpy = vi.spyOn(registry, 'toAiSdkTools')
+    // First auto attempt: prose. Required retry: prose again (mock providers
+    // don't enforce tool choice — a real one either calls or refuses, and the
+    // refusal path maps to the same honest copy).
+    const model = scriptedModel([
+      textTurn("I'll organize those files right now."),
+      textTurn('Still working on it, almost done.')
+    ])
+    const sentParts: UIMessageChunk[] = []
+
+    const outcome = await runActTurn({
+      model,
+      system: 'test system',
+      messages: USER_MESSAGES,
+      registry,
+      ctx: run.ctx,
+      sendPart: (part) => sentParts.push(part),
+      signal: new AbortController().signal
+    })
+
+    expect(executed).toBe(0)
+    // One auto attempt + one required retry.
+    expect(toAiSdkToolsSpy).toHaveBeenCalledTimes(2)
+    const terminalError = sentParts
+      .filter((p) => p.type === 'error')
+      .map((p) => (p as { errorText: string }).errorText)
+      .at(-1)
+    expect(terminalError).toContain("didn't take any actions")
+    expect(outcome.aborted).toBe(false)
+  })
+
+  it('a Q&A reply with zero tool calls stays a normal reply, not an error', async () => {
+    const registry = createToolRegistry()
+    registry.define(emitPlanTool)
+    const run = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-act-qa',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    const model = scriptedModel([textTurn('Hello! How can I help?')])
+    const sentParts: UIMessageChunk[] = []
+
+    const outcome = await runActTurn({
+      model,
+      system: 'test system',
+      messages: [
+        { id: 'u1', role: 'user' as const, parts: [{ type: 'text' as const, text: 'hello' }] }
+      ],
+      registry,
+      ctx: run.ctx,
+      sendPart: (part) => sentParts.push(part),
+      signal: new AbortController().signal
+    })
+
+    expect(outcome.aborted).toBe(false)
+    expect(sentParts.some((p) => p.type === 'error')).toBe(false)
+    expect(outcome.assistantMessage).not.toBeNull()
+  })
 })
 
 describe('runPlanModeTurn — structurally read-only', () => {

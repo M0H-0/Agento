@@ -1,11 +1,11 @@
-"""Demo `POST /document/create` endpoint: build a `.pptx` deck or an `.xlsx`
-workbook from plain strings.
+"""Demo `POST /document/create` endpoint: build a `.docx` document, a `.pptx`
+deck, or an `.xlsx` workbook from plain strings.
 
 Same doctrine as `extract.py`/`edit.py`: the model supplies content, never
-layout — title + content per slide, one row per item for sheets. Lazy
+layout — title + content per paragraph/slide, one row per item for sheets. Lazy
 imports so /health never touches them; the save is temp-file + atomic
 replace. Input caps (not source guards — nothing is read) keep a runaway
-item list from producing a multi-hundred-slide deck.
+item list from producing a multi-hundred-page document.
 """
 
 import os
@@ -23,6 +23,36 @@ def _cap(text: str) -> str:
     if len(text) > EXCERPT_MAX_CHARS:
         return text[:EXCERPT_MAX_CHARS] + "…"
     return text
+
+
+def _create_docx(target: Path, title: str, items: list[str]) -> str:
+    import docx
+
+    document = docx.Document()
+    document.add_heading(title or target.stem, level=0)
+    for item in items:
+        head, _, body = item.partition("\n")
+        if body:
+            document.add_heading(head, level=1)
+            for line in body.split("\n"):
+                if line:
+                    document.add_paragraph(line)
+        else:
+            document.add_paragraph(head)
+    handle, tmp_name = tempfile.mkstemp(
+        dir=str(target.parent), prefix=target.name + ".", suffix=".agento-tmp"
+    )
+    try:
+        os.close(handle)
+        document.save(tmp_name)
+        os.replace(tmp_name, target)
+    finally:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+    excerpt = "\n".join([title or target.stem, *items])
+    return _cap(excerpt)
 
 
 def _create_pptx(target: Path, title: str, items: list[str]) -> str:
@@ -82,17 +112,42 @@ def _create_xlsx(target: Path, title: str, items: list[str]) -> str:
     return _cap(excerpt)
 
 
+def _verify_saved_docx(target: Path, suffix: str) -> None:
+    """Post-save re-open check so Word/PowerPoint/Excel never get a corrupt
+    file (same doctrine as edit.py's verifier, without a cross-module import)."""
+    try:
+        if suffix == ".xlsx":
+            from openpyxl import load_workbook
+
+            workbook = load_workbook(str(target), read_only=True, data_only=True)
+            workbook.close()
+        elif suffix == ".pptx":
+            from pptx import Presentation
+
+            Presentation(str(target))
+        else:
+            import docx
+
+            docx.Document(str(target))
+    except Exception as error:
+        raise ExtractionError(
+            f'"{target.name}" did not save in a readable form — {error}. '
+            "Nothing else was changed.",
+            422,
+        ) from error
+
+
 def create_document(path: str, title: str, items: list[str]) -> tuple[str, int]:
-    """Build a `.pptx` or `.xlsx` file from plain strings.
+    """Build a `.docx`, `.pptx`, or `.xlsx` file from plain strings.
 
     Returns (after_excerpt, size_bytes). Raises ExtractionError with the
     HTTP status to answer with.
     """
     target = Path(path)
     suffix = target.suffix.lower()
-    if suffix not in (".pptx", ".xlsx"):
+    if suffix not in (".docx", ".pptx", ".xlsx"):
         raise ExtractionError(
-            "I can create PowerPoint (.pptx) and Excel (.xlsx) files — "
+            "I can create Word (.docx), PowerPoint (.pptx), and Excel (.xlsx) files — "
             f'"{target.name}" is neither. Text files go through write_file.',
             422,
         )
@@ -110,10 +165,13 @@ def create_document(path: str, title: str, items: list[str]) -> tuple[str, int]:
         )
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        if suffix == ".pptx":
+        if suffix == ".docx":
+            excerpt = _create_docx(target, title, items)
+        elif suffix == ".pptx":
             excerpt = _create_pptx(target, title, items)
         else:
             excerpt = _create_xlsx(target, title, items)
+        _verify_saved_docx(target, suffix)
         return excerpt, target.stat().st_size
     except ExtractionError:
         raise

@@ -55,3 +55,46 @@ export function findPendingAsk(messages: UIMessage[]): PendingAsk | null {
   }
   return null
 }
+
+// Some models echo ask_user's tool-call arguments as visible text before (or
+// alongside) the real tool call — e.g. `{ "question": "…", "options": null }`.
+// The thread never shows raw tool JSON (docs/04 plain-language rule), so a
+// leading JSON object shaped like ask_user's arguments is stripped for
+// display only; persistence is untouched.
+export function stripAskUserJsonEcho(text: string): string {
+  const start = text.indexOf('{')
+  if (start === -1) return text
+  // Find the matching close brace, skipping string literals and escapes.
+  let inString = false
+  let escaped = false
+  let depth = 0
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') inString = true
+    else if (ch === '{') depth++
+    else if (ch === '}') {
+      depth--
+      if (depth === 0) {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(text.slice(start, i + 1))
+        } catch {
+          return text
+        }
+        if (typeof parsed !== 'object' || parsed === null) return text
+        const obj = parsed as Record<string, unknown>
+        const keys = Object.keys(obj)
+        if (typeof obj.question !== 'string') return text
+        if (!keys.every((k) => k === 'question' || k === 'options')) return text
+        return (text.slice(0, start) + text.slice(i + 1)).replace(/^\s+/, '')
+      }
+    }
+  }
+  return text
+}

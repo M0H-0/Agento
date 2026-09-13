@@ -17,6 +17,14 @@ export function GenericToolCard({
   ...rest
 }: GenericToolCardProps): React.JSX.Element {
   const { t } = useLocale()
+  // An {"error": "…"} result reads as a plain sentence, not raw JSON.
+  const plainError =
+    result &&
+    typeof result === 'object' &&
+    typeof (result as { error?: unknown }).error === 'string' &&
+    Object.keys(result as object).length === 1
+      ? ((result as { error: string }).error as string)
+      : undefined
   return (
     <BaseToolCard {...rest} defaultOpen>
       {errorText ? <div className="tool-card__error">{errorText}</div> : null}
@@ -29,7 +37,7 @@ export function GenericToolCard({
       {result !== undefined ? (
         <details className="tool-card__details" open>
           <summary>{t('cards.result')}</summary>
-          <pre className="tool-card__pre">{JSON.stringify(result, null, 2)}</pre>
+          <pre className="tool-card__pre">{plainError ?? JSON.stringify(result, null, 2)}</pre>
         </details>
       ) : null}
     </BaseToolCard>

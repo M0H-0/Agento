@@ -127,7 +127,7 @@ Electron main spawns `uv run uvicorn agento_intelligence.main:app --port 7891` (
 | Parse `.pdf .docx .pptx .xlsx .csv .html` | sidecar | Docling `POST /documents/parse` → markdown + structure |
 | Edit `.md` / `.txt` | main | registry edit tools directly |
 | Edit `.docx` | sidecar | `python-docx` text round-trip `POST /documents/edit` |
-| `.md/.html → .pdf` | main | render HTML in a hidden Electron window → `webContents.printToPDF` |
+| `.md/.html → .pdf` | main | render HTML in a hidden Electron window → `webContents.printToPDF` (live: the `convert_document` `.pdf` target, wrapped + paginated HTML with RTL auto-detect) |
 | `.xlsx → .csv`, `.docx → .md` | sidecar | Docling export endpoints |
 | Search files | main | spawns the `@vscode/ripgrep` binary |
 

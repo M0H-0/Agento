@@ -46,6 +46,34 @@ describe('create_document — write access, write_file card shape', () => {
     expect(result.afterExcerpt).toContain('Roadmap')
   })
 
+  it('creates a .docx through the injected sidecar capability', async () => {
+    const outcome = await harness.registry.run({
+      tool: 'create_document',
+      args: {
+        path: 'story.docx',
+        title: 'The Midnight Adventure',
+        items: ['Whiskers loved midnight.']
+      },
+      ctx: {
+        ...harness.ctx,
+        documents: {
+          extract: async () => ({ text: '', truncated: false }),
+          create: async (path, title) => {
+            expect(path).toContain('story.docx')
+            expect(title).toBe('The Midnight Adventure')
+            return {
+              afterExcerpt: 'The Midnight Adventure\nWhiskers loved midnight.',
+              sizeBytes: 4096
+            }
+          }
+        }
+      }
+    })
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok || !outcome.result) throw new Error('expected result')
+    expect(outcome.result).toMatchObject({ size: 4096, beforeExcerpt: null })
+  })
+
   it('is risk 1 for a fresh path and risk 2 when overwriting (write_file mirror)', async () => {
     // risk() runs on sandbox-resolved paths (registry stage 2), so the
     // probe paths below are absolute — relative ones trip the fs guard.

@@ -7,9 +7,27 @@ import { sidecarFetch } from '../sidecar'
 // and answer honestly (docs/05 §6 degraded doctrine).
 
 async function readDetail(response: Response): Promise<string> {
+  // 403 is the sidecar's per-launch token refusal (docs/02 §2.4) — an internal
+  // auth detail that must never reach the model or the thread (live: the model
+  // repeated "X-Agento-Token header" to the user). Answer with the same honest
+  // "service unavailable" copy the tools use when the sidecar is down.
+  if (response.status === 403) {
+    try {
+      await response.json()
+    } catch {
+      // Body is irrelevant — the copy below is the whole answer.
+    }
+    return 'The intelligence service is not ready right now.'
+  }
   try {
     const body = (await response.json()) as { detail?: unknown }
-    if (typeof body.detail === 'string' && body.detail) return body.detail
+    if (typeof body.detail === 'string' && body.detail) {
+      // Belt-and-braces: no internal header/token name ever leaves this module.
+      if (/X-Agento-Token|AGENTO_INTELLIGENCE_TOKEN/i.test(body.detail)) {
+        return 'The intelligence service is not ready right now.'
+      }
+      return body.detail
+    }
   } catch {
     // fall through to the generic message
   }
@@ -50,7 +68,8 @@ export function editDocxDocument(
 }
 
 /** POST /document/create {path, title, items} → excerpt + size (demo).
- * `.pptx`/`.xlsx` — text files go through write_file. */
+ * `.docx`/`.pptx`/`.xlsx` — text files go through write_file, PDFs through
+ * the printToPDF export in `./pdf-export`. */
 export function createDocument(
   path: string,
   title: string,

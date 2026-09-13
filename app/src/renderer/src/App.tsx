@@ -177,7 +177,11 @@ function ThreadWelcome({
 // Reply-mode composer (docs/03 §7): while an ask_user holds the run, the
 // main composer IS the reply box — no card-embedded form. Enter sends
 // (Shift+Enter breaks the line, an in-progress IME composition never sends);
-// option chips send directly. The reply rides the same tool:answer channel
+// option chips fill the draft instead of sending — a reply must always pass
+// through the composer visibly before Enter/Send, so no stray click or
+// focused-chip Enter can ever send a reply the user didn't type (bug: a
+// model-authored chip once fired on a stray Enter and the thread recorded a
+// reply the user never wrote). The reply rides the same tool:answer channel
 // the old card form used; on a refusal (stale question) the draft survives
 // so the user can Stop or retry. Stop itself stays rendered beside Send —
 // it rejects the pending answer and aborts, exactly like chat:stop mid-ask.
@@ -186,6 +190,7 @@ function ReplyComposer({ ask }: { ask: PendingAsk }): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   async function submit(answer: string): Promise<void> {
     const trimmed = answer.trim()
@@ -214,7 +219,10 @@ function ReplyComposer({ ask }: { ask: PendingAsk }): React.JSX.Element {
               type="button"
               className="composer-chip"
               disabled={sending}
-              onClick={() => void submit(option)}
+              onClick={() => {
+                setDraft(option)
+                inputRef.current?.focus()
+              }}
             >
               {option}
             </button>
@@ -222,6 +230,7 @@ function ReplyComposer({ ask }: { ask: PendingAsk }): React.JSX.Element {
         </div>
       ) : null}
       <textarea
+        ref={inputRef}
         className="composer-input"
         placeholder={t('app.typeReply')}
         value={draft}

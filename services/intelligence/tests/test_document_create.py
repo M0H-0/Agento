@@ -39,6 +39,37 @@ def _post(path: str, payload: dict, token: str | None = TOKEN) -> tuple[int, dic
         return error.code, json.loads(error.read().decode("utf-8"))
 
 
+def test_create_docx_round_trip(server, tmp_path):
+    target = tmp_path / "cat_story.docx"
+    status, body = _post(
+        "/document/create",
+        {
+            "path": str(target),
+            "title": "The Midnight Adventure of Whiskers",
+            "items": ["Whiskers the cat loved the quiet of midnight.", "Dew-kissed grass — unicode: café naïve"],
+        },
+    )
+    assert status == 200
+    assert body["size_bytes"] > 0
+    assert "Midnight Adventure" in body["after_excerpt"]
+    assert "Whiskers" in body["after_excerpt"]
+
+    import docx
+
+    saved = docx.Document(str(target))
+    full = "\n".join(p.text for p in saved.paragraphs)
+    assert "The Midnight Adventure of Whiskers" in full
+    assert "Whiskers the cat loved the quiet of midnight." in full
+    # Unicode survives the round-trip byte-exact (the dewâ mojibake class).
+    assert "Dew-kissed grass — unicode: café naïve" in full
+
+    # The created document reads back through the extract ladder.
+    status, body = _post("/document/extract", {"path": str(target)})
+    assert status == 200
+    assert "Midnight Adventure" in body["text"]
+    assert "café naïve" in body["text"]
+
+
 def test_create_pptx_round_trip(server, tmp_path):
     target = tmp_path / "deck.pptx"
     status, body = _post(

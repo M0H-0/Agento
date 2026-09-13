@@ -39,4 +39,16 @@ describe('buildSystemPrompt', () => {
     expect(buildSystemPrompt('D:\\Random\\folder')).toContain(ban)
     expect(buildSystemPrompt(null)).toContain(ban)
   })
+
+  it('tells the model to invent sample content instead of asking', () => {
+    const clause = 'invent short suitable content yourself'
+    expect(buildSystemPrompt('D:\\Random\\folder')).toContain(clause)
+    expect(buildSystemPrompt(null)).toContain(clause)
+  })
+
+  it('forbids mentioning internal tokens or headers', () => {
+    const rule = 'Never mention internal tokens, headers'
+    expect(buildSystemPrompt('D:\\Random\\folder')).toContain(rule)
+    expect(buildSystemPrompt(null)).toContain(rule)
+  })
 })

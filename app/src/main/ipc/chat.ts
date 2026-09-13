@@ -38,6 +38,7 @@ import {
   createDocumentTool,
   createToolRegistry,
   createWorkspaceFs,
+  convertDocumentTool,
   deletePathTool,
   editDocumentTool,
   editExcerpts,
@@ -84,6 +85,7 @@ import {
   embedTexts,
   extractDocument
 } from './sidecar-calls'
+import { exportHtmlToPdf } from './pdf-export'
 
 // The run loop itself (streamText calls, stream forwarding, provider error
 // classification, step guard) lives in src/main/agent/plan-run.ts — this
@@ -465,6 +467,7 @@ function buildGlobalRegistry(): ReturnType<typeof createToolRegistry> {
   registry.define(summarizeDocumentTool)
   registry.define(editDocumentTool)
   registry.define(createDocumentTool)
+  registry.define(convertDocumentTool)
   registry.define(webFetchTool)
   registry.define(webSearchTool)
   registry.define(semanticSearchTool)
@@ -775,6 +778,14 @@ export function registerChatIpc(): void {
       // honestly. Demo: .docx anchor edits ride the same sidecar
       // (edit_document).
       documents: { extract: extractDocument, edit: editDocxDocument, create: createDocument },
+      // PDF export (docs/02 §2.6): hidden-window printToPDF for the
+      // convert_document `.pdf` target. Paths arrive sandbox-resolved from
+      // the tool, like the sidecar-backed document calls above.
+      pdf: {
+        exportHtml: async (outPath: string, html: string) => ({
+          sizeBytes: await exportHtmlToPdf(outPath, html)
+        })
+      },
       // MVP (MVP_PLAN.md step 3): summarize_document's one-shot completion.
       llm: { complete: llmCompleter(languageModel) },
       // Demo: read_document on images — the run's vision model describes the

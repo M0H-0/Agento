@@ -80,10 +80,190 @@ function logProviderError(cause: APICallError): void {
 export function isLikelyMutatingRequest(text: string): boolean {
   const lower = text.toLowerCase()
   const verbs =
-    /\b(create|make|write|add|save|generate|update|edit|change|fix|move|copy|rename|delete|remove|organize|organise|tidy|backup)\b/
+    /\b(create|make|write|add|save|generate|update|edit|change|fix|move|copy|rename|delete|remove|organize|organise|tidy|sort|arrange|convert|merge|split|extract|backup)\b/
   const markers =
-    /\b(file|files|folder|folders|directory|directories|note|notes|document|report|txt|text file)\b|\.txt\b|\.md\b/
+    /\b(file|files|folder|folders|directory|directories|note|notes|document|report|txt|text file|pdfs?|csvs?|docx?|pptx?|xlsx?)\b|\.txt\b|\.md\b|\.docx\b|\.pdf\b/
   return verbs.test(lower) && markers.test(lower)
+}
+
+// Deterministic fallback plan (2026-09-13): providers that refuse the forced
+// emit_plan call (Ollama gpt-oss:120b live: "make a plan to make a txt and
+// docx and pdf file of a fish story" → PLAN_FAILED_COPY) must not leave Plan
+// mode with no plan for an obvious document request. When the text names file
+// targets, synthesize the same write-then-convert steps the Act loop would
+// take — write the source text first, then convert to each other format.
+// Structural safety is unchanged: the fallback only *proposes* steps for the
+// panel; execution still requires approval + wrapper snapshot per tool.
+export function buildFallbackDocumentPlan(text: string): PlanStep[] | null {
+  const lower = text.toLowerCase()
+  if (!isLikelyMutatingRequest(text)) return null
+  const wantsTxt = /\btxt\b|\.txt\b|text file/.test(lower)
+  const wantsMd = /\bmd\b|\.md\b|markdown/.test(lower)
+  const wantsDocx = /\bdocx?\b|\.docx\b/.test(lower)
+  const wantsPdf = /\bpdfs?\b|\.pdf\b/.test(lower)
+  const targets = [
+    ...(wantsTxt ? (['txt'] as const) : []),
+    ...(wantsMd ? (['md'] as const) : []),
+    ...(wantsDocx ? (['docx'] as const) : []),
+    ...(wantsPdf ? (['pdf'] as const) : [])
+  ]
+  if (targets.length === 0) return null
+  // Source is the plain-text format when requested, else the first target.
+  const source: 'txt' | 'md' | 'docx' | 'pdf' = wantsTxt ? 'txt' : wantsMd ? 'md' : targets[0]
+  const topic = 'the requested content'
+  const steps: PlanStep[] = [
+    {
+      id: '1',
+      description:
+        source === 'txt' || source === 'md'
+          ? `Write ${topic} to a .${source} file`
+          : `Create the .${source} file with ${topic}`,
+      tool: source === 'docx' ? 'create_document' : 'write_file',
+      riskLevel: 1,
+      requiresApproval: false
+    }
+  ]
+  let id = 2
+  for (const target of targets) {
+    if (target === source) continue
+    steps.push({
+      id: String(id++),
+      description: `Convert it to .${target}`,
+      tool: 'convert_document',
+      riskLevel: 1,
+      requiresApproval: false
+    })
+  }
+  return steps
+}
+
+// Plan-JSON recovery (2026-09-13): some providers ignore a forced toolChoice
+// (Ollama gpt-oss:120b live: both plan attempts come back as plain text —
+// no emit_plan call, no error — and Plan mode ended silently with no plan).
+// parsePlanJson scans free model text for a balanced JSON object that
+// validates against planStepsSchema (same echo family as the renderer's
+// stripAskUserJsonEcho); extractPlanSteps makes one final no-tools
+// completion ask for ONLY the plan JSON, for providers that never surface
+// the tool call at all. Both are best-effort recovery of the SAME structured
+// contract — schema validation is unchanged, so a bad plan still never
+// reaches the panel.
+// Providers drift on emit_plan argument conventions (live Ollama gpt-oss:120b:
+// `risk` / `requires_approval` instead of `riskLevel` / `requiresApproval`,
+// and the `id` omitted). A plan that names the right steps with the wrong
+// key names still reaches the panel: normalize onto the frozen contract
+// before Zod validation. A plan that misses steps or text entirely still
+// fails validation — this is repair, never invention.
+export function normalizePlanSteps(candidate: unknown): unknown {
+  if (!candidate || typeof candidate !== 'object') return candidate
+  const source = candidate as Record<string, unknown>
+  const rawSteps = Array.isArray(candidate)
+    ? candidate
+    : Array.isArray(source.steps)
+      ? source.steps
+      : null
+  if (rawSteps === null) return candidate
+  const steps = rawSteps.map((raw, index) => {
+    if (!raw || typeof raw !== 'object') return raw
+    const step = raw as Record<string, unknown>
+    const id = typeof step.id === 'string' && step.id.trim() !== '' ? step.id : String(index + 1)
+    const riskLevel =
+      typeof step.riskLevel === 'number'
+        ? step.riskLevel
+        : typeof step.risk === 'number'
+          ? step.risk
+          : typeof step.risk_level === 'number'
+            ? step.risk_level
+            : 0
+    // Approval variants must never flatten to false: an explicit true under
+    // any known key name stays true (fail-closed on approval intent).
+    const requiresApproval =
+      step.requiresApproval === true ||
+      step.requires_approval === true ||
+      step.needsApproval === true ||
+      step.needs_approval === true
+        ? true
+        : typeof step.requiresApproval === 'boolean'
+          ? step.requiresApproval
+          : typeof step.requires_approval === 'boolean'
+            ? step.requires_approval
+            : typeof step.needsApproval === 'boolean'
+              ? step.needsApproval
+              : typeof step.needs_approval === 'boolean'
+                ? step.needs_approval
+                : false
+    return {
+      id,
+      description: step.description,
+      tool: step.tool,
+      riskLevel,
+      requiresApproval
+    }
+  })
+  return { steps }
+}
+
+export function parsePlanJson(text: string): PlanStep[] | null {
+  let start = text.indexOf('{')
+  while (start !== -1) {
+    let inString = false
+    let escaped = false
+    let depth = 0
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i]
+      if (inString) {
+        if (escaped) escaped = false
+        else if (ch === '\\') escaped = true
+        else if (ch === '"') inString = false
+        continue
+      }
+      if (ch === '"') inString = true
+      else if (ch === '{') depth++
+      else if (ch === '}') {
+        depth--
+        if (depth === 0) {
+          let candidate: unknown
+          try {
+            candidate = JSON.parse(text.slice(start, i + 1))
+          } catch {
+            break
+          }
+          const parsed = planStepsSchema.safeParse(normalizePlanSteps(candidate))
+          if (parsed.success) return parsed.data.steps
+          break
+        }
+      }
+    }
+    start = text.indexOf('{', start + 1)
+  }
+  return null
+}
+
+// The extraction pass runs with NO tools — plain completion, so it works on
+// providers where forced tool choice itself is the broken part.
+const EXTRACT_PLAN_SUFFIX = `\nOutput ONLY a JSON object of the plan, exactly this shape: {"steps":[{"id":"1","description":"<plain-language step>","tool":"<tool name>","riskLevel":0,"requiresApproval":false}]}. No prose, no code fences, no other keys.`
+
+async function extractPlanSteps(
+  model: LanguageModel,
+  system: string,
+  messages: ModelMessage[],
+  signal: AbortSignal
+): Promise<PlanStep[] | null> {
+  try {
+    // streamText (not generateText) so the run stays on one code path with
+    // the plan attempts and tests can script the pass with a stream mock.
+    const result = streamText({
+      model,
+      system: `${system}${EXTRACT_PLAN_SUFFIX}`,
+      messages,
+      abortSignal: signal,
+      prepareStep: ({ messages: stepMessages }) => ({
+        messages: stripStepReasoning(stepMessages)
+      })
+    })
+    return parsePlanJson(await result.text)
+  } catch {
+    return null
+  }
 }
 
 // Exported for the plan-run tests (copy classification). `phase: 'plan'`
@@ -383,13 +563,14 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
         if (aborted) {
           return { steps: null, messages: null, heldParts, finish, errorText, hadText }
         }
-        // Extract the parsed steps from the emit_plan tool call.
+        // Extract the parsed steps from the emit_plan tool call (normalize
+        // provider arg-variant names — live gpt-oss ships snake_case).
         const steps = await planResult.steps
         let found: PlanStep[] | null = null
         for (const step of steps) {
           for (const toolCall of step.toolCalls) {
             if (toolCall.toolName !== 'emit_plan') continue
-            const parsed = planStepsSchema.safeParse(toolCall.input)
+            const parsed = planStepsSchema.safeParse(normalizePlanSteps(toolCall.input))
             if (parsed.success) {
               found = parsed.data.steps
               break
@@ -545,6 +726,23 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
         return decision
       }
     }
+    // Real tool-call counter for the execution phase: stepsTaken counts
+    // provider round-trips, so a prose-only run still advances it — it cannot
+    // detect the "narrated the claim, called nothing" failure. Every wrapper
+    // outcome (executed/refused/skipped/cancelled) fires onOutcome once, so a
+    // refused/skipped call still counts as acting.
+    let execCallsMade = 0
+    const execOnOutcome: typeof deps.onOutcome = (entry) => {
+      execCallsMade += 1
+      deps.onOutcome?.(entry)
+    }
+    const execUserText = deps.messages
+      .filter((m) => m.role === 'user')
+      .flatMap((m) => m.parts)
+      .filter((p) => p.type === 'text')
+      .map((p) => (p as { text: string }).text)
+      .join(' ')
+    const expectsExecActions = planApproved || isLikelyMutatingRequest(execUserText)
     if (!planEmitted || planApproved) {
       // M3.7 gate finding: without an explicit handoff the model treats the
       // execution call as "present the plan and ask to proceed" (live run:
@@ -570,7 +768,7 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
           model: deps.model,
           system: opts.systemSuffix ? `${deps.system}${opts.systemSuffix}` : deps.system,
           messages: baseExecMessages,
-          tools: deps.registry.toAiSdkTools(ctxWithCancel, { onOutcome: deps.onOutcome }),
+          tools: deps.registry.toAiSdkTools(ctxWithCancel, { onOutcome: execOnOutcome }),
           toolChoice: opts.toolChoice,
           abortSignal: deps.signal,
           stopWhen: [stepCountIs(maxSteps), () => cancelled],
@@ -606,18 +804,18 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
       // and zero tool calls (looks like "stopped, no file"). Retry once with
       // toolChoice 'required' + an explicit execute-now suffix — the wrapper
       // still guards every call, so forcing *a* tool cannot force a mutation.
-      const execToolsRan = stepsTaken > 0
-      if (planApproved && !aborted && !cancelled && !execToolsRan) {
+      if (planApproved && !aborted && !cancelled && execCallsMade === 0) {
         await runExecutionOnce({
           systemSuffix:
             '\nYou must act now using the file tools to carry out the approved plan. Call the first tool immediately; do not reply in text first.',
           toolChoice: 'required'
         })
       }
-      // Zero-action guard: an approved plan that produced no tool calls and no
-      // assistant text is a silent failure — end loudly instead of with a
-      // success finish, so the user knows nothing changed.
-      if (planApproved && !aborted && stepsTaken === 0 && accumulator.toUIMessage() === null) {
+      // Zero-action guard: a mutating request that produced no tool calls — even
+      // one answered in prose — is a silent failure. End loudly instead of with
+      // a success finish, so the user knows nothing changed. A real tool call
+      // (executed/refused/skipped/cancelled) already proves the run acted.
+      if (expectsExecActions && !aborted && !cancelled && execCallsMade === 0) {
         if (!terminalSent) {
           deps.sendPart({
             type: 'error',
@@ -689,6 +887,7 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
       }
     }
   } catch (error) {
+    if (!aborted && stepsTaken >= maxSteps) stepLimitReached = true
     // ask_user / plan-start rejections (the run was stopped) and other
     // unhandled errors come through here. The provider-error transform
     // handles RetryError/APICallError specifically; anything else gets the
@@ -749,10 +948,16 @@ export interface ModeTurnDeps {
   onVerification?: PlanRunDeps['onVerification']
 }
 
+// ask_user is a run PAUSE, not a read: in Plan discovery the loop has no
+// execution context, so a clarifying question answers nothing the plan can
+// use — live it stalled the turn (model asked whether it may "attempt to
+// create the file using a write capability"). Plan stays read + plan only.
 function readToolNames(registry: ToolRegistry): string[] {
   return registry
     .names()
-    .filter((name) => name !== 'emit_plan' && registry.get(name)?.access === 'read')
+    .filter(
+      (name) => name !== 'emit_plan' && name !== 'ask_user' && registry.get(name)?.access === 'read'
+    )
 }
 
 export async function runPlanModeTurn(
@@ -769,47 +974,39 @@ export async function runPlanModeTurn(
   const emitPlanCallIds = new Set<string>()
   const baseModelMessages = convertToModelMessagesSafe(replayable(deps.messages))
 
-  const forwardLive = async (result: {
-    toUIMessageStream: (opts: { onError: (e: unknown) => string }) => AsyncIterable<UIMessageChunk>
-  }): Promise<void> => {
-    for await (const part of result.toUIMessageStream({ onError: friendlyProviderError })) {
+  // Held discovery (2026-09-13 fix): discovery parts are buffered and only
+  // committed once the plan outcome is known. Streaming them live caused the
+  // reported "answered immediately, then red error" — e.g. "make a txt file
+  // with a cat story" streamed the full story in discovery, then the forced
+  // emit_plan failed and PLAN_FAILED_COPY landed under it. Holding gives a
+  // single outcome: plan (+ summary) on success, answer on Q&A, single error
+  // on mutating failure with no orphan prose.
+  const commitHeld = (parts: UIMessageChunk[]): void => {
+    for (const part of parts) {
       accumulator.addChunk(part)
-      if (part.type === 'finish') {
-        heldFinish = part
-        continue
-      }
-      if (part.type === 'abort') {
-        aborted = true
-        continue
-      }
-      if (part.type === 'error' && deps.signal.aborted) {
-        aborted = true
-        continue
-      }
-      if (part.type === 'error') {
-        deps.sendPart(part)
-        terminalSent = true
-        continue
-      }
-      if (part.type === 'tool-input-start' || part.type === 'tool-input-delta') continue
-      if (part.type === 'tool-input-available' && part.toolName === 'emit_plan') {
-        emitPlanCallIds.add(part.toolCallId)
-        continue
-      }
-      if (part.type === 'tool-output-available' && emitPlanCallIds.has(part.toolCallId)) continue
       deps.sendPart(part)
     }
   }
+  const userTextForDiscovery = deps.messages
+    .filter((m) => m.role === 'user')
+    .flatMap((m) => m.parts)
+    .filter((p) => p.type === 'text')
+    .map((p) => (p as { text: string }).text)
+    .join(' ')
+  const discoveryMutating = isLikelyMutatingRequest(userTextForDiscovery)
 
   try {
     // Discovery: read-only tools only (structurally — write tools are never
-    // in this set). Renders as normal cards so the user sees what was read.
+    // in this set). Cards + summary render only when committed below, so the
+    // user never sees read output ahead of a plan failure.
+    const discoveryHeld: UIMessageChunk[] = []
+    let discoveryError: UIMessageChunk | null = null
     const readNames = readToolNames(deps.registry)
     if (readNames.length > 0 && !deps.signal.aborted) {
       try {
         const discoveryResult = streamText({
           model: deps.model,
-          system: `${deps.system}\nYou are in read-only planning mode. Inspect what you need with the available tools, then answer briefly in text: what you found and what you will put in the plan. Do not claim to change anything.`,
+          system: `${deps.system}\nYou are in read-only planning mode. Inspect what you need with the available tools, then answer briefly in text (1-2 sentences): what you found and what you will put in the plan. Do not write file or story content — describe only. Do not claim to change anything.`,
           messages: baseModelMessages,
           tools: deps.registry.toAiSdkTools(
             { ...deps.ctx },
@@ -829,8 +1026,38 @@ export async function runPlanModeTurn(
             discoveryUsage = event.totalUsage
           }
         })
-        await forwardLive(discoveryResult)
-        if (!aborted && !terminalSent) {
+        for await (const part of discoveryResult.toUIMessageStream({
+          // A discovery failure on a mutating turn is the same refusal class
+          // as a plan-phase 400 — never "check your connection" (M3.8).
+          onError: (error) => friendlyProviderError(error, discoveryMutating ? 'plan' : undefined)
+        })) {
+          if (part.type === 'finish') {
+            heldFinish = part
+            continue
+          }
+          if (part.type === 'abort') {
+            aborted = true
+            continue
+          }
+          if (part.type === 'error' && deps.signal.aborted) {
+            aborted = true
+            continue
+          }
+          if (part.type === 'error') {
+            discoveryError = part
+            continue
+          }
+          if (part.type === 'tool-input-start' || part.type === 'tool-input-delta') continue
+          if (part.type === 'tool-input-available' && part.toolName === 'emit_plan') {
+            emitPlanCallIds.add(part.toolCallId)
+            continue
+          }
+          if (part.type === 'tool-output-available' && emitPlanCallIds.has(part.toolCallId)) {
+            continue
+          }
+          discoveryHeld.push(part)
+        }
+        if (!aborted && !discoveryError) {
           try {
             discoveryMessages = (await discoveryResult.response).messages
           } catch {
@@ -857,26 +1084,33 @@ export async function runPlanModeTurn(
         planApproved: false
       }
     }
-    if (terminalSent) {
-      return {
-        aborted,
-        terminalSent,
-        accumulatorFailed: accumulator.isFailed(),
-        assistantMessage: accumulator.toUIMessage(),
-        heldFinish,
-        usage: sumUsage(discoveryUsage, planUsage),
-        stepsTaken: 0,
-        stepLimitReached: false,
-        planEmitted: false,
-        planApproved: false
-      }
-    }
+    // Discovery is best-effort context, never the verdict: a discovery
+    // failure falls through to the forced plan below (live: a flaky provider
+    // failed Plan mode before planning even started). The held discovery
+    // error only surfaces if the plan also fails to produce anything.
 
     // Forced plan: ONLY emit_plan is available — the model must plan.
     const emitPlanWrapped = deps.registry.toAiSdkTool('emit_plan', deps.ctx, {
       onOutcome: deps.onOutcome
     })
     if (!emitPlanWrapped) {
+      // No plan tool registered: Q&A can still use the held discovery answer;
+      // mutating requests get the single honest failure (held summary dropped).
+      if (!discoveryMutating && discoveryHeld.length > 0) {
+        commitHeld(discoveryHeld)
+        return {
+          aborted,
+          terminalSent,
+          accumulatorFailed: accumulator.isFailed(),
+          assistantMessage: accumulator.toUIMessage(),
+          heldFinish,
+          usage: sumUsage(discoveryUsage, planUsage),
+          stepsTaken: 0,
+          stepLimitReached: false,
+          planEmitted: false,
+          planApproved: false
+        }
+      }
       if (!terminalSent) {
         deps.sendPart({ type: 'error', errorText: PLAN_FAILED_COPY })
         terminalSent = true
@@ -969,7 +1203,7 @@ export async function runPlanModeTurn(
         for (const step of steps) {
           for (const toolCall of step.toolCalls) {
             if (toolCall.toolName !== 'emit_plan') continue
-            const parsed = planStepsSchema.safeParse(toolCall.input)
+            const parsed = planStepsSchema.safeParse(normalizePlanSteps(toolCall.input))
             if (parsed.success) {
               found = parsed.data.steps
               break
@@ -992,11 +1226,82 @@ export async function runPlanModeTurn(
         systemSuffix: '\nRespond ONLY by calling the emit_plan tool with the step-by-step plan.'
       })
     }
-    if (attempt.steps) {
-      for (const part of attempt.heldParts) {
-        accumulator.addChunk(part)
-        deps.sendPart(part)
+    // Text-only recovery (2026-09-13): when the provider never surfaces the
+    // emit_plan call (forced toolChoice ignored — Ollama gpt-oss:120b live),
+    // recover the SAME structured contract from the model's text: first the
+    // plan attempts' own text (a JSON echo), then one no-tools completion
+    // asking for the plan JSON. Schema validation is unchanged, so an
+    // invalid plan still never reaches the panel; without a valid plan the
+    // run falls through to the honest outcome below.
+    if (!attempt.steps && !deps.signal.aborted && !aborted) {
+      const attemptText = attempt.heldParts
+        .filter((part) => part.type === 'text-delta')
+        .map((part) => (part as { delta?: string }).delta ?? '')
+        .join('')
+      const echoed = parsePlanJson(attemptText)
+      const recovered =
+        echoed ?? (await extractPlanSteps(deps.model, deps.system, planMessages, deps.signal))
+      if (recovered) {
+        // Commit discovery first (summary + read cards), then the model's
+        // prose (it narrates the plan) but never a raw JSON echo.
+        commitHeld(discoveryHeld)
+        if (attempt.hadText && !echoed) {
+          commitHeld(attempt.heldParts)
+        }
+        deps.onPlanCreated(recovered)
+        return {
+          aborted,
+          terminalSent,
+          accumulatorFailed: accumulator.isFailed(),
+          assistantMessage: accumulator.toUIMessage(),
+          heldFinish,
+          usage: sumUsage(discoveryUsage, planUsage),
+          stepsTaken: 0,
+          stepLimitReached: false,
+          planEmitted: true,
+          planApproved: false
+        }
       }
+    }
+    // Deterministic fallback: obvious document requests never end with
+    // PLAN_FAILED_COPY just because the provider refused the forced tool.
+    // Held prose is dropped (no story/content leak) — the panel gets a real
+    // plan the user can start.
+    if (!attempt.steps && !deps.signal.aborted && !aborted) {
+      const fallback = buildFallbackDocumentPlan(userTextForDiscovery)
+      if (fallback) {
+        // The thread would otherwise stay empty (just the user bubble) —
+        // the panel gets the structured plan, the thread gets one plain
+        // summary line per step so the run visibly answered.
+        const summary = `Here's my plan:\n${fallback.map((s, i) => `${i + 1}. ${s.description}`).join('\n')}\n\nReview it on the right — switch to Act and say "go ahead" to run it.`
+        const textId = 'fallback-plan-summary'
+        const summaryParts: UIMessageChunk[] = [
+          { type: 'text-start', id: textId },
+          { type: 'text-delta', id: textId, delta: summary },
+          { type: 'text-end', id: textId }
+        ]
+        for (const part of summaryParts) {
+          accumulator.addChunk(part)
+          deps.sendPart(part)
+        }
+        deps.onPlanCreated(fallback)
+        return {
+          aborted,
+          terminalSent,
+          accumulatorFailed: accumulator.isFailed(),
+          assistantMessage: accumulator.toUIMessage(),
+          heldFinish,
+          usage: sumUsage(discoveryUsage, planUsage),
+          stepsTaken: 0,
+          stepLimitReached: false,
+          planEmitted: true,
+          planApproved: false
+        }
+      }
+    }
+    if (attempt.steps) {
+      commitHeld(discoveryHeld)
+      commitHeld(attempt.heldParts)
       deps.onPlanCreated(attempt.steps)
       return {
         aborted,
@@ -1027,13 +1332,9 @@ export async function runPlanModeTurn(
     }
     const genuineError = attempt.errorText !== null || attempt.finish === null
     if (!genuineError && attempt.hadText) {
-      const userText = deps.messages
-        .filter((m) => m.role === 'user')
-        .flatMap((m) => m.parts)
-        .filter((p) => p.type === 'text')
-        .map((p) => (p as { text: string }).text)
-        .join(' ')
-      if (isLikelyMutatingRequest(userText)) {
+      // Mutating requests drop BOTH held buffers (no story/content leak) and
+      // end with the single honest copy. Q&A flushes discovery + attempt text.
+      if (discoveryMutating) {
         if (!terminalSent) {
           deps.sendPart({ type: 'error', errorText: PLAN_FAILED_COPY })
           terminalSent = true
@@ -1051,10 +1352,30 @@ export async function runPlanModeTurn(
           planApproved: false
         }
       }
-      for (const part of attempt.heldParts) {
-        accumulator.addChunk(part)
-        deps.sendPart(part)
+      commitHeld(discoveryHeld)
+      commitHeld(attempt.heldParts)
+      return {
+        aborted,
+        terminalSent,
+        accumulatorFailed: accumulator.isFailed(),
+        assistantMessage: accumulator.toUIMessage(),
+        heldFinish,
+        usage: sumUsage(discoveryUsage, planUsage),
+        stepsTaken: 0,
+        stepLimitReached: false,
+        planEmitted: false,
+        planApproved: false
       }
+    }
+    // Genuine plan failure: mutating requests drop held discovery prose and
+    // send the single honest copy (the reported story-then-error fix).
+    // Non-mutating requests with a usable held discovery answer deliver it
+    // with no error — erroring "hello" because emit_plan 400'd is the same
+    // lie class M3.8 removed for the plan phase. (A failed discovery sets
+    // discoveryError, so it never takes this silent path — the error below
+    // surfaces instead.)
+    if (!discoveryMutating && discoveryHeld.length > 0 && discoveryError === null) {
+      commitHeld(discoveryHeld)
       return {
         aborted,
         terminalSent,
@@ -1069,7 +1390,12 @@ export async function runPlanModeTurn(
       }
     }
     if (!terminalSent) {
-      deps.sendPart({ type: 'error', errorText: attempt.errorText ?? PLAN_FAILED_COPY })
+      const discoveryCopy =
+        discoveryError !== null && discoveryError.type === 'error' ? discoveryError.errorText : null
+      deps.sendPart({
+        type: 'error',
+        errorText: attempt.errorText ?? discoveryCopy ?? PLAN_FAILED_COPY
+      })
       terminalSent = true
     }
     return {
@@ -1122,6 +1448,29 @@ export async function runActTurn(
   let capturedUsage: LanguageModelUsage | undefined
   const emitPlanCallIds = new Set<string>()
   let cancelled = false
+  // Real tool-call counter (every wrapper outcome: executed/refused/skipped/
+  // cancelled). `stepsTaken` counts provider round-trips — a prose-only run
+  // with zero tool calls still advances it, so it cannot detect the
+  // "narrated the claim, called nothing" failure. Every onOutcome fires once
+  // per tool-call attempt, so a refused/skipped call still counts as acting.
+  let callsMade = 0
+  const countCalls: typeof deps.onOutcome = (entry) => {
+    callsMade += 1
+    deps.onOutcome?.(entry)
+  }
+  // A mutating request that produces prose and zero tool calls looks like the
+  // run silently stopped — the retry + guard below fire for both an explicit
+  // go-ahead and a plain Act request (live: models sometimes narrate the
+  // claim and never call anything). Function scope so the catch block can
+  // reuse it for the forced-refusal mapping.
+  const actUserTexts = deps.messages
+    .filter((m) => m.role === 'user')
+    .flatMap((m) => m.parts)
+    .filter((p) => p.type === 'text')
+    .map((p) => (p as { text: string }).text)
+    .join(' ')
+  const expectsActions =
+    (deps.planHandoff && deps.planHandoff.length > 0) || isLikelyMutatingRequest(actUserTexts)
   const ctxWithCancel: ToolExecutionContext = {
     ...deps.ctx,
     requestApproval: async (request) => {
@@ -1183,8 +1532,10 @@ export async function runActTurn(
         messages: baseExecMessages,
         tools: deps.registry.toAiSdkTools(
           ctxWithCancel,
-          { onOutcome: deps.onOutcome },
-          { exclude: ['emit_plan'] }
+          { onOutcome: countCalls },
+          {
+            exclude: ['emit_plan']
+          }
         ),
         toolChoice: opts.toolChoice,
         abortSignal: deps.signal,
@@ -1212,23 +1563,21 @@ export async function runActTurn(
       await forwardLive(executionResult)
     }
     await runOnce({ systemSuffix: '', toolChoice: 'auto' })
-    // A go-ahead that produced prose and zero tool calls looks like the run
-    // silently stopped — retry once with a tool call required. The wrapper
-    // still guards every call, so forcing *a* tool cannot force a mutation.
-    if (
-      deps.planHandoff &&
-      deps.planHandoff.length > 0 &&
-      !aborted &&
-      !cancelled &&
-      stepsTaken === 0
-    ) {
+    // A mutating request that produced prose and zero tool calls looks like
+    // the run silently stopped — retry once with a tool call required. The
+    // wrapper still guards every call, so forcing *a* tool cannot force a
+    // mutation. Covers both an explicit go-ahead and a plain Act request
+    // (live: models sometimes narrate the claim and never call anything).
+    if (!aborted && !cancelled && callsMade === 0 && expectsActions) {
       await runOnce({
         systemSuffix:
-          '\nAct now using the file tools to carry out the reviewed plan. Call the first tool immediately; do not reply in text first.',
+          deps.planHandoff && deps.planHandoff.length > 0
+            ? '\nAct now using the file tools to carry out the reviewed plan. Call the first tool immediately; do not reply in text first.'
+            : '\nYou must act now using your tools to carry out the request. Call the first tool immediately; do not reply in text first.',
         toolChoice: 'required'
       })
     }
-    if (!aborted && !cancelled && stepsTaken === 0 && accumulator.toUIMessage() === null) {
+    if (!aborted && !cancelled && callsMade === 0 && expectsActions) {
       if (!terminalSent) {
         deps.sendPart({
           type: 'error',
@@ -1278,8 +1627,24 @@ export async function runActTurn(
       }
     }
   } catch (error) {
-    if (deps.signal.aborted) {
-      aborted = true
+    // A provider that refuses the retry's required tool choice (forced-call
+    // refusal class, e.g. ToolCallError) lands here: the run took no action,
+    // and the honest zero-action copy below must still surface — the raw
+    // refusal's generic "check your connection" text must not replace it.
+    if (
+      error instanceof Error &&
+      /did not call a tool/i.test(error.message) &&
+      callsMade === 0 &&
+      expectsActions
+    ) {
+      if (!terminalSent) {
+        deps.sendPart({
+          type: 'error',
+          errorText:
+            "I didn't take any actions, so nothing changed. Try saying which file to work on and what to do with it."
+        })
+        terminalSent = true
+      }
     } else if (!accumulator.isFailed() && !terminalSent) {
       const message = isStopRejection(error)
         ? 'Stopped before the reply was sent.'

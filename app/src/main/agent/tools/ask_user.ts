@@ -18,7 +18,7 @@ export const askUserTool: ToolDefinition<
 > = {
   name: 'ask_user',
   description:
-    'Ask the user a single clarifying question and wait for their reply in the thread. Use it ONLY when the answer is needed to proceed with a task — the request is ambiguous or missing something essential. Never use it for greetings, small talk, or anything a normal conversational reply covers; answer those as plain text.',
+    'Ask the user a single clarifying question and wait for their reply in the thread. Use it ONLY when you cannot proceed without the answer — the request is ambiguous or missing something essential and no reasonable default exists. When the user asks you to create sample content (a story, example text, document) without providing it, invent short suitable content yourself with the file tools — never ask which story or what text to use. Never use it for greetings, small talk, or anything a normal conversational reply covers; answer those as plain text. Only the user can answer it: never answer ask_user yourself, never assume a reply, and never continue as if the user already answered. When you provide options, they must be short, concrete, mutually exclusive answers to the question. Never offer an option that means "proceed with your best judgment", "you decide", or similar — if the user should decide freely, send no options at all.',
   access: 'read',
   // `.nullish()` not `.optional()`: models legitimately send an explicit
   // `options: null` for open-ended questions (observed live: Groq's

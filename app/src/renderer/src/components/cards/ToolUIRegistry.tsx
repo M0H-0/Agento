@@ -64,14 +64,29 @@ function statusFor(value: AuiToolPart['status']): ToolCardStatus {
   return 'disabled'
 }
 
+// Some tools report failure as {"error": "…"} — show the plain sentence,
+// never raw JSON (docs/04 plain-language rule).
+function plainToolError(text: string): string {
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown; message?: unknown }
+    if (typeof parsed.error === 'string') return parsed.error
+    if (typeof parsed.message === 'string') return parsed.message
+  } catch {
+    // Not JSON — show as-is.
+  }
+  return text
+}
+
 function errorTextFor(part: AuiToolPart): string | undefined {
   if (!part.isError) return undefined
-  if (typeof part.result === 'string') return part.result
+  if (typeof part.result === 'string') return plainToolError(part.result)
   if (part.result && typeof part.result === 'object') {
     const message = (part.result as { message?: unknown }).message
     if (typeof message === 'string') return message
+    const error = (part.result as { error?: unknown }).error
+    if (typeof error === 'string') return error
     try {
-      return JSON.stringify(part.result)
+      return plainToolError(JSON.stringify(part.result))
     } catch {
       return undefined
     }
@@ -620,14 +635,20 @@ function renderToolCard(part: AuiToolPart, title: string, stepFailed: string): R
     const card = renderDeletePathCard(part, title)
     if (card) return card
   }
+  // The generic fallback must not cry failure while the step is still
+  // running: a tool parked on the ApprovalDialog has no result yet, so every
+  // per-tool renderer above returned null and we land here with a live step.
+  // The failure line attaches only to a genuinely failed step; real backend
+  // errors still win through errorTextFor in every state.
+  const status = statusFor(part.status)
   return (
     <GenericToolCard
       title={title}
-      status={statusFor(part.status)}
+      status={status}
       toolCallId={part.toolCallId}
       result={part.result}
       args={part.args}
-      errorText={errorTextFor(part) ?? stepFailed}
+      errorText={status === 'incomplete' ? (errorTextFor(part) ?? stepFailed) : errorTextFor(part)}
     />
   )
 }

@@ -2,14 +2,14 @@ import { basename, extname } from 'node:path'
 import { z } from 'zod'
 import type { ToolDefinition } from '../types'
 
-// Demo document creation: build a `.pptx` deck or `.xlsx` workbook from
-// plain strings via the sidecar (POST /document/create). The result shape
-// matches write_file ({path, size, beforeExcerpt: null, afterExcerpt}) so
-// the WriteFileCard renders it with no new UI. Risk mirrors write_file
-// (docs/06 §2): a fresh path is risk 1, overwriting an existing file is
-// risk 2 — the wrapper snapshots either way (docs/03 §7).
+// Demo document creation: build a `.docx` document, `.pptx` deck, or `.xlsx`
+// workbook from plain strings via the sidecar (POST /document/create). The
+// result shape matches write_file ({path, size, beforeExcerpt: null,
+// afterExcerpt}) so the WriteFileCard renders it with no new UI. Risk mirrors
+// write_file (docs/06 §2): a fresh path is risk 1, overwriting an existing
+// file is risk 2 — the wrapper snapshots either way (docs/03 §7).
 const MAX_ITEMS = 200
-const CREATABLE_SUFFIXES = new Set(['.pptx', '.xlsx'])
+const CREATABLE_SUFFIXES = new Set(['.docx', '.pptx', '.xlsx'])
 
 export function isCreatableDocument(path: string): boolean {
   return CREATABLE_SUFFIXES.has(extname(path).toLowerCase())
@@ -21,7 +21,7 @@ export const createDocumentTool: ToolDefinition<
 > = {
   name: 'create_document',
   description:
-    "Create a PowerPoint (.pptx) or Excel (.xlsx) file in the user's workspace from plain text (path relative to the workspace root). Give a title plus one item per slide/row — use a newline inside an item for a slide's title and body. Text files go through write_file.",
+    "Create a Word (.docx), PowerPoint (.pptx), or Excel (.xlsx) file in the user's workspace from plain text (path relative to the workspace root). Give a title plus one item per paragraph/slide/row — use a newline inside an item for a heading and body. Text files go through write_file; PDFs go through convert_document.",
   access: 'write',
   inputSchema: z.object({
     path: z.string().min(1),
@@ -48,12 +48,12 @@ export const createDocumentTool: ToolDefinition<
     })
     if (!isCreatableDocument(input.path)) {
       return failed(
-        'I can create PowerPoint (.pptx) and Excel (.xlsx) files — that file is neither, so I left it untouched. Text files go through write_file.'
+        'I can create Word (.docx), PowerPoint (.pptx), and Excel (.xlsx) files — that file is neither, so I left it untouched. Text files go through write_file; PDFs go through convert_document.'
       )
     }
     if (!ctx.documents?.create) {
       return failed(
-        'Creating presentations and spreadsheets needs the intelligence service, which is not running right now.'
+        'Creating Word, presentation, and spreadsheet documents needs the intelligence service, which is not running right now.'
       )
     }
     try {

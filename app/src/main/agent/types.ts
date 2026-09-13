@@ -50,7 +50,7 @@ export interface DocumentCapabilities {
     path: string,
     edits: { anchor: string; replacement: string }[]
   ) => Promise<{ beforeExcerpt: string; afterExcerpt: string; editsApplied: number }>
-  /** Build a `.pptx`/`.xlsx` file from a title plus plain-text items
+  /** Build a `.docx`/`.pptx`/`.xlsx` file from a title plus plain-text items
    * (absolute, sandbox-resolved path). Returns the card excerpt + byte size.
    * Throws plain-language. Optional — absent in tests/degraded mode. */
   create?: (
@@ -58,6 +58,13 @@ export interface DocumentCapabilities {
     title: string,
     items: string[]
   ) => Promise<{ afterExcerpt: string; sizeBytes: number }>
+}
+
+/** PDF export capability (docs/02 §2.6): render HTML to an absolute,
+ * sandbox-resolved path via hidden-window printToPDF. Injected by the IPC
+ * layer; absent in tests/degraded mode — the tool then answers honestly. */
+export interface PdfCapabilities {
+  exportHtml(outPath: string, html: string): Promise<{ sizeBytes: number }>
 }
 
 export interface LlmCapabilities {
@@ -217,6 +224,8 @@ export interface ToolExecutionContext {
   fs: WorkspaceFs
   /** MVP: sidecar-backed extraction for .pdf/.docx/.pptx/.xlsx (injected by the IPC layer). */
   documents?: DocumentCapabilities
+  /** PDF export via hidden-window printToPDF (IPC-injected; absent in tests). */
+  pdf?: PdfCapabilities
   /** MVP: one-shot LLM completion over the run's provider/model (IPC-injected). */
   llm?: LlmCapabilities
   /** MVP: vision-model description of image files for read_document (IPC-injected). */
