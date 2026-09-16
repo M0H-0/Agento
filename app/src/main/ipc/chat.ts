@@ -754,6 +754,7 @@ export function registerChatIpc(): void {
               count !== undefined && count > 1
                 ? `${request.reason} (batch of ${count})`
                 : request.reason,
+            tool: request.tool,
             riskLevel: request.riskLevel,
             ...(count !== undefined && count > 1 ? { count } : {})
           })

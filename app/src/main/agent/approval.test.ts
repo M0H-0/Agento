@@ -226,6 +226,34 @@ describe('approval promise (M3.2)', () => {
     expect(await pending).toBe('approve')
   })
 
+  it('carries the tool on the emitted payload (damage-accurate dialog verb)', async () => {
+    // DEMO-001: the renderer picks the primary verb from `tool`, never the
+    // risk tier alone — a bulk move must not read "Delete permanently".
+    const emitted: { channel: string; payload: unknown }[] = []
+    const run = buildRunContext({
+      sender: { emit: (channel, payload) => emitted.push({ channel, payload }) },
+      sessionId: 's-tool-verb',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    run.setPlanSteps([{ id: 's1', description: 'Move 35 files into type folders', tool: 'move' }])
+    const pending = run.ctx.requestApproval({
+      tool: 'move_path',
+      title: 'Move report.pdf',
+      riskLevel: 2,
+      reason: 'move',
+      paths: ['C:/ws/report.pdf', 'C:/ws/PDFs/report.pdf']
+    })
+    const event = emitted.find(
+      (e) => (e.payload as { type?: string }).type === 'approval/requested'
+    )
+    expect(event).toBeDefined()
+    expect((event?.payload as { tool?: string }).tool).toBe('move_path')
+    expect((event?.payload as { count?: number }).count).toBe(35)
+    expect(run.resolveApproval(run._pendingApprovalIds()[0] as string, 'approve')).toBe(true)
+    expect(await pending).toBe('approve')
+  })
+
   it('unknown id resolves false; stop rejects pendings', async () => {
     const b = bundle()
     expect(b.resolveApproval('nope', 'approve')).toBe(false)

@@ -64,6 +64,28 @@ function statusFor(value: AuiToolPart['status']): ToolCardStatus {
   return 'disabled'
 }
 
+// DEMO-007: soft refusals (move/copy onto a missing source) travel as a
+// `tool-output-error` part — the adapter reports status 'complete' with
+// isError set, so status alone reads "step succeeded" (green ✓) next to the
+// failure sentence. A result record carrying an `error` string is the same
+// story told as data. Either one forces the incomplete (⚠) state + warn
+// styling — a card never shows ✓ together with an error body.
+function hasErrorResult(result: unknown): boolean {
+  // Inline record check (isRecord is declared further below; this keeps the
+  // failure helpers self-contained at the top of the module).
+  if (typeof result !== 'object' || result === null) return false
+  return typeof (result as { error?: unknown }).error === 'string'
+}
+
+function isFailurePart(part: AuiToolPart): boolean {
+  return part.isError === true || hasErrorResult(part.result)
+}
+
+function statusForPart(part: AuiToolPart): ToolCardStatus {
+  if (isFailurePart(part)) return 'incomplete'
+  return statusFor(part.status)
+}
+
 // Some tools report failure as {"error": "…"} — show the plain sentence,
 // never raw JSON (docs/04 plain-language rule).
 function plainToolError(text: string): string {
@@ -78,13 +100,20 @@ function plainToolError(text: string): string {
 }
 
 function errorTextFor(part: AuiToolPart): string | undefined {
+  // The soft-refusal sentence lives on the result record itself ({ error }) —
+  // readable with or without isError, so an error-data result still shows its
+  // own sentence instead of the generic fallback. (`message` stays
+  // isError-gated below: skipped/cancelled outcomes carry a `message` on a
+  // successful part, and that is not a failure.)
+  if (part.result && typeof part.result === 'object') {
+    const error = (part.result as { error?: unknown }).error
+    if (typeof error === 'string') return error
+  }
   if (!part.isError) return undefined
   if (typeof part.result === 'string') return plainToolError(part.result)
   if (part.result && typeof part.result === 'object') {
     const message = (part.result as { message?: unknown }).message
     if (typeof message === 'string') return message
-    const error = (part.result as { error?: unknown }).error
-    if (typeof error === 'string') return error
     try {
       return plainToolError(JSON.stringify(part.result))
     } catch {
@@ -368,7 +397,7 @@ function renderListDirCard(part: AuiToolPart, title: string): React.JSX.Element 
   return (
     <ListDirCard
       title={title}
-      status={statusFor(part.status)}
+      status={statusForPart(part)}
       toolCallId={part.toolCallId}
       entries={entries}
     />
@@ -381,7 +410,7 @@ function renderReadFileCard(part: AuiToolPart, title: string): React.JSX.Element
   return (
     <ReadFileCard
       title={title}
-      status={statusFor(part.status)}
+      status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
     />
@@ -394,7 +423,7 @@ function renderReadDocumentCard(part: AuiToolPart, title: string): React.JSX.Ele
   return (
     <ReadDocumentCard
       title={title}
-      status={statusFor(part.status)}
+      status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
     />
@@ -407,7 +436,7 @@ function renderSummarizeDocumentCard(part: AuiToolPart, title: string): React.JS
   return (
     <SummarizeDocumentCard
       title={title}
-      status={statusFor(part.status)}
+      status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
     />
@@ -420,7 +449,7 @@ function renderWebFetchCard(part: AuiToolPart, title: string): React.JSX.Element
   return (
     <WebFetchCard
       title={title}
-      status={statusFor(part.status)}
+      status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
     />
@@ -433,7 +462,7 @@ function renderWebSearchCard(part: AuiToolPart, title: string): React.JSX.Elemen
   return (
     <WebSearchCard
       title={title}
-      status={statusFor(part.status)}
+      status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
     />
@@ -446,7 +475,7 @@ function renderSemanticSearchCard(part: AuiToolPart, title: string): React.JSX.E
   return (
     <SemanticSearchCard
       title={title}
-      status={statusFor(part.status)}
+      status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
     />
@@ -459,7 +488,7 @@ function renderSearchFilesCard(part: AuiToolPart, title: string): React.JSX.Elem
   return (
     <SearchFilesCard
       title={title}
-      status={statusFor(part.status)}
+      status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
     />
@@ -477,12 +506,7 @@ function renderAskUserCard(part: AuiToolPart, title: string): React.JSX.Element 
   const question = typeof result.question === 'string' ? result.question : ''
   if (!question) return null
   return (
-    <AskUserCard
-      title={title}
-      status={statusFor(part.status)}
-      question={question}
-      output={result}
-    />
+    <AskUserCard title={title} status={statusForPart(part)} question={question} output={result} />
   )
 }
 
@@ -492,7 +516,7 @@ function renderWriteFileCard(part: AuiToolPart, title: string): React.JSX.Elemen
   return (
     <WriteFileCard
       title={title}
-      status={statusFor(part.status)}
+      status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
     />
@@ -505,7 +529,7 @@ function renderCreateDirCard(part: AuiToolPart, title: string): React.JSX.Elemen
   return (
     <CreateDirCard
       title={title}
-      status={statusFor(part.status)}
+      status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
     />
@@ -518,7 +542,7 @@ function renderEditFileCard(part: AuiToolPart, title: string): React.JSX.Element
   return (
     <EditFileCard
       title={title}
-      status={statusFor(part.status)}
+      status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
     />
@@ -531,7 +555,7 @@ function renderEditDocumentCard(part: AuiToolPart, title: string): React.JSX.Ele
   return (
     <EditDocumentCard
       title={title}
-      status={statusFor(part.status)}
+      status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
     />
@@ -544,7 +568,7 @@ function renderMovePathCard(part: AuiToolPart, title: string): React.JSX.Element
   return (
     <MovePathCard
       title={title}
-      status={statusFor(part.status)}
+      status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
     />
@@ -557,7 +581,7 @@ function renderCopyPathCard(part: AuiToolPart, title: string): React.JSX.Element
   return (
     <CopyPathCard
       title={title}
-      status={statusFor(part.status)}
+      status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
     />
@@ -570,7 +594,7 @@ function renderDeletePathCard(part: AuiToolPart, title: string): React.JSX.Eleme
   return (
     <DeletePathCard
       title={title}
-      status={statusFor(part.status)}
+      status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
     />
@@ -578,75 +602,80 @@ function renderDeletePathCard(part: AuiToolPart, title: string): React.JSX.Eleme
 }
 
 // Single renderer per tool: the assistant-ui runtime hands us the ToolCall
-// props; we project to a per-tool card (or the generic fallback).
+// props; we project to a per-tool card (or the generic fallback). A failed
+// part (DEMO-007) never reaches the per-tool renderers — their meta lines
+// describe success ("Moved X to Y"), so a failure must fall through to the
+// generic card, whose error line shows the tool's own sentence under the ⚠
+// glyph (statusForPart forces incomplete below).
 function renderToolCard(part: AuiToolPart, title: string, stepFailed: string): React.JSX.Element {
-  if (part.toolName === 'list_dir') {
+  const failed = isFailurePart(part)
+  if (!failed && part.toolName === 'list_dir') {
     const card = renderListDirCard(part, title)
     if (card) return card
   }
-  if (part.toolName === 'read_file') {
+  if (!failed && part.toolName === 'read_file') {
     const card = renderReadFileCard(part, title)
     if (card) return card
   }
-  if (part.toolName === 'read_document') {
+  if (!failed && part.toolName === 'read_document') {
     const card = renderReadDocumentCard(part, title)
     if (card) return card
   }
-  if (part.toolName === 'summarize_document') {
+  if (!failed && part.toolName === 'summarize_document') {
     const card = renderSummarizeDocumentCard(part, title)
     if (card) return card
   }
-  if (part.toolName === 'web_fetch') {
+  if (!failed && part.toolName === 'web_fetch') {
     const card = renderWebFetchCard(part, title)
     if (card) return card
   }
-  if (part.toolName === 'web_search') {
+  if (!failed && part.toolName === 'web_search') {
     const card = renderWebSearchCard(part, title)
     if (card) return card
   }
-  if (part.toolName === 'semantic_search') {
+  if (!failed && part.toolName === 'semantic_search') {
     const card = renderSemanticSearchCard(part, title)
     if (card) return card
   }
-  if (part.toolName === 'search_files') {
+  if (!failed && part.toolName === 'search_files') {
     const card = renderSearchFilesCard(part, title)
     if (card) return card
   }
-  if (part.toolName === 'ask_user') {
+  if (!failed && part.toolName === 'ask_user') {
     const card = renderAskUserCard(part, title)
     if (card) return card
   }
-  if (part.toolName === 'write_file') {
+  if (!failed && part.toolName === 'write_file') {
     const card = renderWriteFileCard(part, title)
     if (card) return card
   }
   // create_document returns the write_file result shape ({size,
   // beforeExcerpt: null, afterExcerpt}) — the same card, new title.
-  if (part.toolName === 'create_document') {
+  if (!failed && part.toolName === 'create_document') {
     const card = renderWriteFileCard(part, title)
     if (card) return card
   }
-  if (part.toolName === 'create_dir') {
+  if (!failed && part.toolName === 'create_dir') {
     const card = renderCreateDirCard(part, title)
     if (card) return card
   }
-  if (part.toolName === 'edit_file') {
+  if (!failed && part.toolName === 'edit_file') {
     const card = renderEditFileCard(part, title)
     if (card) return card
   }
-  if (part.toolName === 'edit_document') {
+  if (!failed && part.toolName === 'edit_document') {
     const card = renderEditDocumentCard(part, title)
     if (card) return card
   }
-  if (part.toolName === 'move_path') {
+  if (!failed && part.toolName === 'move_path') {
     const card = renderMovePathCard(part, title)
     if (card) return card
   }
-  if (part.toolName === 'copy_path') {
+  if (!failed && part.toolName === 'copy_path') {
     const card = renderCopyPathCard(part, title)
     if (card) return card
   }
-  if (part.toolName === 'delete_path') {
+  if (!failed && part.toolName === 'delete_path') {
     const card = renderDeletePathCard(part, title)
     if (card) return card
   }
@@ -654,8 +683,10 @@ function renderToolCard(part: AuiToolPart, title: string, stepFailed: string): R
   // running: a tool parked on the ApprovalDialog has no result yet, so every
   // per-tool renderer above returned null and we land here with a live step.
   // The failure line attaches only to a genuinely failed step; real backend
-  // errors still win through errorTextFor in every state.
-  const status = statusFor(part.status)
+  // errors still win through errorTextFor in every state. statusForPart maps
+  // any failure (isError or an { error } data result) to incomplete, so no
+  // card ever shows ✓ together with an error body (DEMO-007).
+  const status = statusForPart(part)
   return (
     <GenericToolCard
       title={title}

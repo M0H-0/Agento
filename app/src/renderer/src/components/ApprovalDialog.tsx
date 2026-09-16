@@ -18,7 +18,34 @@ export function ApprovalDialog({
   error
 }: ApprovalDialogProps): React.JSX.Element {
   const { t } = useLocale()
-  const destructive = request.riskLevel >= 3
+  // DEMO-001: the verb names the damage, not the risk tier. Risk 3 arrives
+  // two ways — delete_path (always 3) and bulk move/copy escalations (> 25
+  // paths, docs/06 §2) — but only a delete deletes. The tool rides the
+  // approval/requested event so a 35-file move reads "Approve & move…" while
+  // any delete keeps the red "Delete permanently" verb.
+  const batchCount = request.count !== undefined && request.count > 1 ? request.count : null
+  const tool = 'tool' in request && typeof request.tool === 'string' ? request.tool : ''
+  // Damage-accurate verb (never the risk tier alone): only a delete deletes.
+  // Any other risk-3 batch (bulk move/copy/edit escalation, docs/06 §2) keeps
+  // the Approve verb — the risk-3 accent styling below is untouched.
+  const verbKey =
+    tool === 'delete_path'
+      ? 'approval.delete'
+      : tool === 'move_path' && batchCount !== null
+        ? 'approval.approveMove'
+        : tool === 'copy_path' && batchCount !== null
+          ? 'approval.approveCopy'
+          : tool !== ''
+            ? 'approval.approve'
+            : // Legacy payload without `tool`: sniff the English describe()
+              // title ("Delete …") so a stale event still reads correctly.
+              request.riskLevel >= 3 && /^delete\b/i.test(request.title)
+              ? 'approval.delete'
+              : 'approval.approve'
+  const approveLabel =
+    verbKey === 'approval.approveMove' || verbKey === 'approval.approveCopy'
+      ? t(verbKey, { n: batchCount as number })
+      : t(verbKey)
   const countLine =
     request.count !== undefined && request.count > 1
       ? t('approval.batchLine', { n: request.count })
@@ -50,7 +77,7 @@ export function ApprovalDialog({
             disabled={pending}
             autoFocus
           >
-            {t(destructive ? 'approval.delete' : 'approval.approve')}
+            {approveLabel}
           </button>
           <button
             type="button"

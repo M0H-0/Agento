@@ -56,7 +56,7 @@ All `agent:event` payloads share `{ sessionId, runId, ts, seq }` and are Zod-val
 |---|---|---|
 | `plan/created` | `{ steps: [{ id, description, tool, riskLevel, requiresApproval }] }` | PlanPanel |
 | `plan/step_updated` | `{ stepId, status, verification?, error? }` | PlanPanel |
-| `approval/requested` | `{ approvalId, title, body, riskLevel, count?, allowOptions }` | ApprovalDialog |
+| `approval/requested` | `{ approvalId, title, body, tool, riskLevel, count?, allowOptions }` — `tool` names the gated tool so the dialog verb states the damage (delete vs bulk move/copy), never the risk tier alone | ApprovalDialog |
 | `approval/resolved` | `{ approvalId, decision }` | close dialog, log |
 | `checkpoint/created` | `{ checkpointId, files: [paths] }` | ChangesPanel |
 | `verification/finished` | `{ stepId, score, isComplete, missedSegments }` (`stepId` is the plan step; `'run'` = whole-run verdict in the M3 slice) | badges, logger |

@@ -271,6 +271,8 @@ const en = {
   'approval.assurance': 'You can undo this afterwards from Changes.',
   'approval.delete': 'Delete permanently',
   'approval.approve': 'Approve',
+  'approval.approveMove': 'Approve & move {n} items',
+  'approval.approveCopy': 'Approve & copy {n} items',
   'approval.skip': 'Skip this step',
   'approval.cancel': 'Cancel the rest',
 
@@ -737,6 +739,8 @@ const ar: Record<StringKey, string> = {
   'approval.assurance': 'يمكنك التراجع عن ذلك لاحقًا من التغييرات.',
   'approval.delete': 'حذف نهائي',
   'approval.approve': 'موافقة',
+  'approval.approveMove': 'موافقة ونقل {n} عناصر',
+  'approval.approveCopy': 'موافقة ونسخ {n} عناصر',
   'approval.skip': 'تخطّي هذه الخطوة',
   'approval.cancel': 'إلغاء الباقي',
 

@@ -85,6 +85,24 @@ describe('move_path — rename through the wrapper', () => {
     expect(outcome.message).toMatch(/couldn't find/i)
   })
 
+  it('names the current location when the source was already moved', async () => {
+    // Stale plan state: the file now lives under PDFs/ — the refusal must say
+    // so (lookup only; nothing is auto-moved).
+    harness.ctx.fs.mkdir(harness.ctx.workspaceRoot + '\\PDFs')
+    ws.write('PDFs/gone.txt', 'already moved')
+    const outcome = await harness.registry.run({
+      tool: 'move_path',
+      args: { from: 'gone.txt', to: 'elsewhere.txt' },
+      ctx: harness.ctx
+    })
+    expect(outcome.ok).toBe(false)
+    expect(outcome.message).toMatch(/couldn't find/i)
+    expect(outcome.message).toContain('already at')
+    expect(outcome.message).toContain('PDFs/gone.txt')
+    // Still a refusal: the file stays where it is.
+    expect(ws.read('PDFs/gone.txt')).toBe('already moved')
+  })
+
   it('moves a folder (rename works for directories)', async () => {
     harness.ctx.fs.mkdir(harness.ctx.workspaceRoot + '\\srcdir')
     const outcome = await harness.registry.run({

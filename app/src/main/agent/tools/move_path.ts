@@ -2,6 +2,7 @@ import { basename } from 'node:path'
 import { z } from 'zod'
 import type { ToolDefinition } from '../types'
 import { WorkspaceFsRefusalError } from '../workspace-fs'
+import { currentLocationHint } from './missing-source'
 
 // P0 mutating tool (M2.7, docs/03 §5 inventory): move/rename a file or folder.
 // Always risk 2 — the source location disappears, so the run blocks on the
@@ -35,10 +36,14 @@ export const movePathTool: ToolDefinition<
       return { ok: true, output: { from: input.from, to: input.to, overwritten: false } }
     }
     if (!ctx.fs.existsSync(input.from)) {
+      // Stale plan state (an earlier step already moved/renamed it): name the
+      // file's current location when a same-name file still exists, so the
+      // model can self-correct next step. Lookup only, never auto-executed.
+      const hint = currentLocationHint(ctx, input.from, 'move')
       return {
         ok: false,
         output: { from: input.from, to: input.to, overwritten: false },
-        error: "I couldn't find that file — it may have been moved or renamed."
+        error: `I couldn't find that file — it may have been moved or renamed.${hint ? ` ${hint}` : ''}`
       }
     }
     const overwritten = ctx.fs.existsSync(input.to)
@@ -46,10 +51,15 @@ export const movePathTool: ToolDefinition<
       ctx.fs.movePath(input.from, input.to)
     } catch (error) {
       if (error instanceof WorkspaceFsRefusalError) {
+        // Race backstop: the source vanished between the probe above and the
+        // facade call — same hint applies when it reads as a missing source.
+        const hint = /couldn't find/i.test(error.message)
+          ? currentLocationHint(ctx, input.from, 'move')
+          : null
         return {
           ok: false,
           output: { from: input.from, to: input.to, overwritten: false },
-          error: error.message
+          error: hint ? `${error.message} ${hint}` : error.message
         }
       }
       throw error

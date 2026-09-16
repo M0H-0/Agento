@@ -55,6 +55,7 @@ const approvalRequestedEventSchema = z.object({
   approvalId: z.string().min(1),
   title: z.string().min(1),
   body: z.string(),
+  tool: z.string().min(1),
   riskLevel: z.number().int().min(2).max(3),
   count: z.number().int().min(2).optional(),
   allowOptions: z.array(z.enum(['approve', 'skip', 'cancel'])).optional()

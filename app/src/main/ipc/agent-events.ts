@@ -70,6 +70,9 @@ const approvalRequestedEventSchema = z.object({
   approvalId: z.string().min(1),
   title: z.string().min(1),
   body: z.string(),
+  // Damage-accurate verb (DEMO-001): the dialog names the operation (delete
+  // vs bulk move/copy), never just the risk tier — so the tool rides along.
+  tool: z.string().min(1),
   riskLevel: z.number().int().min(2).max(3),
   count: z.number().int().min(2).optional(),
   allowOptions: z.array(z.enum(['approve', 'skip', 'cancel'])).optional()
@@ -195,6 +198,7 @@ export function emitApprovalRequested(input: {
   approvalId: string
   title: string
   body: string
+  tool: string
   riskLevel: 2 | 3
   count?: number
 }): void {
@@ -207,6 +211,7 @@ export function emitApprovalRequested(input: {
     approvalId: input.approvalId,
     title: input.title,
     body: input.body,
+    tool: input.tool,
     riskLevel: input.riskLevel,
     ...(input.count !== undefined ? { count: input.count } : {}),
     allowOptions: ['approve', 'skip', 'cancel']

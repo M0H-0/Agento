@@ -66,7 +66,7 @@ Blocking modal; only an explicit decision closes it (no overlay-click, no Escape
 
 - Plain-language headline ("I'm about to move 42 files" / "Delete temp_drafts?").
 - Concrete detail: affected paths (first few + count), snapshot assurance ("you can undo this afterwards").
-- Buttons: **Approve** · **Skip this step** · **Cancel the rest**. Risk 3 uses a red verb ("Delete permanently").
+- Buttons: **Approve** · **Skip this step** · **Cancel the rest**. The primary verb names the damage, not the risk tier: `delete_path` uses the red "Delete permanently"; a bulk move/copy batch (risk 3 by escalation) uses "Approve & move/copy N items"; anything else uses "Approve". The risk-3 red accent stays for all of them — only the verb changes.
 - Batch coalescing (doc 03 §5): one dialog per `(step, tool, shape)` group; count shown; one decision covers the group.
 
 ### 3.3 PlanPanel

@@ -55,6 +55,16 @@ describe('locale dictionary', () => {
     )
   })
 
+  it('DEMO-001: bulk move/copy approval verbs name the operation in both locales', () => {
+    expect(translate('en', 'approval.delete')).toBe('Delete permanently')
+    expect(translate('en', 'approval.approveMove', { n: 35 })).toContain('move')
+    expect(translate('en', 'approval.approveMove', { n: 35 })).toContain('35')
+    expect(translate('en', 'approval.approveCopy', { n: 35 })).toContain('copy')
+    expect(translate('ar', 'approval.delete')).toBe('حذف نهائي')
+    expect(translate('ar', 'approval.approveMove', { n: 35 })).toContain('نقل')
+    expect(translate('ar', 'approval.approveCopy', { n: 35 })).toContain('نسخ')
+  })
+
   it('formats relative time in both locales', () => {
     const now = new Date().toISOString()
     expect(relativeTime('en', now)).toBe('just now')

@@ -106,6 +106,7 @@ export interface AgentApprovalRequestedEvent {
   approvalId: string
   title: string
   body: string
+  tool: string
   riskLevel: number
   count?: number
 }

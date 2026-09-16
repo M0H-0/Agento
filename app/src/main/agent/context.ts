@@ -305,6 +305,7 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
           count !== undefined && count > 1
             ? `${request.reason} (batch of ${count})`
             : request.reason,
+        tool: request.tool,
         riskLevel: request.riskLevel,
         ...(count !== undefined && count > 1 ? { count } : {}),
         allowOptions: ['approve', 'skip', 'cancel'] as const

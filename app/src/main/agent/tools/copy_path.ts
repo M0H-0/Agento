@@ -2,6 +2,7 @@ import { basename } from 'node:path'
 import { z } from 'zod'
 import type { ToolDefinition } from '../types'
 import { WorkspaceFsRefusalError } from '../workspace-fs'
+import { currentLocationHint } from './missing-source'
 
 // P0 mutating tool (M2.7, docs/03 §5 inventory): byte-exact copy of one file.
 // Mirrors write_file's risk shape — risk 1 onto a new path, risk 2 when the
@@ -37,10 +38,13 @@ export const copyPathTool: ToolDefinition<
     // own probe (write_file doctrine). Copying onto itself runs through
     // normally (a byte-exact no-op overwrite, still snapshotted).
     if (!ctx.fs.existsSync(input.from)) {
+      // Same stale-state doctrine as move_path: name the current location so
+      // the model can self-correct. Lookup only, never auto-executed.
+      const hint = currentLocationHint(ctx, input.from, 'copy')
       return {
         ok: false,
         output: { from: input.from, to: input.to, size: 0, overwritten: false },
-        error: "I couldn't find that file — it may have been moved or renamed."
+        error: `I couldn't find that file — it may have been moved or renamed.${hint ? ` ${hint}` : ''}`
       }
     }
     if (ctx.fs.isDirectory(input.from)) {
@@ -56,10 +60,15 @@ export const copyPathTool: ToolDefinition<
       size = ctx.fs.copyPath(input.from, input.to)
     } catch (error) {
       if (error instanceof WorkspaceFsRefusalError) {
+        // Race backstop (same doctrine as move_path): enrich a missing-source
+        // refusal with the current location when one is found.
+        const hint = /couldn't find/i.test(error.message)
+          ? currentLocationHint(ctx, input.from, 'copy')
+          : null
         return {
           ok: false,
           output: { from: input.from, to: input.to, size: 0, overwritten: false },
-          error: error.message
+          error: hint ? `${error.message} ${hint}` : error.message
         }
       }
       throw error

@@ -73,6 +73,21 @@ describe('copy_path — file copy through the wrapper', () => {
     expect(outcome.message).toMatch(/couldn't find/i)
   })
 
+  it('names the current location when the source was already moved', async () => {
+    harness.ctx.fs.mkdir(harness.ctx.workspaceRoot + '\\PDFs')
+    ws.write('PDFs/gone.txt', 'already moved')
+    const outcome = await harness.registry.run({
+      tool: 'copy_path',
+      args: { from: 'gone.txt', to: 'backup.md' },
+      ctx: harness.ctx
+    })
+    expect(outcome.ok).toBe(false)
+    expect(outcome.message).toMatch(/couldn't find/i)
+    expect(outcome.message).toContain('already at')
+    expect(outcome.message).toContain('PDFs/gone.txt')
+    expect(outcome.message).toContain('copy it from there')
+  })
+
   it('refuses a folder source with plain language', async () => {
     harness.ctx.fs.mkdir(harness.ctx.workspaceRoot + '\\srcdir')
     const outcome = await harness.registry.run({
