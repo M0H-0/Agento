@@ -6,9 +6,24 @@ import type { ToolDefinition } from '../types'
 // declarations are *relative intent* against the workspace — the registry
 // pre-resolves the path through the sandbox (docs/06 §4) before this body
 // runs, so the body never sees raw model paths.
+//
+// Self-cap (2026-09-16): a messy folder (Downloads with hundreds of files)
+// used to return every entry, blowing past the wrapper's 8 KB budget — the
+// wrapper then replaced the whole payload with an `outputTruncated` envelope
+// and the model lost the listing entirely (plus a huge context bill that
+// slowed planning). Cap at MAX_LIST_DIR_ENTRIES with an honest
+// domain-level `truncated` + `total` (the registry preserves domain
+// `truncated` flags — they are partial results, not the envelope).
+export const MAX_LIST_DIR_ENTRIES = 200
+
 export const listDirTool: ToolDefinition<
   { path: string },
-  { path: string; entries: { name: string; type: 'file' | 'directory' }[] }
+  {
+    path: string
+    entries: { name: string; type: 'file' | 'directory' }[]
+    truncated: boolean
+    total: number
+  }
 > = {
   name: 'list_dir',
   description:
@@ -39,7 +54,7 @@ export const listDirTool: ToolDefinition<
       const notFolder = !missing && !ctx.fs.isDirectory(input.path)
       return {
         ok: false,
-        output: { path: input.path, entries: [] },
+        output: { path: input.path, entries: [], truncated: false, total: 0 },
         error: missing
           ? `I couldn't find the folder "${name}" — it may not exist yet.`
           : notFolder
@@ -50,11 +65,18 @@ export const listDirTool: ToolDefinition<
     // M3.3 projection feed (docs/03 §5): the file count is what a following
     // same-shape batch (e.g. one move per listed file) projects from when the
     // plan description states no number. Directories excluded — only files
-    // get moved/copied/deleted one by one.
+    // get moved/copied/deleted one by one. The projection uses the TRUE total,
+    // not the capped page the model sees.
     ctx.noteEnumeration?.(entries.filter((e) => e.type === 'file').length, input.path)
-    // The list_dir output is what the model sees; cap defensively even though
-    // the wrapper truncates oversized outputs. A real workspace with >8 KB of
-    // entry names is itself the problem.
-    return { ok: true, output: { path: input.path, entries } }
+    // Self-cap: the model sees the first page only; the card/panel say how
+    // many more exist. Sorted for a stable page across calls.
+    const total = entries.length
+    if (total > MAX_LIST_DIR_ENTRIES) {
+      const page = [...entries]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .slice(0, MAX_LIST_DIR_ENTRIES)
+      return { ok: true, output: { path: input.path, entries: page, truncated: true, total } }
+    }
+    return { ok: true, output: { path: input.path, entries, truncated: false, total } }
   }
 }

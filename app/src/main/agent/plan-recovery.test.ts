@@ -7,6 +7,10 @@ import { createToolRegistry } from './registry'
 import { buildRunContext, newRunId } from './context'
 import {
   buildFallbackDocumentPlan,
+  buildFallbackOrganizePlan,
+  canonicalPlanToolName,
+  canonicalizePlanTools,
+  historyListings,
   isLikelyMutatingRequest,
   normalizePlanSteps,
   parsePlanJson,
@@ -227,6 +231,30 @@ describe('isLikelyMutatingRequest — copy choice only, never a safety gate', ()
       expect(isLikelyMutatingRequest(text)).toBe(false)
     }
   )
+
+  // 2026-09-16: bare "organize my downloads" names no marker word the old
+  // list knew — it fell through to Q&A passthrough and answered in prose
+  // with zero action. Downloads is a file-work marker.
+  it.each(['organize my downloads', 'sort my downloads folder'])('accepts %j', (text) => {
+    expect(isLikelyMutatingRequest(text)).toBe(true)
+  })
+
+  // 2026-09-16: the live Arabic organize request ("رتّب الملفات...") fell
+  // through to the Q&A path because the heuristic was English-only.
+  it.each([
+    'مجلد التنزيلات عندي فوضوي. رتّب الملفات إلى مجلدات حسب النوع، وأعطني ملخصًا قصيرًا لمستندات التسعير.',
+    'نظم المجلد حسب نوع الملفات',
+    'انقل ملفات pdf إلى مجلد التقارير'
+  ])('accepts Arabic mutating %j', (text) => {
+    expect(isLikelyMutatingRequest(text)).toBe(true)
+  })
+
+  it.each(['ما هي الملفات الموجودة في المجلد؟', 'مرحبا', 'أخبرني عن مستندات التسعير'])(
+    'rejects Arabic Q&A %j',
+    (text) => {
+      expect(isLikelyMutatingRequest(text)).toBe(false)
+    }
+  )
 })
 
 describe('parsePlanJson — balanced-object scan validated by planStepsSchema', () => {
@@ -329,7 +357,11 @@ describe('runPlanModeTurn — held discovery (2026-09-13 story-then-error fix)',
     expect(flushedText).toContain("Here's my plan")
   })
 
-  it('commits held discovery summary when the plan lands', async () => {
+  it('drops discovery narration when the plan lands; the thread gets one summary', async () => {
+    // 2026-09-16 (user report): the model narrated a full essay before
+    // emitting, so the plan arrived under a wall of prose. On plan success
+    // narration is dropped — the panel carries the plan, the thread gets
+    // tool cards + exactly one synthesized summary.
     const model = scriptedModel([textTurn('I will plan the txt file.'), planTurn()])
     const { plans, planEmitted, terminalError, flushedText } = await runTurnWithRegistry(
       model,
@@ -340,7 +372,8 @@ describe('runPlanModeTurn — held discovery (2026-09-13 story-then-error fix)',
     expect(plans).toHaveLength(1)
     expect(planEmitted).toBe(true)
     expect(terminalError).toBeNull()
-    expect(flushedText).toContain('I will plan the txt file.')
+    expect(flushedText).not.toContain('I will plan the txt file.')
+    expect(flushedText).toContain("Here's my plan")
   })
 
   it('delivers the held discovery answer for Q&A with no error', async () => {
@@ -449,6 +482,92 @@ describe('runPlanModeTurn — discovery failure is best-effort, never the verdic
   })
 })
 
+describe('canonicalPlanToolName — hallucinated plan tools map onto the registry', () => {
+  // 2026-09-16 live: an organize plan named make_dir / move_file /
+  // final_message — none executable, none traceable to a step.
+  it.each([
+    ['make_dir', 'create_dir'],
+    ['move_file', 'move_path'],
+    ['copy_file', 'copy_path'],
+    ['delete_file', 'delete_path'],
+    ['create_file', 'write_file'],
+    ['list_files', 'list_dir'],
+    ['Move File', 'move_path']
+  ])('aliases %j to %j', (input, expected) => {
+    expect(canonicalPlanToolName(input)).toBe(expected)
+  })
+
+  it.each(['move_path', 'write_file', 'final_message', 'ask_user', 'emit_plan'])(
+    'leaves %j untouched',
+    (tool) => {
+      expect(canonicalPlanToolName(tool)).toBe(tool)
+    }
+  )
+
+  it('canonicalizePlanTools rewrites only the aliased steps', () => {
+    const steps = canonicalizePlanTools([
+      {
+        id: '1',
+        description: 'Make folders',
+        tool: 'make_dir',
+        riskLevel: 1,
+        requiresApproval: false
+      },
+      {
+        id: '2',
+        description: 'Move files',
+        tool: 'move_path',
+        riskLevel: 2,
+        requiresApproval: true
+      }
+    ])
+    expect(steps.map((s) => s.tool)).toEqual(['create_dir', 'move_path'])
+    expect(steps[0].description).toBe('Make folders')
+  })
+
+  it('a forced plan naming move_file reaches the panel as move_path', async () => {
+    const aliased = {
+      steps: [
+        {
+          id: 's1',
+          description: 'Move the PDFs into Finance',
+          tool: 'move_file',
+          riskLevel: 2,
+          requiresApproval: true
+        }
+      ]
+    }
+    const model = scriptedModel([
+      {
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'tool-input-start', id: 'plan-1', toolName: 'emit_plan' },
+            { type: 'tool-input-delta', id: 'plan-1', delta: JSON.stringify(aliased) },
+            { type: 'tool-input-end', id: 'plan-1' },
+            {
+              type: 'tool-call',
+              toolCallId: 'plan-1',
+              toolName: 'emit_plan',
+              input: JSON.stringify(aliased)
+            },
+            {
+              type: 'finish',
+              finishReason: 'tool-calls',
+              usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 }
+            }
+          ] as LanguageModelV2StreamPart[]
+        })
+      }
+    ])
+    const { plans, planEmitted, terminalError } = await runTurn(model, 'sort the files')
+    expect(planEmitted).toBe(true)
+    expect(terminalError).toBeNull()
+    expect(plans).toHaveLength(1)
+    expect(plans[0]?.[0]?.tool).toBe('move_path')
+  })
+})
+
 describe('buildFallbackDocumentPlan — obvious doc requests always plan', () => {
   it('builds write + convert steps for a txt+docx+pdf fish story', () => {
     const steps = buildFallbackDocumentPlan(
@@ -479,5 +598,316 @@ describe('buildFallbackDocumentPlan — obvious doc requests always plan', () =>
     expect(
       buildFallbackDocumentPlan('create a folder called Finance and move the PDFs there')
     ).toBeNull()
+  })
+
+  // 2026-09-16: Arabic gates mirror the English creation-only rule.
+  it('returns null for an Arabic organize request mentioning PDFs', () => {
+    expect(buildFallbackDocumentPlan('رتّب ملفات pdf في مجلدات حسب النوع')).toBeNull()
+  })
+
+  it('builds a write step for an Arabic txt creation request', () => {
+    const steps = buildFallbackDocumentPlan('أنشئ ملف txt فيه قصة قصيرة')
+    expect(steps).not.toBeNull()
+    expect(steps![0].tool).toBe('write_file')
+  })
+})
+
+describe('buildFallbackOrganizePlan — grounded organize plans when the model only talks', () => {
+  // 2026-09-16 live: the Arabic organize request returned prose-without-a-
+  // plan on every attempt (forced, auto, extraction). The deterministic
+  // fallback grounds buckets + counts in the discovery listing instead.
+  const LISTING = [
+    {
+      entries: [
+        { name: 'report.pdf', type: 'file' as const },
+        { name: 'invoice.pdf', type: 'file' as const },
+        { name: 'notes.txt', type: 'file' as const },
+        { name: 'photo.jpg', type: 'file' as const },
+        { name: 'pricing.docx', type: 'file' as const },
+        { name: 'data.csv', type: 'file' as const },
+        { name: 'mystery.xyz', type: 'file' as const },
+        { name: 'subfolder', type: 'directory' as const }
+      ]
+    }
+  ]
+
+  it('builds create + per-bucket moves with counts for the live Arabic request', () => {
+    const steps = buildFallbackOrganizePlan(
+      'مجلد التنزيلات عندي فوضوي. رتّب الملفات إلى مجلدات حسب النوع، وأعطني ملخصًا قصيرًا لمستندات التسعير.',
+      LISTING
+    )
+    expect(steps).not.toBeNull()
+    const tools = steps!.map((s) => s.tool)
+    // create_dir, one move_path per populated bucket, then the summary tail.
+    expect(tools[0]).toBe('create_dir')
+    expect(tools).toContain('move_path')
+    expect(tools.slice(-2)).toEqual(['read_file', 'write_file'])
+    expect(steps![0].description).toContain('PDFs')
+    const pdfMove = steps!.find((s) => s.description.includes('PDFs') && s.tool === 'move_path')
+    expect(pdfMove?.description).toContain('2')
+    expect(pdfMove?.requiresApproval).toBe(true)
+    // Unknown extensions land in Others; directories are never moved.
+    expect(steps!.some((s) => s.description.includes('Others'))).toBe(true)
+    expect(steps!.some((s) => s.description.includes('subfolder'))).toBe(false)
+  })
+
+  it('skips the summary tail when none is asked', () => {
+    const steps = buildFallbackOrganizePlan('organize my files by type', LISTING)
+    expect(steps).not.toBeNull()
+    expect(steps!.map((s) => s.tool)).not.toContain('read_file')
+    expect(steps!.map((s) => s.tool)).not.toContain('write_file')
+  })
+
+  it.each(['hello', 'make a txt file with a story', 'summarize this report for me'])(
+    'returns null for non-organize %j',
+    (text) => {
+      expect(buildFallbackOrganizePlan(text, LISTING)).toBeNull()
+    }
+  )
+
+  it('returns null without a usable listing', () => {
+    expect(buildFallbackOrganizePlan('organize my files by type', [])).toBeNull()
+    expect(
+      buildFallbackOrganizePlan('organize my files by type', [
+        { entries: [{ name: 'empty-dir', type: 'directory' as const }] }
+      ])
+    ).toBeNull()
+  })
+
+  it('an organize run that never plans still emits the grounded fallback', async () => {
+    // Discovery lists (canned list_dir stub) but every plan path comes back
+    // as prose: forced + auto attempts text-only, extraction text without
+    // JSON. The run must end with a plan, not PLAN_FAILED_COPY.
+    const run = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-organize-fallback',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    const registry = createToolRegistry()
+    registry.define(emitPlanTool)
+    const listStub: ToolDefinition<{ path?: string }, unknown> = {
+      name: 'list_dir',
+      description: 'Stub listing',
+      access: 'read',
+      inputSchema: z.object({ path: z.string().optional() }),
+      pathFields: [],
+      risk: () => ({ level: 0, reason: 'stub' }),
+      describe: () => ({ title: 'Stub listing', group: 'test' }),
+      execute: async () => ({
+        ok: true,
+        output: {
+          path: '.',
+          entries: [
+            { name: 'a.pdf', type: 'file' },
+            { name: 'b.pdf', type: 'file' },
+            { name: 'c.txt', type: 'file' }
+          ],
+          truncated: false,
+          total: 3
+        }
+      })
+    }
+    registry.define(listStub)
+    const listTurnChunks: LanguageModelV2StreamPart[] = [
+      { type: 'stream-start', warnings: [] },
+      { type: 'tool-input-start', id: 'list-1', toolName: 'list_dir' },
+      { type: 'tool-input-delta', id: 'list-1', delta: '{}' },
+      { type: 'tool-input-end', id: 'list-1' },
+      { type: 'tool-call', toolCallId: 'list-1', toolName: 'list_dir', input: '{}' },
+      {
+        type: 'finish',
+        finishReason: 'tool-calls',
+        usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 }
+      }
+    ]
+    const emptyTurnChunks: LanguageModelV2StreamPart[] = [
+      { type: 'stream-start', warnings: [] },
+      {
+        type: 'finish',
+        finishReason: 'stop',
+        usage: { inputTokens: 5, outputTokens: 0, totalTokens: 5 }
+      }
+    ]
+    const model = scriptedModel([
+      { stream: simulateReadableStream({ chunks: listTurnChunks }) },
+      { stream: simulateReadableStream({ chunks: emptyTurnChunks }) },
+      textTurn('I will organize everything by type.'),
+      textTurn('Organizing now, one moment.'),
+      textTurn('Almost done planning.')
+    ])
+    const sentParts: UIMessageChunk[] = []
+    const plans: PlanStep[][] = []
+    const outcome = await runPlanModeTurn({
+      model,
+      system: 'test system',
+      messages: [
+        {
+          id: 'u1',
+          role: 'user' as const,
+          parts: [
+            {
+              type: 'text' as const,
+              text: 'organize my files by type and summarize the pricing docs'
+            }
+          ]
+        }
+      ],
+      registry,
+      ctx: run.ctx,
+      sendPart: (part) => sentParts.push(part),
+      onPlanCreated: (steps) => plans.push(steps),
+      signal: new AbortController().signal
+    })
+
+    expect(outcome.planEmitted).toBe(true)
+    expect(plans).toHaveLength(1)
+    expect(plans[0]?.[0]).toMatchObject({ tool: 'create_dir' })
+    expect(plans[0]?.map((s) => s.tool)).toContain('move_path')
+    const terminalError =
+      sentParts
+        .filter((p) => p.type === 'error')
+        .map((p) => (p as { errorText: string }).errorText)
+        .at(-1) ?? null
+    expect(terminalError).toBeNull()
+    const flushedText = sentParts
+      .filter((p) => p.type === 'text-delta')
+      .map((p) => (p as { delta?: string }).delta ?? '')
+      .join('')
+    expect(flushedText).toContain("Here's my plan")
+  })
+
+  it('historyListings harvests the freshest folder listing, ignoring decoys', () => {
+    const listing = (
+      names: string[]
+    ): {
+      type: 'tool-list_dir'
+      toolCallId: string
+      state: 'output-available'
+      input: { path: string }
+      output: { entries: { name: string; type: 'file' }[] }
+    } => ({
+      type: 'tool-list_dir' as const,
+      toolCallId: `call-${names.length}`,
+      state: 'output-available' as const,
+      input: { path: '.' },
+      output: { entries: names.map((name) => ({ name, type: 'file' as const })) }
+    })
+    const messages = [
+      { id: 'u0', role: 'user' as const, parts: [{ type: 'text' as const, text: 'hi' }] },
+      {
+        id: 'a-old',
+        role: 'assistant' as const,
+        parts: [listing(['old.pdf']), { type: 'text' as const, text: 'old answer' }]
+      },
+      {
+        id: 'a-err',
+        role: 'assistant' as const,
+        parts: [
+          {
+            type: 'tool-list_dir' as const,
+            toolCallId: 'call-err',
+            state: 'output-error' as const,
+            input: { path: '.' },
+            errorText: 'denied'
+          }
+        ]
+      },
+      {
+        id: 'a-other',
+        role: 'assistant' as const,
+        parts: [
+          {
+            type: 'tool-search_files' as const,
+            toolCallId: 'call-s',
+            state: 'output-available' as const,
+            input: {},
+            output: { entries: [{ name: 'nope.pdf', type: 'file' }] }
+          }
+        ]
+      },
+      { id: 'a-new', role: 'assistant' as const, parts: [listing(['a.pdf', 'b.txt'])] }
+    ]
+    const found = historyListings(messages)
+    expect(found).toHaveLength(2)
+    // Freshest first: the newest listing grounds the fallback.
+    expect(found[0]?.entries.map((e) => e.name)).toEqual(['a.pdf', 'b.txt'])
+    expect(found[1]?.entries.map((e) => e.name)).toEqual(['old.pdf'])
+  })
+
+  it('an organize run with no listing of its own falls back on the conversation history', async () => {
+    // Live shape (2026-09-16): the previous turn already listed the folder,
+    // so this run's discovery and every plan attempt come back as prose
+    // with zero tool calls — the fallback must ground in the persisted
+    // `tool-list_dir` part instead of ending in PLAN_FAILED_COPY.
+    const run = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-organize-history',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    const registry = readRegistry()
+    const model = scriptedModel([
+      textTurn('I can see the files from before.'),
+      textTurn('I will organize everything by type.'),
+      textTurn('Organizing now, one moment.'),
+      textTurn('Almost done planning.')
+    ])
+    const historyPart = {
+      type: 'tool-list_dir' as const,
+      toolCallId: 'call_hist',
+      state: 'output-available' as const,
+      input: { path: '.' },
+      output: {
+        entries: [
+          { name: 'فاتورة.pdf', type: 'file' as const },
+          { name: 'notes.txt', type: 'file' as const }
+        ]
+      }
+    }
+    const sentParts: UIMessageChunk[] = []
+    const plans: PlanStep[][] = []
+    const outcome = await runPlanModeTurn({
+      model,
+      system: 'test system',
+      messages: [
+        {
+          id: 'u0',
+          role: 'user' as const,
+          parts: [{ type: 'text' as const, text: 'what files are in this folder?' }]
+        },
+        { id: 'a0', role: 'assistant' as const, parts: [historyPart] },
+        {
+          id: 'u1',
+          role: 'user' as const,
+          parts: [{ type: 'text' as const, text: 'organize my files by type' }]
+        }
+      ],
+      registry,
+      ctx: run.ctx,
+      sendPart: (part) => sentParts.push(part),
+      onPlanCreated: (steps) => plans.push(steps),
+      signal: new AbortController().signal
+    })
+
+    expect(outcome.planEmitted).toBe(true)
+    expect(plans).toHaveLength(1)
+    expect(plans[0]?.[0]).toMatchObject({ tool: 'create_dir' })
+    expect(plans[0]?.map((s) => s.tool)).toContain('move_path')
+    // Grounded in the history listing: one PDF bucket move, one Text move.
+    const descriptions = (plans[0] ?? []).map((s) => s.description).join('\n')
+    expect(descriptions).toContain('PDFs')
+    expect(descriptions).toContain('Text')
+    const terminalError =
+      sentParts
+        .filter((p) => p.type === 'error')
+        .map((p) => (p as { errorText: string }).errorText)
+        .at(-1) ?? null
+    expect(terminalError).toBeNull()
+    const flushedText = sentParts
+      .filter((p) => p.type === 'text-delta')
+      .map((p) => (p as { delta?: string }).delta ?? '')
+      .join('')
+    expect(flushedText).toContain("Here's my plan")
   })
 })

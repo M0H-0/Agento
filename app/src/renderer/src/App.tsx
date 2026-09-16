@@ -841,6 +841,10 @@ function App(): React.JSX.Element {
     setApproval(null)
     setApprovalError(null)
     setApprovalPending(false)
+    // 2026-09-16: the run-status line belongs to the run, not the view — a
+    // stale "Plan ready — nothing was changed." used to survive session
+    // switches and new chats, announcing a plan the current view never got.
+    setRunStatus(undefined)
     lastSeqRef.current = 0
   }, [])
 

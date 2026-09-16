@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { listDirTool } from './list_dir'
+import { listDirTool, MAX_LIST_DIR_ENTRIES } from './list_dir'
 import { createHandlerHarness, createTempWorkspace } from '../testing/harness'
 import type { TempWorkspace } from '../testing/harness'
 
@@ -99,5 +99,48 @@ describe('list_dir — read-only', () => {
     expect(outcome.ok).toBe(false)
     expect(outcome.message).toContain('not a folder')
     expect(outcome.message).not.toContain(ws.root)
+  })
+
+  it('caps huge folders with an honest truncated page (2026-09-16: messy Downloads)', async () => {
+    // A 250-file folder used to return every entry, blowing the wrapper's
+    // 8 KB budget (model lost the whole listing) and taxing planning.
+    for (let i = 0; i < 250; i += 1) {
+      ws.write(`file-${String(i).padStart(3, '0')}.txt`, 'x')
+    }
+    const outcome = await harness.registry.run({
+      tool: 'list_dir',
+      args: { path: '.' },
+      ctx: harness.ctx
+    })
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok || !outcome.result) throw new Error('expected result')
+    const result = outcome.result as {
+      entries: { name: string; type: string }[]
+      truncated: boolean
+      total: number
+    }
+    expect(result.total).toBe(250)
+    expect(result.truncated).toBe(true)
+    expect(result.entries).toHaveLength(MAX_LIST_DIR_ENTRIES)
+  })
+
+  it('small folders report truncated:false with the exact total', async () => {
+    ws.write('a.md', 'a')
+    ws.write('b.txt', 'b')
+    const outcome = await harness.registry.run({
+      tool: 'list_dir',
+      args: { path: '.' },
+      ctx: harness.ctx
+    })
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok || !outcome.result) throw new Error('expected result')
+    const result = outcome.result as {
+      entries: { name: string; type: string }[]
+      truncated: boolean
+      total: number
+    }
+    expect(result.total).toBe(2)
+    expect(result.truncated).toBe(false)
+    expect(result.entries).toHaveLength(2)
   })
 })

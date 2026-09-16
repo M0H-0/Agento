@@ -672,13 +672,14 @@ export function registerChatIpc(): void {
 
     // Auto title (docs/03 §4): on the FIRST send only — messages holds the
     // full history, so length 1 means exactly the opening user message — ask
-    // the model for a real topic title in the user's language. Fire-and-forget
-    // alongside the run: the derived first-message title stays until (and
-    // unless) the rename lands. A failure (e.g. the provider refusing a
-    // concurrent request) is logged, never touches the run, and retries once
-    // at the settle point, when the run no longer competes for the provider.
-    // An unchanged answer (some reasoning models return empty text for a side
-    // call) is logged and skipped — no pointless rename event.
+    // the model for a real topic title in the user's language.
+    // Serialized AFTER the run settles (2026-09-16): firing it concurrently
+    // with the run made two simultaneous provider calls every first message,
+    // and on rate-limited providers (Groq free tier) the pair slowed each
+    // other — the plan's "Reading and preparing..." visibly stalled. The
+    // sidebar keeps the derived first-message title meanwhile; the rename
+    // lands right after the reply. One attempt + one retry, then give up
+    // quietly (logged, never touching the run).
     const runTitleGeneration = (onFailure?: () => void): void => {
       void generateSessionTitle({
         complete: llmCompleter(languageModel),
@@ -710,12 +711,7 @@ export function registerChatIpc(): void {
         })
     }
     const isFirstSend = messages.length === 1 && lastUserText !== ''
-    let retryTitleAtSettle = false
-    if (isFirstSend) {
-      runTitleGeneration(() => {
-        retryTitleAtSettle = true
-      })
-    }
+    const needsTitleAtSettle = isFirstSend
     // MVP (MVP_PLAN.md step 5): the semantic index cache lives in the app's
     // own userData — never inside the user's workspace (a risk-0 tool must
     // not write there; it would bypass the snapshot pipeline). Undefined
@@ -1084,9 +1080,9 @@ export function registerChatIpc(): void {
     }
 
     // The title's one retry lives here rather than mid-run: with the stream
-    // finished, the side call no longer competes with the run for the
-    // provider.
-    if (retryTitleAtSettle) runTitleGeneration()
+    // finished, the side call never competes with the run for the provider
+    // (2026-09-16 — the concurrent attempt is gone entirely).
+    if (needsTitleAtSettle) runTitleGeneration(() => runTitleGeneration())
 
     // Token usage rides the settle point (docs/03 §2 token guard, §8
     // usage_events): recorded only when the run's usage actually resolved

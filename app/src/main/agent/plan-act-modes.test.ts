@@ -386,6 +386,155 @@ describe('runActTurn — execution without a planning phase', () => {
 })
 
 describe('runPlanModeTurn — structurally read-only', () => {
+  it('discovery read-tool cards stream live while prose stays held (2026-09-16)', async () => {
+    // The "taking too long" fix: discovery is a full model pass before
+    // planning — its tool activity must be visible immediately (progress),
+    // while its prose summary still commits only with the plan outcome.
+    let reads = 0
+    let writes = 0
+    const run = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-planmode-live',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    const registry = createToolRegistry()
+    registry.define(emitPlanTool)
+    registry.define(
+      stubTool('stub_read', 'read', () => {
+        reads += 1
+      })
+    )
+    registry.define(
+      stubTool('stub_write', 'write', () => {
+        writes += 1
+      })
+    )
+    // Discovery tool turn + its text followup, then the forced emit_plan turn.
+    const model = scriptedModel([
+      stubTurn('stub_read'),
+      textTurn('I found some files to organize.'),
+      planTurn()
+    ])
+    const sentParts: UIMessageChunk[] = []
+    const plans: PlanStep[][] = []
+
+    const outcome = await runPlanModeTurn({
+      model,
+      system: 'test system',
+      messages: USER_MESSAGES,
+      registry,
+      ctx: run.ctx,
+      sendPart: (part) => sentParts.push(part),
+      onPlanCreated: (steps) => plans.push(steps),
+      signal: new AbortController().signal
+    })
+
+    expect(reads).toBe(1)
+    expect(writes).toBe(0)
+    expect(plans).toHaveLength(1)
+    expect(outcome.planEmitted).toBe(true)
+    // The read-tool card streamed (exactly once per direction)...
+    const toolInputs = sentParts.filter((p) => p.type === 'tool-input-available') as {
+      toolName: string
+    }[]
+    expect(toolInputs.map((p) => p.toolName)).toEqual(['stub_read'])
+    expect(sentParts.filter((p) => p.type === 'tool-output-available')).toHaveLength(1)
+    // ...and the held narration is dropped in favor of the one summary
+    // (2026-09-16: no essay above the plan — the panel carries it).
+    const flushedText = sentParts
+      .filter((p) => p.type === 'text-delta')
+      .map((p) => (p as { delta?: string }).delta ?? '')
+      .join('')
+    expect(flushedText).not.toContain('I found some files')
+    expect(flushedText).toContain("Here's my plan")
+  })
+
+  it('a plan with no prose anywhere still lands a visible summary in the thread (2026-09-16)', async () => {
+    // The live organize run: discovery spent every step on tools and the
+    // plan call had no preamble — the thread ended as bare cards with no
+    // indicator and no next action. The run now synthesizes the summary.
+    const run = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-planmode-summary',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    const registry = createToolRegistry()
+    registry.define(emitPlanTool)
+    registry.define(stubTool('stub_read', 'read', () => undefined))
+    registry.define(stubTool('stub_write', 'write', () => undefined))
+    // Discovery tool turn + a textless followup, then the forced emit_plan.
+    const model = scriptedModel([stubTurn('stub_read'), emptyTurn(), planTurn()])
+    const sentParts: UIMessageChunk[] = []
+    const plans: PlanStep[][] = []
+
+    const outcome = await runPlanModeTurn({
+      model,
+      system: 'test system',
+      messages: USER_MESSAGES,
+      registry,
+      ctx: run.ctx,
+      sendPart: (part) => sentParts.push(part),
+      onPlanCreated: (steps) => plans.push(steps),
+      signal: new AbortController().signal
+    })
+
+    expect(outcome.planEmitted).toBe(true)
+    expect(plans).toHaveLength(1)
+    const flushedText = sentParts
+      .filter((p) => p.type === 'text-delta')
+      .map((p) => (p as { delta?: string }).delta ?? '')
+      .join('')
+    expect(flushedText).toContain("Here's my plan")
+    expect(flushedText).toContain('Move the PDF invoices into a folder called Finance')
+    expect(flushedText).toContain('go ahead')
+    // Persisted, so a reopened session keeps the indicator.
+    const persistedText = (outcome.assistantMessage?.parts ?? [])
+      .filter((p) => p.type === 'text')
+      .map((p) => (p as { text: string }).text)
+      .join('')
+    expect(persistedText).toContain("Here's my plan")
+  })
+
+  it('a narrated plan drops the model words; the thread gets one summary', async () => {
+    // 2026-09-16: discovery prose + plan preamble used to land in the
+    // thread above the plan. Now narration is always dropped on success —
+    // the panel carries the plan, the thread gets exactly one summary.
+    const run = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-planmode-narrated',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    const registry = createToolRegistry()
+    registry.define(emitPlanTool)
+    registry.define(stubTool('stub_read', 'read', () => undefined))
+    registry.define(stubTool('stub_write', 'write', () => undefined))
+    const model = scriptedModel([textTurn('I will plan this.'), planTurn()])
+    const sentParts: UIMessageChunk[] = []
+    const plans: PlanStep[][] = []
+
+    const outcome = await runPlanModeTurn({
+      model,
+      system: 'test system',
+      messages: USER_MESSAGES,
+      registry,
+      ctx: run.ctx,
+      sendPart: (part) => sentParts.push(part),
+      onPlanCreated: (steps) => plans.push(steps),
+      signal: new AbortController().signal
+    })
+
+    expect(outcome.planEmitted).toBe(true)
+    const flushedText = sentParts
+      .filter((p) => p.type === 'text-delta')
+      .map((p) => (p as { delta?: string }).delta ?? '')
+      .join('')
+    expect(flushedText).not.toContain('I will plan this.')
+    expect(flushedText).toContain("Here's my plan")
+  })
+
   it('discovery sees read tools only; the write stub never runs; the plan is emitted', async () => {
     let reads = 0
     let writes = 0

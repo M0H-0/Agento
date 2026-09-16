@@ -79,13 +79,88 @@ function logProviderError(cause: APICallError): void {
 // Used ONLY to choose honest copy when planning fails (a text-only reply to
 // "make a txt file" would look like the run silently stopped). Never a safety
 // gate — mutations still require a valid plan + wrapper snapshot + approval.
+// Arabic (2026-09-16): the same heuristic applies to Arabic requests —
+// `\b` word boundaries do not match Arabic script, so Arabic verbs/markers
+// are plain-substring matched. Summary-only words (لخص/ملخص) stay out on both
+// sides: a pure summary is Q&A, not a mutation (mirrors English, where
+// "summarize" is not a verb here).
+const AR_VERBS = [
+  'رتب',
+  'نظم',
+  'تنظيم',
+  'ترتيب',
+  'انشئ',
+  'أنشئ',
+  'انشاء',
+  'إنشاء',
+  'اكتب',
+  'كتابة',
+  'احذف',
+  'حذف',
+  'امسح',
+  'مسح',
+  'انقل',
+  'نقل',
+  'انسخ',
+  'نسخ',
+  'حول',
+  'تحويل',
+  'صنف',
+  'تصنيف',
+  'فرز',
+  'ادمج',
+  'دمج',
+  'عدل',
+  'تعديل',
+  'تحديث',
+  'احفظ',
+  'حفظ',
+  'أضف',
+  'اضف',
+  'إضافة',
+  'اضافة',
+  'نظف',
+  'تنظيف',
+  'استخرج',
+  'استخراج'
+]
+const AR_MARKERS = [
+  'ملف',
+  'ملفات',
+  'مجلد',
+  'مجلدات',
+  'مستند',
+  'مستندات',
+  'وثيقة',
+  'وثائق',
+  'تقرير',
+  'تقارير',
+  'التنزيلات',
+  'تنزيلات',
+  'التحميلات',
+  'تحميلات',
+  'التسعير',
+  'تسعير',
+  'سعر',
+  'أسعار',
+  'اسعار',
+  'صورة',
+  'صور',
+  'فيديو',
+  'نصوص'
+]
 export function isLikelyMutatingRequest(text: string): boolean {
   const lower = text.toLowerCase()
   const verbs =
     /\b(create|make|write|add|save|generate|update|edit|change|fix|move|copy|rename|delete|remove|organize|organise|tidy|sort|arrange|convert|merge|split|extract|backup)\b/
   const markers =
-    /\b(file|files|folder|folders|directory|directories|note|notes|document|report|txt|text file|pdfs?|csvs?|docx?|pptx?|xlsx?)\b|\.txt\b|\.md\b|\.docx\b|\.pdf\b/
-  return verbs.test(lower) && markers.test(lower)
+    /\b(file|files|folder|folders|directory|directories|note|notes|document|report|downloads|txt|text file|pdfs?|csvs?|docx?|pptx?|xlsx?)\b|\.txt\b|\.md\b|\.docx\b|\.pdf\b/
+  if (verbs.test(lower) && markers.test(lower)) return true
+  // Strip tashkeel/tatweel so رتّب matches رتب.
+  const ar = text.replace(/[\u064B-\u0653\u0670\u0640]/g, '')
+  const hasArVerb = AR_VERBS.some((v) => ar.includes(v))
+  if (!hasArVerb) return false
+  return AR_MARKERS.some((m) => ar.includes(m))
 }
 
 // Deterministic fallback plan (2026-09-13): providers that refuse the forced
@@ -106,10 +181,20 @@ export function buildFallbackDocumentPlan(text: string): PlanStep[] | null {
   // is not intent to CREATE one. "move every PDF into Finance" must never
   // synthesize "Create the .pdf file". Only fire on creation verbs, and never
   // when organization verbs are present (those go through normal planning).
-  const hasCreation = /\b(create|make|write|generate|save|draft|convert)\b/.test(lower)
+  // Arabic (2026-09-16): same gates, substring-matched (no \b for Arabic),
+  // tashkeel-stripped like the heuristic above.
+  const arLower = text.replace(/[\u064B-\u0653\u0670\u0640]/g, '')
+  const hasCreation =
+    /\b(create|make|write|generate|save|draft|convert)\b/.test(lower) ||
+    ['انشئ', 'أنشئ', 'انشاء', 'إنشاء', 'اكتب', 'احفظ', 'حول', 'أضف', 'اضف'].some((v) =>
+      arLower.includes(v)
+    )
   if (!hasCreation) return null
   const hasOrganize =
-    /\b(move|copy|rename|organize|organise|tidy|sort|arrange|backup|delete|remove)\b/.test(lower)
+    /\b(move|copy|rename|organize|organise|tidy|sort|arrange|backup|delete|remove)\b/.test(lower) ||
+    ['رتب', 'نظم', 'صنف', 'انقل', 'انسخ', 'احذف', 'امسح', 'فرز', 'نظف'].some((v) =>
+      arLower.includes(v)
+    )
   if (hasOrganize) return null
   const wantsTxt = /\btxt\b|\.txt\b|text file/.test(lower)
   const wantsMd = /\bmd\b|\.md\b|markdown/.test(lower)
@@ -144,6 +229,173 @@ export function buildFallbackDocumentPlan(text: string): PlanStep[] | null {
       id: String(id++),
       description: `Convert it to .${target}`,
       tool: 'convert_document',
+      riskLevel: 1,
+      requiresApproval: false
+    })
+  }
+  return steps
+}
+
+export interface DiscoveryListing {
+  entries: { name: string; type: 'file' | 'directory' }[]
+}
+
+// Entry validation shared by the live stash and the history scan —
+// listings are validated, never trusted blind.
+function validListingEntries(raw: unknown): DiscoveryListing['entries'] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((entry) => {
+    if (typeof entry !== 'object' || entry === null) return []
+    const e = entry as { name?: unknown; type?: unknown }
+    return typeof e.name === 'string' && (e.type === 'file' || e.type === 'directory')
+      ? [{ name: e.name, type: e.type }]
+      : []
+  })
+}
+
+// Conversation-history listings (2026-09-16): the organize fallback must
+// also fire when THIS run listed nothing — live, the previous turn had
+// already listed the folder (persisted `tool-list_dir` part), so the model
+// skipped tools, only talked, and the fallback found no grounding. History
+// parts persist in the `tool-${name}` shape with `state` + `output`.
+// Freshest listing first; current-run listings stay ahead of these.
+export function historyListings(messages: UIMessage[]): DiscoveryListing[] {
+  const found: DiscoveryListing[] = []
+  for (const message of messages) {
+    const parts = (message as { parts?: unknown }).parts
+    if (!Array.isArray(parts)) continue
+    for (const part of parts) {
+      if (typeof part !== 'object' || part === null) continue
+      const p = part as { type?: unknown; state?: unknown; output?: unknown }
+      if (p.type !== 'tool-list_dir' || p.state !== 'output-available') continue
+      const output = p.output as { entries?: unknown } | null
+      const entries = output ? validListingEntries(output.entries) : []
+      if (entries.length > 0) found.push({ entries })
+    }
+  }
+  return found.reverse()
+}
+
+// Extension → folder bucket for the organize fallback (by file TYPE, never by
+// language or name script — an earlier model plan over-cleverly proposed "an
+// Arabic folder"). Buckets stay small and predictable for messy folders.
+const ORGANIZE_BUCKETS: { folder: string; exts: string[]; one: string; many: string }[] = [
+  { folder: 'PDFs', exts: ['pdf'], one: 'PDF file', many: 'PDF files' },
+  { folder: 'Documents', exts: ['doc', 'docx', 'odt', 'rtf'], one: 'document', many: 'documents' },
+  {
+    folder: 'Spreadsheets',
+    exts: ['xls', 'xlsx', 'csv', 'ods'],
+    one: 'spreadsheet',
+    many: 'spreadsheets'
+  },
+  {
+    folder: 'Presentations',
+    exts: ['ppt', 'pptx', 'odp'],
+    one: 'presentation',
+    many: 'presentations'
+  },
+  {
+    folder: 'Images',
+    exts: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'],
+    one: 'image',
+    many: 'images'
+  },
+  { folder: 'Videos', exts: ['mp4', 'mov', 'avi', 'mkv'], one: 'video', many: 'videos' },
+  { folder: 'Audio', exts: ['mp3', 'wav', 'ogg'], one: 'audio file', many: 'audio files' },
+  { folder: 'Text', exts: ['txt', 'md'], one: 'text file', many: 'text files' },
+  { folder: 'Archives', exts: ['zip', 'rar', '7z', 'tar', 'gz'], one: 'archive', many: 'archives' }
+]
+
+function bucketForFile(name: string): string {
+  const dot = name.lastIndexOf('.')
+  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
+  for (const bucket of ORGANIZE_BUCKETS) {
+    if (bucket.exts.includes(ext)) return bucket.folder
+  }
+  return 'Others'
+}
+
+function bucketLabel(folder: string, count: number): string {
+  if (folder === 'Others') return count === 1 ? 'remaining file' : 'remaining files'
+  const bucket = ORGANIZE_BUCKETS.find((b) => b.folder === folder)
+  if (!bucket) return count === 1 ? 'file' : 'files'
+  return count === 1 ? bucket.one : bucket.many
+}
+
+// Deterministic organize fallback (2026-09-16): the mirror of
+// buildFallbackDocumentPlan for the other stereotyped failure — "organize my
+// files by type (+ summarize the pricing docs)" recurring as prose-without-a-
+// plan on providers that ignore forced tool choice. Grounded in the
+// discovery listing the run already produced (one move step per populated
+// bucket, counts in the description so batch approval projects honestly),
+// plus read + write tail steps when the request also asks for a summary.
+// Creation-only doc requests never reach here (no organize verbs); without a
+// usable listing it returns null and the honest failure stands.
+export function buildFallbackOrganizePlan(
+  text: string,
+  listings: DiscoveryListing[]
+): PlanStep[] | null {
+  const lower = text.toLowerCase()
+  const ar = text.replace(/[\u064B-\u0653\u0670\u0640]/g, '')
+  const hasOrganize =
+    /\b(move|copy|rename|organize|organise|tidy|sort|arrange|backup)\b/.test(lower) ||
+    ['رتب', 'نظم', 'صنف', 'انقل', 'انسخ', 'فرز', 'نظف'].some((v) => ar.includes(v))
+  if (!hasOrganize) return null
+  const hasMarkers =
+    /\b(file|files|folder|folders|directory|directories|document|downloads|pdfs?|csvs?|docx?|pptx?|xlsx?)\b|\.txt\b|\.md\b|\.docx\b|\.pdf\b/.test(
+      lower
+    ) || AR_MARKERS.some((m) => ar.includes(m))
+  if (!hasMarkers) return null
+  // Richest listing wins (the model may have listed subfolders too).
+  let best: { name: string; type: string }[] | null = null
+  for (const listing of listings) {
+    const files = listing.entries.filter((e) => e.type === 'file')
+    if (best === null || files.length > best.filter((e) => e.type === 'file').length) {
+      best = listing.entries
+    }
+  }
+  const files = (best ?? []).filter((e) => e.type === 'file')
+  if (files.length === 0) return null
+  const groups = new Map<string, number>()
+  for (const file of files) {
+    const folder = bucketForFile(file.name)
+    groups.set(folder, (groups.get(folder) ?? 0) + 1)
+  }
+  const folders = [...groups.keys()]
+  const steps: PlanStep[] = [
+    {
+      id: '1',
+      description: `Create a folder for each file type: ${folders.join(', ')}`,
+      tool: 'create_dir',
+      riskLevel: 1,
+      requiresApproval: false
+    }
+  ]
+  let id = 2
+  for (const [folder, count] of groups) {
+    steps.push({
+      id: String(id++),
+      description: `Move the ${count} ${bucketLabel(folder, count)} into ${folder}`,
+      tool: 'move_path',
+      riskLevel: 2,
+      requiresApproval: true
+    })
+  }
+  const wantsSummary =
+    /summar|summary|ملخص|لخص|تلخيص|pricing|التسعير|تسعير|تقرير|تقارير|report/.test(lower) ||
+    ['ملخص', 'لخص', 'تلخيص', 'التسعير', 'تسعير', 'تقرير', 'تقارير'].some((v) => ar.includes(v))
+  if (wantsSummary) {
+    steps.push({
+      id: String(id++),
+      description: 'Read the pricing documents',
+      tool: 'read_file',
+      riskLevel: 0,
+      requiresApproval: false
+    })
+    steps.push({
+      id: String(id++),
+      description: 'Write the short pricing summary to pricing_summary.txt',
+      tool: 'write_file',
       riskLevel: 1,
       requiresApproval: false
     })
@@ -214,6 +466,61 @@ export function normalizePlanSteps(candidate: unknown): unknown {
     }
   })
   return { steps }
+}
+
+// Tool-name aliases (2026-09-16): models invent plausible-but-wrong tool
+// names in plans (live: make_dir, move_file, final_message on an organize
+// request). An unknown name would refuse at execution and never trace to its
+// step, so ingest canonicalizes known aliases onto real registry tools —
+// panel, tracing, and coalescing then agree. Keys are by-construction never
+// real tool names; anything unmapped (final_message — "reply in text") passes
+// through untouched and simply never traces.
+const PLAN_TOOL_ALIASES: Record<string, string> = {
+  make_dir: 'create_dir',
+  mkdir: 'create_dir',
+  create_folder: 'create_dir',
+  make_folder: 'create_dir',
+  move_file: 'move_path',
+  move_files: 'move_path',
+  copy_file: 'copy_path',
+  copy_files: 'copy_path',
+  delete_file: 'delete_path',
+  delete_files: 'delete_path',
+  remove_file: 'delete_path',
+  create_file: 'write_file',
+  make_file: 'write_file',
+  new_file: 'write_file',
+  list_files: 'list_dir',
+  list_folder: 'list_dir',
+  read_files: 'read_file',
+  search_file: 'search_files'
+}
+
+export function canonicalPlanToolName(tool: string): string {
+  const key = tool.toLowerCase().replace(/[\s-]+/g, '_')
+  return PLAN_TOOL_ALIASES[key] ?? tool
+}
+
+export function canonicalizePlanTools(steps: PlanStep[]): PlanStep[] {
+  return steps.map((step) => {
+    const tool = canonicalPlanToolName(step.tool)
+    return tool === step.tool ? step : { ...step, tool }
+  })
+}
+
+// Thread-visible plan summary (2026-09-16): the PlanPanel is the plan's
+// surface, but the thread must always show WHAT was planned and WHAT to do
+// next. Exactly one summary is synthesized on EVERY plan success — model
+// narration is dropped (it used to arrive as a wall of prose above the
+// plan), so the thread is always tool cards + this summary + Act handoff
+// (the same shape the document-fallback path already sends).
+function planSummaryChunks(steps: PlanStep[], textId: string): UIMessageChunk[] {
+  const summary = `Here's my plan:\n${steps.map((s, i) => `${i + 1}. ${s.description}`).join('\n')}\n\nReview it on the right — switch to Act and say "go ahead" to run it.`
+  return [
+    { type: 'text-start', id: textId },
+    { type: 'text-delta', id: textId, delta: summary },
+    { type: 'text-end', id: textId }
+  ]
 }
 
 export function parsePlanJson(text: string): PlanStep[] | null {
@@ -636,7 +943,7 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
             if (toolCall.toolName !== 'emit_plan') continue
             const parsed = planStepsSchema.safeParse(normalizePlanSteps(toolCall.input))
             if (parsed.success) {
-              found = parsed.data.steps
+              found = canonicalizePlanTools(parsed.data.steps)
               break
             }
           }
@@ -996,7 +1303,7 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
 //   (validate → sandbox → risk → approval → snapshot → execute), so all
 //   trust guarantees hold; there is simply no planning phase.
 
-const MAX_DISCOVERY_STEPS = 5
+const MAX_DISCOVERY_STEPS = 3
 
 export interface ModeTurnDeps {
   model: LanguageModel
@@ -1041,15 +1348,64 @@ export async function runPlanModeTurn(
   let thinkTailSeq = 0
   const baseModelMessages = convertToModelMessagesSafe(replayable(deps.messages))
 
-  // Held discovery (2026-09-13 fix): discovery parts are buffered and only
-  // committed once the plan outcome is known. Streaming them live caused the
+  // Held discovery (2026-09-13 fix): discovery TEXT is buffered and only
+  // committed once the plan outcome is known. Streaming prose live caused the
   // reported "answered immediately, then red error" — e.g. "make a txt file
   // with a cat story" streamed the full story in discovery, then the forced
   // emit_plan failed and PLAN_FAILED_COPY landed under it. Holding gives a
   // single outcome: plan (+ summary) on success, answer on Q&A, single error
   // on mutating failure with no orphan prose.
+  //
+  // Tool parts are NOT held (2026-09-16): discovery is a full second model
+  // pass before planning, and holding everything left the thread frozen on
+  // "Reading and preparing your plan..." for minutes with zero feedback —
+  // the reported "taking too long" on every model. Read-tool cards stream
+  // live so the run visibly works (List folder → plan); they are facts, not
+  // prose, so a later plan failure never orphans a misleading sentence.
+  // (The discovery prompt already forbids writing file/story content.)
+  const commitLiveToolPart = (part: UIMessageChunk): boolean => {
+    if (
+      part.type === 'tool-input-available' ||
+      part.type === 'tool-output-available' ||
+      part.type === 'tool-output-error'
+    ) {
+      if (part.type === 'tool-input-available' && part.toolName === 'emit_plan') {
+        emitPlanCallIds.add(part.toolCallId)
+        return true
+      }
+      if (part.type === 'tool-output-available' && emitPlanCallIds.has(part.toolCallId)) {
+        return true
+      }
+      accumulator.addChunk(part)
+      deps.sendPart(part)
+      return true
+    }
+    return false
+  }
   const commitHeld = (parts: UIMessageChunk[]): void => {
     for (const part of parts) {
+      accumulator.addChunk(part)
+      deps.sendPart(part)
+    }
+  }
+  // Plan-success commit (2026-09-16): when a plan lands, the panel IS the
+  // plan — model narration ("I see a mix of PDFs...", "I'll now emit...")
+  // is dropped from the thread and exactly one synthesized summary is
+  // shown instead (live: the model narrated a full essay before emitting,
+  // so the plan arrived under a wall of prose). Tool cards already streamed
+  // live and stay. Q&A and failure paths below still commit prose — there
+  // the text IS the answer.
+  const commitHeldNonText = (parts: UIMessageChunk[]): void => {
+    for (const part of parts) {
+      if (part.type === 'text-start' || part.type === 'text-delta' || part.type === 'text-end') {
+        continue
+      }
+      accumulator.addChunk(part)
+      deps.sendPart(part)
+    }
+  }
+  const commitPlanSummary = (steps: PlanStep[], textId: string): void => {
+    for (const part of planSummaryChunks(steps, textId)) {
       accumulator.addChunk(part)
       deps.sendPart(part)
     }
@@ -1061,11 +1417,17 @@ export async function runPlanModeTurn(
     .map((p) => (p as { text: string }).text)
     .join(' ')
   const discoveryMutating = isLikelyMutatingRequest(userTextForDiscovery)
+  // Directory listings seen during discovery (2026-09-16): the organize
+  // fallback grounds its plan in these instead of inventing folders.
+  // Attributed by toolCallId — output parts carry no tool name.
+  const discoveryListings: DiscoveryListing[] = []
+  const listDirCallIds = new Set<string>()
 
   try {
     // Discovery: read-only tools only (structurally — write tools are never
-    // in this set). Cards + summary render only when committed below, so the
-    // user never sees read output ahead of a plan failure.
+    // in this set). Read-tool cards stream live (progress); the text summary
+    // stays held until the outcome is known — on plan success it is dropped
+    // (the synthesized summary replaces it), on Q&A it IS the answer.
     const discoveryHeld: UIMessageChunk[] = []
     let discoveryError: UIMessageChunk | null = null
     const readNames = readToolNames(deps.registry)
@@ -1073,7 +1435,7 @@ export async function runPlanModeTurn(
       try {
         const discoveryResult = streamText({
           model: deps.model,
-          system: `${deps.system}\nYou are in read-only planning mode. Inspect what you need with the available tools, then answer briefly in text (1-2 sentences): what you found and what you will put in the plan. Do not write file or story content — describe only. Do not claim to change anything.`,
+          system: `${deps.system}\nYou are in read-only planning mode. Inspect what you need with the available tools, then answer briefly in text (one short sentence): what you found and what you will put in the plan. Do not write file or story content — describe only. Do not claim to change anything.`,
           messages: baseModelMessages,
           tools: deps.registry.toAiSdkTools(
             { ...deps.ctx },
@@ -1122,6 +1484,21 @@ export async function runPlanModeTurn(
           if (part.type === 'tool-output-available' && emitPlanCallIds.has(part.toolCallId)) {
             continue
           }
+          // Stash directory listings for the organize fallback (by callId —
+          // output parts carry no tool name). Validated, never trusted blind.
+          if (part.type === 'tool-input-available' && part.toolName === 'list_dir') {
+            listDirCallIds.add(part.toolCallId)
+          }
+          if (part.type === 'tool-output-available' && listDirCallIds.has(part.toolCallId)) {
+            const output = (part as { output?: unknown }).output as {
+              entries?: unknown
+            } | null
+            const entries = output ? validListingEntries(output.entries) : []
+            if (entries.length > 0) discoveryListings.push({ entries })
+          }
+          // Read-tool activity streams live (see commitLiveToolPart above);
+          // prose stays held for the single-outcome commit below.
+          if (commitLiveToolPart(part)) continue
           if (part.type === 'text-delta') {
             // Think-tag strip: held deliberation never commits to the thread.
             const visible = thinkStrip.push(part.delta)
@@ -1301,7 +1678,7 @@ export async function runPlanModeTurn(
             if (toolCall.toolName !== 'emit_plan') continue
             const parsed = planStepsSchema.safeParse(normalizePlanSteps(toolCall.input))
             if (parsed.success) {
-              found = parsed.data.steps
+              found = canonicalizePlanTools(parsed.data.steps)
               break
             }
           }
@@ -1335,15 +1712,16 @@ export async function runPlanModeTurn(
         .map((part) => (part as { delta?: string }).delta ?? '')
         .join('')
       const echoed = parsePlanJson(attemptText)
-      const recovered =
+      const recoveredRaw =
         echoed ?? (await extractPlanSteps(deps.model, deps.system, planMessages, deps.signal))
+      const recovered = recoveredRaw ? canonicalizePlanTools(recoveredRaw) : null
       if (recovered) {
-        // Commit discovery first (summary + read cards), then the model's
-        // prose (it narrates the plan) but never a raw JSON echo.
-        commitHeld(discoveryHeld)
-        if (attempt.hadText && !echoed) {
-          commitHeld(attempt.heldParts)
-        }
+        // Plan-success commit: narration dropped, one summary (see
+        // commitHeldNonText above) — never the model prose, never a raw
+        // JSON echo.
+        commitHeldNonText(discoveryHeld)
+        commitHeldNonText(attempt.heldParts)
+        commitPlanSummary(recovered, 'plan-summary-recovered')
         deps.onPlanCreated(recovered)
         return {
           aborted,
@@ -1369,14 +1747,7 @@ export async function runPlanModeTurn(
         // The thread would otherwise stay empty (just the user bubble) —
         // the panel gets the structured plan, the thread gets one plain
         // summary line per step so the run visibly answered.
-        const summary = `Here's my plan:\n${fallback.map((s, i) => `${i + 1}. ${s.description}`).join('\n')}\n\nReview it on the right — switch to Act and say "go ahead" to run it.`
-        const textId = 'fallback-plan-summary'
-        const summaryParts: UIMessageChunk[] = [
-          { type: 'text-start', id: textId },
-          { type: 'text-delta', id: textId, delta: summary },
-          { type: 'text-end', id: textId }
-        ]
-        for (const part of summaryParts) {
+        for (const part of planSummaryChunks(fallback, 'fallback-plan-summary')) {
           accumulator.addChunk(part)
           deps.sendPart(part)
         }
@@ -1394,10 +1765,44 @@ export async function runPlanModeTurn(
           planApproved: false
         }
       }
+      // Organize fallback (2026-09-16): same doctrine for the stereotyped
+      // organize-by-type request (live: Arabic organize returned
+      // prose-without-a-plan on every attempt). Grounded in the discovery
+      // listing — real buckets, real counts — so the panel is actionable.
+      // When this run listed nothing (a previous turn already did, so the
+      // model skipped tools), the conversation's freshest listing grounds
+      // it instead. With no listing anywhere the honest failure below
+      // still stands.
+      const organize = buildFallbackOrganizePlan(userTextForDiscovery, [
+        ...discoveryListings,
+        ...historyListings(deps.messages)
+      ])
+      if (organize) {
+        for (const part of planSummaryChunks(organize, 'fallback-organize-summary')) {
+          accumulator.addChunk(part)
+          deps.sendPart(part)
+        }
+        deps.onPlanCreated(organize)
+        return {
+          aborted,
+          terminalSent,
+          accumulatorFailed: accumulator.isFailed(),
+          assistantMessage: accumulator.toUIMessage(),
+          heldFinish,
+          usage: sumUsage(discoveryUsage, planUsage),
+          stepsTaken: 0,
+          stepLimitReached: false,
+          planEmitted: true,
+          planApproved: false
+        }
+      }
     }
     if (attempt.steps) {
-      commitHeld(discoveryHeld)
-      commitHeld(attempt.heldParts)
+      // Plan-success commit: tool cards (already live) + one synthesized
+      // summary. Model narration is dropped — the panel carries the plan.
+      commitHeldNonText(discoveryHeld)
+      commitHeldNonText(attempt.heldParts)
+      commitPlanSummary(attempt.steps, 'plan-summary')
       deps.onPlanCreated(attempt.steps)
       return {
         aborted,
