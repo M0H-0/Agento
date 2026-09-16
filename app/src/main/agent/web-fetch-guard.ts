@@ -5,6 +5,19 @@ import { lookup as dnsLookup } from 'node:dns/promises'
 // link-local / multicast destinations are refused after DNS resolution, and
 // every redirect target is revalidated. Plain Node — unit-tested in vitest.
 
+/**
+ * Thrown by the guard with a complete user-facing sentence. `web_fetch` passes
+ * these through verbatim — wrapping them again produced "That page could not
+ * be fetched — That page could not be fetched — …" in the live Phase-1 item 1
+ * run. Raw network errors (`fetch failed`) still get the tool's framing.
+ */
+export class WebFetchRefusalError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'WebFetchRefusalError'
+  }
+}
+
 export function isBlockedIp(ip: string): boolean {
   const ver = isIP(ip)
   if (ver === 4) {
@@ -37,15 +50,17 @@ export async function assertPublicHttpUrl(raw: string): Promise<URL> {
   try {
     parsed = new URL(raw)
   } catch {
-    throw new Error('That does not look like a web address.')
+    throw new WebFetchRefusalError('That does not look like a web address.')
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error('I can only open web addresses starting with http:// or https://.')
+    throw new WebFetchRefusalError(
+      'I can only open web addresses starting with http:// or https://.'
+    )
   }
   const host = parsed.hostname
   if (isIP(host)) {
     if (isBlockedIp(host)) {
-      throw new Error('I will not open addresses inside your local network.')
+      throw new WebFetchRefusalError('I will not open addresses inside your local network.')
     }
     return parsed
   }
@@ -53,12 +68,12 @@ export async function assertPublicHttpUrl(raw: string): Promise<URL> {
     const addrs = await dnsLookup(host, { all: true })
     for (const a of addrs) {
       if (isBlockedIp(a.address)) {
-        throw new Error('I will not open addresses inside your local network.')
+        throw new WebFetchRefusalError('I will not open addresses inside your local network.')
       }
     }
   } catch (error) {
-    if (error instanceof Error && /local network/.test(error.message)) throw error
-    throw new Error(
+    if (error instanceof WebFetchRefusalError) throw error
+    throw new WebFetchRefusalError(
       `That page could not be fetched — ${error instanceof Error ? error.message : String(error)}.`
     )
   }

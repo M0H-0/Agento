@@ -77,11 +77,31 @@ function stubTurn(toolName: string): { stream: unknown } {
     { type: 'tool-input-start', id: 'act-1', toolName },
     { type: 'tool-input-delta', id: 'act-1', delta: '{}' },
     { type: 'tool-input-end', id: 'act-1' },
-    { type: 'tool-call', toolCallId: 'act-1', toolName, input: '{}' },
+    {
+      type: 'tool-call',
+      toolCallId: 'act-1',
+      toolName,
+      input: '{}'
+    },
     {
       type: 'finish',
       finishReason: 'tool-calls',
       usage: { inputTokens: 100, outputTokens: 200, totalTokens: 300 }
+    }
+  ]
+  return { stream: simulateReadableStream({ chunks }) }
+}
+
+// A turn that produces no text at all — just finishes. Models that answer a
+// failed tool call with silence (live: failed web_fetch, gpt-oss) end this way;
+// the Act fallback must still close the thread with a persisted sentence.
+function emptyTurn(): { stream: unknown } {
+  const chunks: LanguageModelV2StreamPart[] = [
+    { type: 'stream-start', warnings: [] },
+    {
+      type: 'finish',
+      finishReason: 'stop',
+      usage: { inputTokens: 5, outputTokens: 0, totalTokens: 5 }
     }
   ]
   return { stream: simulateReadableStream({ chunks }) }
@@ -302,6 +322,66 @@ describe('runActTurn — execution without a planning phase', () => {
     expect(outcome.aborted).toBe(false)
     expect(sentParts.some((p) => p.type === 'error')).toBe(false)
     expect(outcome.assistantMessage).not.toBeNull()
+  })
+
+  it('a failed tool with no closing prose still persists one honest sentence (Phase-1 item 1)', async () => {
+    // Live: a failed web_fetch where the model went silent ended as a bare user
+    // bubble — nothing persisted. The Act fallback must synthesize one text
+    // sentence (persisted) from the tool's plain-language failure.
+    const run = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-act-fail-silent',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    const registry = createToolRegistry()
+    registry.define(emitPlanTool)
+    const failingTool: ToolDefinition = {
+      name: 'stub_fetch',
+      description: 'Stub failing fetch',
+      access: 'read',
+      inputSchema: z.object({}),
+      pathFields: [],
+      risk: () => ({ level: 0, reason: 'stub' }),
+      describe: () => ({ title: 'Stub fetch', group: 'test' }),
+      execute: async () => ({
+        ok: false,
+        output: { url: 'https://example.com/' },
+        error: 'That page could not be fetched — getaddrinfo ENOTFOUND.'
+      })
+    }
+    registry.define(failingTool)
+    // Tool turn (fails) + an empty followup (model says nothing).
+    const model = scriptedModel([stubTurn('stub_fetch'), emptyTurn()])
+    const sentParts: UIMessageChunk[] = []
+
+    const outcome = await runActTurn({
+      model,
+      system: 'test system',
+      messages: USER_MESSAGES,
+      registry,
+      ctx: run.ctx,
+      sendPart: (part) => sentParts.push(part),
+      signal: new AbortController().signal
+    })
+
+    expect(outcome.aborted).toBe(false)
+    // One persisted assistant sentence carrying the plain-language failure.
+    expect(outcome.assistantMessage).not.toBeNull()
+    const text = (outcome.assistantMessage?.parts ?? [])
+      .filter((p) => p.type === 'text')
+      .map((p) => (p as { text: string }).text)
+      .join('')
+    expect(text).toContain('could not be fetched')
+    // The fallback travels as text chunks (persisted), not an error part.
+    expect(sentParts.some((p) => p.type === 'text-delta')).toBe(true)
+    // The tool card's error line keeps the tool's own sentence — the stream's
+    // onError classifier must not relabel a tool failure as a provider failure
+    // (Phase-1 item 1: live DNS-failed web_fetch wore provider copy).
+    const toolErrorPart = sentParts.find((p) => p.type === 'tool-output-error') as
+      { errorText: string } | undefined
+    expect(toolErrorPart?.errorText).toContain('could not be fetched')
+    expect(toolErrorPart?.errorText).not.toContain('model provider')
   })
 })
 

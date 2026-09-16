@@ -346,8 +346,20 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
   // M3.3 projection sources (docs/03 §5): the run's plan steps (count parsed
   // from the matching step's description, e.g. "move 42 files") and the most
   // recent read enumeration (list_dir file count / search match count).
+  // S3-001: enumerations are directory-scoped — an Act-mode list of
+  // invoices/ projects the following moves out of invoices/, while an
+  // unrelated earlier listing never leaks into a later approval elsewhere
+  // (the old unscoped "batch of 4" phantom).
   let planSteps: PlanStepRef[] = []
   let lastEnumeration: number | null = null
+  let lastEnumScope: string | null = null
+
+  function withinScope(candidate: string, scope: string): boolean {
+    const norm = (p: string): string => p.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase()
+    const c = norm(candidate)
+    const s = norm(scope)
+    return c === s || c.startsWith(`${s}/`)
+  }
 
   const setPlanSteps = (steps: PlanStepRef[]): void => {
     planSteps = steps
@@ -369,6 +381,20 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
       const n = parseCountFromText(step.description)
       if (n !== null) return n
     }
+    // Scoped enumeration (S3-001): the gated paths fall under the listed
+    // directory — works with or without plan steps, so Act-mode
+    // list-then-move batches project on the FIRST dialog.
+    if (
+      lastEnumeration !== null &&
+      lastEnumScope !== null &&
+      request.paths.some((p) => withinScope(p, lastEnumScope as string))
+    ) {
+      return lastEnumeration
+    }
+    // No plan step, no projection: a leftover enumeration from an earlier
+    // unrelated read (e.g. list_dir in plain Act mode) must not inflate a
+    // later single-file approval into a phantom "(batch of N)".
+    if (planSteps.length === 0) return null
     return lastEnumeration
   }
 
@@ -447,8 +473,13 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
     return ids.length
   }
 
+  // S3-005 one-shot ask grant (shared by reference across the run's ctx
+  // spreads — every per-call `{...ctx}` copy keeps the same holder object).
+  const askApprovalGrant = { granted: false }
+
   const ctx: ToolExecutionContext = {
     workspaceRoot,
+    askApprovalGrant,
     // M6.3 permission defaults (Settings → Permissions): read once per run;
     // tool execution never re-reads settings mid-run.
     approvalPolicy: {
@@ -457,8 +488,11 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
     },
     // M3.3 projection feed: read tools report their enumeration size here;
     // the next approval group projects from it when the plan states none.
-    noteEnumeration: (fileCount: number) => {
-      if (Number.isSafeInteger(fileCount) && fileCount >= 0) lastEnumeration = fileCount
+    noteEnumeration: (fileCount: number, scopePath?: string) => {
+      if (Number.isSafeInteger(fileCount) && fileCount >= 0) {
+        lastEnumeration = fileCount
+        lastEnumScope = typeof scopePath === 'string' && scopePath.length > 0 ? scopePath : null
+      }
     },
     // The current settings is read once on run start; tool execution never
     // re-reads it. (Settings that affect risk classification, e.g. a future

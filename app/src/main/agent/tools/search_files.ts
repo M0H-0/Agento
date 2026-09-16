@@ -105,7 +105,7 @@ export const searchFilesTool: ToolDefinition<
     }
     // M3.3 projection feed (docs/03 §5): match count, same doctrine as
     // list_dir's file count — last enumeration wins at the approval hook.
-    ctx.noteEnumeration?.(matches.length)
+    ctx.noteEnumeration?.(matches.length, input.path)
     return { ok: true, output: { query: input.query, matches, truncated } }
   }
 }

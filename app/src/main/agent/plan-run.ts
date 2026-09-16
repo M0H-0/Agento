@@ -3,6 +3,7 @@ import type { LanguageModel, LanguageModelUsage, ModelMessage, UIMessage, UIMess
 import { convertToModelMessages } from 'ai'
 import { AssistantMessageAccumulator } from './assistant-accumulator'
 import { stripStepReasoning } from './prepare-step'
+import { ToolFailureError } from './registry'
 import type { ToolRegistry } from './registry'
 import type { ToolExecutionContext } from './types'
 import { planStepsSchema } from './tools/emit_plan'
@@ -282,6 +283,10 @@ async function extractPlanSteps(
 // narrows the 400 branch: in the plan phase a non-key 400 is the model or
 // provider refusing to plan, not a connectivity problem.
 export function friendlyProviderError(error: unknown, phase?: 'plan'): string {
+  // A tool refusal/failure is not a provider problem: the wrapper already
+  // wrote the user-facing sentence (Phase-1 item 1 — live DNS-failed
+  // web_fetch wore "Something went wrong talking to the model provider").
+  if (error instanceof ToolFailureError) return error.message
   // streamText retries transient failures and surfaces them as a RetryError
   // wrapping the provider's own APICallError — unwrap before classifying, or
   // a rate limit (429) falls through to the generic copy (docs/04 §5).
@@ -1466,8 +1471,17 @@ export async function runActTurn(
   // "narrated the claim, called nothing" failure. Every onOutcome fires once
   // per tool-call attempt, so a refused/skipped call still counts as acting.
   let callsMade = 0
+  // Phase-1 item 1: the last tool failure's plain-language message becomes the
+  // persisted closing sentence when the model leaves the thread empty after
+  // tools ran (live: a failed web_fetch with no closing prose ended as a bare
+  // user bubble — nothing persisted). Tool messages are already plain-language;
+  // the audit sink keeps the technical detail in tool_calls regardless.
+  let lastFailureMessage: string | null = null
   const countCalls: typeof deps.onOutcome = (entry) => {
     callsMade += 1
+    if (!entry.ok && typeof entry.message === 'string' && entry.message.trim() !== '') {
+      lastFailureMessage = entry.message
+    }
     deps.onOutcome?.(entry)
   }
   // A mutating request that produces prose and zero tool calls looks like the
@@ -1597,6 +1611,25 @@ export async function runActTurn(
             "I didn't take any actions, so nothing changed. Try saying which file to work on and what to do with it."
         })
         terminalSent = true
+      }
+    }
+    // Phase-1 item 1: tools ran but the model produced no closing prose — the
+    // thread would settle as a bare user bubble with nothing persisted (live:
+    // failed web_fetch). Synthesize one persisted text sentence (not an error
+    // part — error parts never persist) so the thread always ends with an
+    // honest assistant sentence. Prefer the last tool failure's plain-language
+    // message; otherwise state completion briefly.
+    if (!aborted && !cancelled && callsMade > 0 && !accumulator.hasText()) {
+      const fallback = lastFailureMessage ?? 'Done — the results are in the cards above.'
+      const textId = 'act-fallback-close'
+      const fallbackParts: UIMessageChunk[] = [
+        { type: 'text-start', id: textId },
+        { type: 'text-delta', id: textId, delta: fallback },
+        { type: 'text-end', id: textId }
+      ]
+      for (const part of fallbackParts) {
+        accumulator.addChunk(part)
+        deps.sendPart(part)
       }
     }
     if (!aborted && stepsTaken >= maxSteps) stepLimitReached = true

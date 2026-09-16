@@ -61,8 +61,13 @@ export function createHandlerHarness(
   }
   stages.pendingAnswer = () => nextAnswer
 
+  // S3-005 one-shot ask grant (shared by reference; the registry consumes
+  // it instead of calling requestApproval after an affirmative ask_user).
+  const askApprovalGrant = { granted: false }
+
   const ctx: ToolExecutionContext = {
     workspaceRoot,
+    askApprovalGrant,
     exists: (path) => {
       stages.order.push('risk')
       stages.riskProbes.push(path)

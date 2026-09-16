@@ -142,10 +142,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-function asListEntries(value: unknown): { name: string; type: 'file' | 'directory' }[] {
-  if (!isRecord(value)) return []
+function asListEntries(value: unknown): { name: string; type: 'file' | 'directory' }[] | null {
+  // Phase-1 item 2: only a record carrying an `entries` ARRAY is a listing.
+  // Anything else (an error record `{ error: … }`, a still-running part with
+  // no result) returns null so the card falls back to the generic error/
+  // running rendering — never "0 entries / This folder is empty".
+  if (!isRecord(value)) return null
   const entries = value.entries
-  if (!Array.isArray(entries)) return []
+  if (!Array.isArray(entries)) return null
   return entries.flatMap((entry) => {
     if (!isRecord(entry)) return []
     if (typeof entry.name !== 'string') return []
@@ -213,6 +217,7 @@ function asWebSearch(value: unknown): {
   query: string
   results: { title: string; url: string; snippet: string }[]
   provider?: 'tavily' | 'duckduckgo'
+  truncated?: boolean
 } | null {
   if (!isRecord(value)) return null
   if (typeof value.query !== 'string' || !Array.isArray(value.results)) return null
@@ -229,9 +234,16 @@ function asWebSearch(value: unknown): {
   })
   const provider =
     value.provider === 'tavily' || value.provider === 'duckduckgo' ? value.provider : undefined
-  return provider === undefined
-    ? { query: value.query, results }
-    : { query: value.query, results, provider }
+  // Phase-1 item 1: the tool's honest self-cap flag passes through so the card
+  // can say the ranking is partial. The wrapper's `outputTruncated` envelope is
+  // a different shape (no query/results) and still falls to GenericToolCard.
+  const truncated = value.truncated === true ? true : undefined
+  return {
+    query: value.query,
+    results,
+    ...(provider === undefined ? {} : { provider }),
+    ...(truncated === undefined ? {} : { truncated })
+  }
 }
 
 function asSemanticResults(value: unknown): {
@@ -348,8 +360,11 @@ function asDeletePath(value: unknown): { path: string } | null {
 }
 
 function renderListDirCard(part: AuiToolPart, title: string): React.JSX.Element | null {
+  // A failed call must never render as an empty folder (Phase-1 item 2): bail
+  // to the generic card, whose errorTextFor shows the tool's own sentence.
+  if (part.isError) return null
   const entries = asListEntries(part.result)
-  if (entries.length === 0 && !isRecord(part.result)) return null
+  if (entries === null) return null
   return (
     <ListDirCard
       title={title}

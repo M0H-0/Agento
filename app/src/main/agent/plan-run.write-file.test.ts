@@ -125,7 +125,14 @@ describe('plan-run + write_file — txt creation end to end', () => {
           .filter((p) => p.type === 'tool-input-available')
           .map((p) => (p as { toolName: string }).toolName)
       ).toContain('write_file')
-      expect(outcome.assistantMessage?.parts).toEqual([{ type: 'text', text: 'done' }])
+      // S5-001: tool parts persist alongside text so reopened history
+      // renders the same cards as the live run (emit_plan stays suppressed).
+      const persisted = outcome.assistantMessage?.parts ?? []
+      expect(persisted).toContainEqual({ type: 'text', text: 'done' })
+      const writePart = persisted.find(
+        (p) => (p as { type?: string }).type === 'tool-write_file'
+      ) as { state?: string; output?: unknown } | undefined
+      expect(writePart?.state).toBe('output-available')
     } finally {
       ws.cleanup()
     }

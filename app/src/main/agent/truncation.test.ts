@@ -38,7 +38,10 @@ describe('wrapper — result truncation', () => {
         }
       })
       expect(outcome.ok).toBe(true)
-      expect(outcome.result).toMatchObject({ truncated: true })
+      // The wrapper envelope uses `outputTruncated` — never the domain-level
+      // `truncated` key (Phase-1 item 1: the shared key dropped honest partial
+      // results at the AI SDK boundary).
+      expect(outcome.result).toMatchObject({ outputTruncated: true })
       expect((outcome.result as { size: number }).size).toBeGreaterThan(MAX_TOOL_OUTPUT_BYTES)
     } finally {
       ws.cleanup()
@@ -73,6 +76,53 @@ describe('wrapper — result truncation', () => {
         }
       })
       expect(outcome.result).toEqual({ answer: 42 })
+    } finally {
+      ws.cleanup()
+    }
+  })
+
+  it('keeps a tool-level truncated flag with its content at the AI SDK boundary', async () => {
+    // Phase-1 item 1 collision: honest partial output (e.g. a capped ranking
+    // with `truncated: true`) must reach the model intact — only the wrapper's
+    // `outputTruncated` envelope becomes the short notice shape.
+    const ws = createTempWorkspace()
+    try {
+      const registry = createToolRegistry()
+      const partialTool: ToolDefinition = {
+        name: 'partial_output',
+        description: 'test-only',
+        access: 'read',
+        inputSchema: z.object({}),
+        pathFields: [],
+        risk: () => ({ level: 0, reason: 'test' }),
+        describe: () => ({ title: 'Partial', group: 'test' }),
+        execute: async () => ({
+          ok: true,
+          output: { query: 'acme', results: [{ title: 'Hit' }], truncated: true }
+        })
+      }
+      registry.define(partialTool)
+      const ctx = {
+        workspaceRoot: ws.root,
+        exists: () => false,
+        snapshot: () => undefined,
+        requestApproval: async () => 'approve' as const,
+        requestUserAnswer: async () => '',
+        fs: createWorkspaceFs(ws.root)
+      }
+      const wrapped = registry.toAiSdkTool('partial_output', ctx)
+      if (!wrapped) throw new Error('expected wrapped tool')
+      const seen = (await (
+        wrapped as unknown as {
+          execute: (input: unknown, options: { toolCallId: string }) => Promise<unknown>
+        }
+      ).execute({}, { toolCallId: 't-partial' })) as Record<string, unknown>
+      expect(seen).toMatchObject({
+        query: 'acme',
+        results: [{ title: 'Hit' }],
+        truncated: true
+      })
+      expect(seen).not.toHaveProperty('outputTruncated')
     } finally {
       ws.cleanup()
     }

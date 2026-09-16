@@ -12,6 +12,17 @@ import type { ToolDefinition } from '../types'
 const TRIM_QUESTION_LIMIT = 80
 const MAX_OPTIONS = 8
 
+// S3-005 one-confirmation rule: an unambiguous affirmative reply to an
+// ask_user question authorizes the action the model asked about, so the
+// registry consumes it as the approval for the next gated call instead of
+// raising a second dialog. Anchored on purpose — "yes, but first…" and other
+// qualified replies grant NOTHING (fail-closed: the dialog still appears).
+export function isAffirmativeAnswer(answer: string): boolean {
+  return /^\s*(yes|yeah|yep|yup|y|ok|okay|sure|approve|approved|go ahead|do it|proceed|confirm|confirmed|correct|right)\s*[.!]*\s*$/i.test(
+    answer
+  )
+}
+
 export const askUserTool: ToolDefinition<
   { question: string; options?: string[] },
   { question: string; answer: string }
@@ -67,6 +78,11 @@ export const askUserTool: ToolDefinition<
       question: input.question,
       options: input.options
     })
+    // S3-005: an affirmative answer IS the confirmation for the action asked
+    // about — arm the one-shot grant the registry's approval stage consumes.
+    if (ctx.askApprovalGrant && isAffirmativeAnswer(answer)) {
+      ctx.askApprovalGrant.granted = true
+    }
     return { ok: true, output: { question: input.question, answer } }
   }
 }

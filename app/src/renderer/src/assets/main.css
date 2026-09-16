@@ -2632,6 +2632,17 @@
   cursor: not-allowed;
 }
 
+/* S1-001: sidecar Full/Degraded signal inside onboarding (same dot as the
+   sidebar footer, with a one-line note). */
+.onboarding-sidecar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
 /* M2.5: write_file before/after excerpts (no diff component — plain
    pre blocks under labels, docs/04 section 3.1). */
 .tool-card__excerpt {

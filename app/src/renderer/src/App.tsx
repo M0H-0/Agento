@@ -11,9 +11,10 @@ import {
 import type { UIMessage } from 'ai'
 import { createIpcChatTransport } from './chat/transport'
 import type { SessionMode, SessionSummary } from './chat/transport'
+import { canStartChat } from './chat/provider-gate'
 import { findPendingAsk } from './chat/ask'
 import type { PendingAsk } from './chat/ask'
-import { translate } from './chat/locale'
+import { localizeThreadError, translate } from './chat/locale'
 import type { Locale, StringKey } from './chat/locale'
 import { LocaleProvider } from './components/LocaleContext'
 import { useLocale } from './components/locale-context'
@@ -300,7 +301,7 @@ function Thread({
   // grayscale treatment untouched, reduced-motion safe.
   const [hintPreview, setHintPreview] = useState<SessionMode | null>(null)
   const hintMode = hintPreview ?? mode
-  const { t } = useLocale()
+  const { locale, t } = useLocale()
   // Latched at mount (see ThreadWelcome): App marks the entrance spent right
   // after the first empty paint, which re-renders this same instance with
   // playHomeEntrance=false — the latch keeps .home-enter for the full 250ms.
@@ -329,7 +330,7 @@ function Thread({
             keeps errors in message metadata, not status). */}
         {error && (
           <div className="thread-error" role="alert">
-            {error.message}
+            {localizeThreadError(locale, error.message)}
           </div>
         )}
         {/* docs/04 §8.4: floats above the composer via absolute positioning
@@ -621,11 +622,17 @@ function App(): React.JSX.Element {
   const registerDispose = useCallback((dispose: (() => void) | null) => {
     chatDisposeRef.current = dispose
   }, [])
-  // Event ordering: per-session monotonic seq + active run binding. Stale or
-  // cross-run events are discarded so a delayed prior run cannot overwrite a
-  // newer plan or reopen an obsolete approval.
+  // Event ordering: per-session monotonic seq. Stale events are discarded so
+  // a delayed prior run cannot overwrite a newer plan. There is deliberately
+  // no runId gate: chat:send mints a new runId per turn (docs/03 §4, M1.5),
+  // so a legitimate new run — the plan → "go ahead" handoff included —
+  // always carries an id the renderer has not seen yet, and gating on the
+  // previous run's id dropped its approval dialog and parked the whole chain
+  // (Phase-1 item 3 live repro: approval/requested arrived, no dialog ever
+  // rendered). Approvals key by approvalId instead (M3.2), and a decision
+  // for a no-longer-pending approval answers with an explicit error, never
+  // a silent hang.
   const lastSeqRef = useRef(0)
-  const lastRunIdRef = useRef<string | null>(null)
 
   // MVP onboarding gate (MVP_PLAN.md; M6.1 cut): first launch walks one
   // static screen until a workspace AND an API key exist. null = still
@@ -643,7 +650,11 @@ function App(): React.JSX.Element {
         if (cancelled) return
         const saved = settings.locale
         if (saved === 'en' || saved === 'ar') applyLocale(saved)
-        setSetupReady(settings.hasKey && workspaces.current !== null)
+        // Keyless custom profiles (local servers) are startable without a key
+        // (docs/03 §10) — the launch gate must match Onboarding's readiness.
+        setSetupReady(
+          canStartChat(settings.provider, settings.hasKey) && workspaces.current !== null
+        )
       })
       .catch(() => {
         if (!cancelled) setSetupReady(true)
@@ -831,7 +842,6 @@ function App(): React.JSX.Element {
     setApprovalError(null)
     setApprovalPending(false)
     lastSeqRef.current = 0
-    lastRunIdRef.current = null
   }, [])
 
   useEffect(() => {
@@ -858,7 +868,6 @@ function App(): React.JSX.Element {
         lastSeqRef.current = event.seq
       }
       if (event.type === 'plan/created') {
-        lastRunIdRef.current = event.runId
         setRunStatus(translate(localeRef.current, 'app.planReady'))
         setPlan((prev) =>
           prev !== null && prev.runId === event.runId
@@ -928,8 +937,6 @@ function App(): React.JSX.Element {
           }
         })
       } else if (event.type === 'approval/requested') {
-        if (lastRunIdRef.current && event.runId !== lastRunIdRef.current) return
-        lastRunIdRef.current = event.runId
         setRunStatus(translate(localeRef.current, 'app.waitingApproval'))
         setApproval(event)
         setApprovalError(null)
@@ -937,7 +944,6 @@ function App(): React.JSX.Element {
         // authoritative stepId yet, so the panel must not mark step 0 as
         // awaiting. The dialog itself is the approval surface.
       } else if (event.type === 'approval/resolved') {
-        if (lastRunIdRef.current && event.runId !== lastRunIdRef.current) return
         const L = localeRef.current
         setRunStatus(
           event.decision === 'approve'

@@ -106,6 +106,7 @@ function durableStore(): UndoStore {
       listCheckpoints(sessionId)
         .filter((row) => row.revertedAt === null)
         .map(toUndoCheckpoint),
+    allCheckpoints: (sessionId) => listCheckpoints(sessionId).map(toUndoCheckpoint),
     markReverted: (id, at) => markCheckpointReverted(id, at),
     // Undo rows are stored with a null toolCallId (their own "Restore
     // point" panel group — docs/04 §3.4): the engine's grouping key is only

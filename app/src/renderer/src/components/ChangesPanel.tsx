@@ -68,6 +68,12 @@ function titleForGroup(t: T, group: ChangeGroup): string {
         ? t('changes.copiedTo', { from: fileName(first.relativePath), to: fileName(dest) })
         : t('changes.copiedFile')
     }
+    case 'create_document':
+      return t(first.existed ? 'changes.overwrote' : 'changes.wrote')
+    case 'edit_document':
+      return t('changes.edited')
+    case 'convert_document':
+      return t(first.existed ? 'changes.overwrote' : 'changes.wrote')
     case 'delete_path':
       return t('changes.deleted')
     case 'agent':

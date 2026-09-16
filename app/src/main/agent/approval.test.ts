@@ -83,6 +83,84 @@ describe('approval promise (M3.2)', () => {
     expect(await pending).toBe('approve')
   })
 
+  it('ignores a leftover enumeration when the run has no plan steps', async () => {
+    // Live repro: in plain Act mode an earlier list_dir (4 files) leaked its
+    // enumeration into a later single-file edit approval ("batch of 4").
+    const emitted: { channel: string; payload: unknown }[] = []
+    const run = buildRunContext({
+      sender: { emit: (channel, payload) => emitted.push({ channel, payload }) },
+      sessionId: 's-noplan',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    run.ctx.noteEnumeration?.(4)
+    const pending = run.ctx.requestApproval(req)
+    const event = emitted.find(
+      (e) => (e.payload as { type?: string }).type === 'approval/requested'
+    )
+    expect(event).toBeDefined()
+    expect((event?.payload as { count?: number }).count).toBeUndefined()
+    expect((event?.payload as { body?: string }).body).not.toContain('batch of')
+    expect(run.resolveApproval(run._pendingApprovalIds()[0] as string, 'approve')).toBe(true)
+    expect(await pending).toBe('approve')
+  })
+
+  it('S3-001: scoped enumeration projects an Act-mode batch with no plan steps', async () => {
+    // Live repro: Act-mode list of invoices/ then "move every PDF invoice
+    // into Finance" opened a singular dialog (displayCount null) that
+    // authorized the whole batch. The listed directory scopes the count.
+    const emitted: { channel: string; payload: unknown }[] = []
+    const run = buildRunContext({
+      sender: { emit: (channel, payload) => emitted.push({ channel, payload }) },
+      sessionId: 's-scoped',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    run.ctx.noteEnumeration?.(12, 'C:/ws/invoices')
+    const pending = run.ctx.requestApproval({
+      tool: 'move_path',
+      title: 'Move invoice_2026-01_northwind.pdf',
+      riskLevel: 2,
+      reason: 'move',
+      paths: [
+        'C:/ws/invoices/invoice_2026-01_northwind.pdf',
+        'C:/ws/Finance/invoice_2026-01_northwind.pdf'
+      ]
+    })
+    const event = emitted.find(
+      (e) => (e.payload as { type?: string }).type === 'approval/requested'
+    )
+    expect(event).toBeDefined()
+    expect((event?.payload as { count?: number }).count).toBe(12)
+    expect(run.resolveApproval(run._pendingApprovalIds()[0] as string, 'approve')).toBe(true)
+    expect(await pending).toBe('approve')
+  })
+
+  it('S3-001: scoped enumeration never leaks into approvals outside its directory', async () => {
+    const emitted: { channel: string; payload: unknown }[] = []
+    const run = buildRunContext({
+      sender: { emit: (channel, payload) => emitted.push({ channel, payload }) },
+      sessionId: 's-scope-phantom',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    run.ctx.noteEnumeration?.(12, 'C:/ws/invoices')
+    const pending = run.ctx.requestApproval({
+      tool: 'edit_file',
+      title: 'Edit todo.txt',
+      riskLevel: 2,
+      reason: 'overwrite',
+      paths: ['C:/ws/todo.txt']
+    })
+    const event = emitted.find(
+      (e) => (e.payload as { type?: string }).type === 'approval/requested'
+    )
+    expect(event).toBeDefined()
+    expect((event?.payload as { count?: number }).count).toBeUndefined()
+    expect(run.resolveApproval(run._pendingApprovalIds()[0] as string, 'approve')).toBe(true)
+    expect(await pending).toBe('approve')
+  })
+
   it('unknown id resolves false; stop rejects pendings', async () => {
     const b = bundle()
     expect(b.resolveApproval('nope', 'approve')).toBe(false)

@@ -173,6 +173,8 @@ const en = {
   'onboarding.customSuffix': '{name} (custom)',
   'onboarding.noEncryption': 'OS encryption unavailable — the key is kept for this session only.',
   'onboarding.getStarted': 'Get started',
+  'onboarding.sidecarNote':
+    'Assistant intelligence: green is full quality, red still works with reduced quality.',
   'onboarding.pickFailed': 'Picking the folder failed.',
   'onboarding.providerFailed': 'Changing the provider failed.',
   'onboarding.saveFailed': 'Saving the key failed.',
@@ -388,6 +390,8 @@ const en = {
   'cards.titleStatus': '{title} — {status}',
   'cards.args': 'Arguments',
   'cards.result': 'Result',
+  'cards.largeResult': 'That result was too large to show fully.',
+  'cards.largeResultHint': 'Showing the first part only — try a narrower request for the rest.',
   'cards.replied': 'Replied',
   'cards.stoppedReply': 'Stopped before reply',
   'cards.awaitingReply': 'Awaiting your reply',
@@ -454,7 +458,19 @@ const en = {
   'quick.examples': 'Example prompts',
 
   'common.close': 'Close',
-  'common.scrollToBottom': 'Scroll to bottom'
+  'common.scrollToBottom': 'Scroll to bottom',
+
+  // S7-001: main-side provider/plan error copies (plan-run.ts
+  // friendlyProviderError) arrive in English over the stream; the thread maps
+  // them here so the `ar` UI translates while `en` renders verbatim.
+  'error.provider':
+    'Something went wrong talking to the model provider. Check your connection and try again.',
+  'error.keyRejected':
+    "The API key for this provider isn't working. Check it in Settings → Providers.",
+  'error.rateLimited': "The model is rate-limiting us. I'll wait a moment and retry.",
+  'error.planRefused': "I couldn't create a plan for that. Try rephrasing the request.",
+  'error.planFailed':
+    "I couldn't make a plan for that request, so I didn't change anything. Try rephrasing it."
 } as const
 
 export type StringKey = keyof typeof en
@@ -626,6 +642,7 @@ const ar: Record<StringKey, string> = {
   'onboarding.customSuffix': '{name} (مخصص)',
   'onboarding.noEncryption': 'تشفير النظام غير متاح — سيُحفظ المفتاح لهذه الجلسة فقط.',
   'onboarding.getStarted': 'البدء',
+  'onboarding.sidecarNote': 'ذكاء المساعد: الأخضر جودة كاملة، والأحمر يعمل بجودة منخفضة.',
   'onboarding.pickFailed': 'فشل اختيار المجلد.',
   'onboarding.providerFailed': 'فشل تغيير المزوّد.',
   'onboarding.saveFailed': 'فشل حفظ المفتاح.',
@@ -839,6 +856,8 @@ const ar: Record<StringKey, string> = {
   'cards.titleStatus': '{title} — {status}',
   'cards.args': 'الوسائط',
   'cards.result': 'النتيجة',
+  'cards.largeResult': 'كانت تلك النتيجة كبيرة جدًا لعرضها كاملة.',
+  'cards.largeResultHint': 'يُعرض الجزء الأول فقط — جرّب طلبًا أضيق لبقية النتائج.',
   'cards.replied': 'تم الرد',
   'cards.stoppedReply': 'توقف قبل الرد',
   'cards.awaitingReply': 'بانتظار ردك',
@@ -904,7 +923,13 @@ const ar: Record<StringKey, string> = {
   'quick.examples': 'أمثلة للمطالبات',
 
   'common.close': 'إغلاق',
-  'common.scrollToBottom': 'التمرير إلى الأسفل'
+  'common.scrollToBottom': 'التمرير إلى الأسفل',
+
+  'error.provider': 'حدث خطأ أثناء الاتصال بمزوّد النموذج. تحقق من الاتصال وحاول مجددًا.',
+  'error.keyRejected': 'مفتاح API لهذا المزوّد لا يعمل. تحقق منه في الإعدادات ← المزوّدون.',
+  'error.rateLimited': 'النموذج يحدّ من معدّل الطلبات. سأنتظر قليلًا ثم أعيد المحاولة.',
+  'error.planRefused': 'تعذّر إنشاء خطة لذلك. حاول إعادة صياغة الطلب.',
+  'error.planFailed': 'تعذّر وضع خطة لهذا الطلب، لذلك لم أغيّر شيئًا. حاول إعادة صياغته.'
 }
 
 export function isLocale(value: unknown): value is Locale {
@@ -927,6 +952,28 @@ export function translate(
 ): string {
   const table = locale === 'ar' ? ar : en
   return fill(table[key], params)
+}
+
+/**
+ * S7-001: map a main-side English thread-error copy to its locale string.
+ * Unknown text (tool sentences, future copies) passes through untouched —
+ * never blank, never guessed.
+ */
+const THREAD_ERROR_KEYS: StringKey[] = [
+  'error.provider',
+  'error.keyRejected',
+  'error.rateLimited',
+  'error.planRefused',
+  'error.planFailed'
+]
+
+export function localizeThreadError(locale: Locale, message: string): string {
+  if (locale === 'en') return message
+  const table = locale === 'ar' ? ar : en
+  for (const key of THREAD_ERROR_KEYS) {
+    if (message === en[key]) return table[key]
+  }
+  return message
 }
 
 /**

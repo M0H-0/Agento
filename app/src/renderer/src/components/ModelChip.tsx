@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { CustomProviderSnapshot, SettingsSnapshot } from '../../../preload/index'
 import { useLocale } from './locale-context'
+import { SETTINGS_CHANGED_EVENT, notifySettingsChanged } from './settings-changed'
 
 // Provider display labels (mirror of SettingsDialog's PROVIDER_LABELS —
 // built-in ids only; custom profiles carry their own name).
@@ -57,6 +58,19 @@ function ModelChip(): React.JSX.Element {
 
   useEffect(() => {
     load()
+  }, [load])
+
+  // S6-001: a Settings model/provider switch must refresh the chip
+  // within-session (it used to stay stale until relaunch).
+  useEffect(() => {
+    const onChanged = (): void => load()
+    const onFocus = (): void => load()
+    window.addEventListener(SETTINGS_CHANGED_EVENT, onChanged)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.removeEventListener(SETTINGS_CHANGED_EVENT, onChanged)
+      window.removeEventListener('focus', onFocus)
+    }
   }, [load])
 
   // Position the flyout for an expanded row: anchor immediately (the row is
@@ -171,6 +185,7 @@ function ModelChip(): React.JSX.Element {
       }
       setOpen(false)
       setOpenProviderId(null)
+      notifySettingsChanged()
     } catch (err) {
       setError(err instanceof Error ? err.message : t('model.switchFailed'))
     } finally {

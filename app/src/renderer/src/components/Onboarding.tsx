@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useLocale } from './locale-context'
+import SidecarStatusDot from './SidecarStatusDot'
+import { canStartChat } from '../chat/provider-gate'
 
 // Onboarding (MVP_PLAN.md; the M6.1 cut): ONE static screen — welcome, pick
 // a workspace folder, enter an API key. The gate in App.tsx shows this
@@ -129,7 +131,10 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
       .finally(() => setBusy(false))
   }
 
-  const ready = workspacePath !== null && settings !== null && settings.hasKey
+  // Keyless custom profiles (local servers) are startable without a key
+  // (docs/03 §10) — readiness must not trap them behind the key step.
+  const ready =
+    workspacePath !== null && settings !== null && canStartChat(settings.provider, settings.hasKey)
 
   return (
     <div className="onboarding-overlay">
@@ -256,6 +261,13 @@ export function Onboarding({ onDone }: OnboardingProps): React.JSX.Element {
         >
           {t('onboarding.getStarted')}
         </button>
+
+        {/* S1-001: the shell's Full/Degraded dot lives behind this overlay —
+            surface the same signal here so setup shows sidecar health too. */}
+        <div className="onboarding-sidecar">
+          <SidecarStatusDot />
+          <span>{t('onboarding.sidecarNote')}</span>
+        </div>
       </div>
     </div>
   )

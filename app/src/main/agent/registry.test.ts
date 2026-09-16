@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { writeFileTool } from './tools/write_file'
+import { askUserTool } from './tools/ask_user'
 import { createHandlerHarness, createTempWorkspace } from './testing/harness'
 import type { TempWorkspace } from './testing/harness'
 
@@ -159,6 +160,82 @@ describe('registry wrapper — mandatory stage order', () => {
     expect(seen).toHaveLength(1)
     const published = (seen[0] as { input: { path: string } }).input
     expect(published.path).toBe(join(ws.root, 'new.txt'))
+  })
+})
+
+describe('S3-005 — one confirmation per action (ask Yes skips the second dialog)', () => {
+  let ws: TempWorkspace
+  let harness: ReturnType<typeof createHandlerHarness>
+
+  beforeEach(() => {
+    ws = createTempWorkspace()
+    harness = createHandlerHarness(ws.root)
+    harness.registry.define(writeFileTool)
+    harness.registry.define(askUserTool)
+  })
+
+  afterEach(() => {
+    ws.cleanup()
+  })
+
+  async function ask(answer: string): Promise<void> {
+    harness.stages.setPendingAnswer(answer)
+    const outcome = await harness.registry.run({
+      tool: 'ask_user',
+      args: { question: 'May I edit todo.txt?' },
+      ctx: { ...harness.ctx, activeToolCallId: `ask-${answer}-${Date.now()}` }
+    })
+    expect(outcome.ok).toBe(true)
+  }
+
+  it('ask Yes → risk-2 overwrite runs with NO approval dialog', async () => {
+    ws.write('todo.txt', 'old')
+    await ask('Yes')
+    expect(harness.ctx.askApprovalGrant?.granted).toBe(true)
+    const outcome = await harness.registry.run({
+      tool: 'write_file',
+      args: { path: 'todo.txt', content: 'new' },
+      ctx: harness.ctx
+    })
+    expect(outcome.ok).toBe(true)
+    expect(outcome.status).toBe('executed')
+    expect(harness.stages.approvals).toHaveLength(0)
+    expect(harness.stages.order).toEqual(['risk', 'snapshot'])
+    expect(ws.read('todo.txt')).toBe('new')
+  })
+
+  it('ask No → the gated call still raises its approval dialog (fail-closed)', async () => {
+    ws.write('todo.txt', 'old')
+    await ask('No')
+    expect(harness.ctx.askApprovalGrant?.granted).toBe(false)
+    const outcome = await harness.registry.run({
+      tool: 'write_file',
+      args: { path: 'todo.txt', content: 'new' },
+      ctx: harness.ctx
+    })
+    expect(outcome.ok).toBe(true)
+    expect(harness.stages.approvals).toHaveLength(1)
+    expect(ws.read('todo.txt')).toBe('new')
+  })
+
+  it('the grant is one-shot: a second gated call asks again', async () => {
+    ws.write('todo.txt', 'old')
+    await ask('Yes')
+    const first = await harness.registry.run({
+      tool: 'write_file',
+      args: { path: 'todo.txt', content: 'first' },
+      ctx: harness.ctx
+    })
+    expect(first.ok).toBe(true)
+    expect(harness.stages.approvals).toHaveLength(0)
+    const second = await harness.registry.run({
+      tool: 'write_file',
+      args: { path: 'todo.txt', content: 'second' },
+      ctx: harness.ctx
+    })
+    expect(second.ok).toBe(true)
+    expect(harness.stages.approvals).toHaveLength(1)
+    expect(ws.read('todo.txt')).toBe('second')
   })
 })
 

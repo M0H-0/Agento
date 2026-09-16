@@ -20,15 +20,20 @@ export const readFileTool: ToolDefinition<
 > = {
   name: 'read_file',
   description:
-    "Read a text file from the user's workspace (path relative to the workspace root). Optional startLine/maxLines for large files.",
+    "Read a text file from the user's workspace (path relative to the workspace root). Optional startLine/maxLines for large files — startLine is a 0-based line offset (0 = the first line); omit both for a full read.",
   access: 'read',
   inputSchema: z.object({
     path: z.string().min(1),
-    startLine: z.number().int().min(0).optional(),
+    startLine: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('0-based line offset to start from (0 = first line); omit for a full read'),
     // No `.max()` cap on purpose (M3.7 gate finding — same as search_files):
     // provider-side validation would kill the turn; `execute` clamps via the
     // `?? 2000` default + slice bounds below.
-    maxLines: z.number().int().min(1).optional()
+    maxLines: z.number().int().min(1).optional().describe('Max lines to return (default 2000)')
   }),
   pathFields: ['path'],
   risk: () => ({ level: 0, reason: 'Read-only' }),

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { askUserTool } from './ask_user'
+import { askUserTool, isAffirmativeAnswer } from './ask_user'
 import { createHandlerHarness, createTempWorkspace } from '../testing/harness'
 import type { TempWorkspace } from '../testing/harness'
 
@@ -85,5 +85,46 @@ describe('ask_user — blocks on the user reply', () => {
     expect(desc.title.startsWith('Ask: ')).toBe(true)
     // 80 char cap + ellipsis
     expect(desc.title.length).toBeLessThanOrEqual('Ask: '.length + 81)
+  })
+
+  it('S3-005: affirmative answers arm the one-shot approval grant; others do not', async () => {
+    for (const yes of ['Yes', 'yes.', 'OK', 'go ahead', '  Sure!  ', 'approve']) {
+      harness.stages.setPendingAnswer(yes)
+      const outcome = await harness.registry.run({
+        tool: 'ask_user',
+        args: { question: 'May I edit todo.txt?' },
+        ctx: { ...harness.ctx, activeToolCallId: `grant-${yes}` }
+      })
+      expect(outcome.ok).toBe(true)
+      expect(harness.ctx.askApprovalGrant?.granted).toBe(true)
+      if (harness.ctx.askApprovalGrant) harness.ctx.askApprovalGrant.granted = false
+    }
+    for (const no of ['No', 'not yet', 'blue', 'yes, but first tell me more', '']) {
+      harness.stages.setPendingAnswer(no)
+      const outcome = await harness.registry.run({
+        tool: 'ask_user',
+        args: { question: 'May I edit todo.txt?' },
+        ctx: { ...harness.ctx, activeToolCallId: `deny-${no}` }
+      })
+      expect(outcome.ok).toBe(true)
+      expect(harness.ctx.askApprovalGrant?.granted).toBe(false)
+    }
+  })
+
+  it('isAffirmativeAnswer matrix (fail-closed on qualified replies)', () => {
+    for (const yes of ['Yes', 'y', 'OK', 'okay', 'Sure.', 'Go Ahead', 'do it', 'proceed']) {
+      expect(isAffirmativeAnswer(yes)).toBe(true)
+    }
+    for (const no of [
+      'No',
+      'nope',
+      'later',
+      'yes, but first…',
+      'maybe',
+      '',
+      'yes please do X and Y'
+    ]) {
+      expect(isAffirmativeAnswer(no)).toBe(false)
+    }
   })
 })

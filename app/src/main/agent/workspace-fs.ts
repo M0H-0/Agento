@@ -47,6 +47,28 @@ function assertInsideWorkspace(root: string, target: string): void {
   }
 }
 
+// S3-006: node:fs errno detail embeds ABSOLUTE rename ends
+// (`ENOENT: … rename 'C:\ws\a' → 'C:\ws\b'`), which used to ride the card
+// sentence verbatim into the thread. Redact every rooted path in the detail
+// to its workspace-relative form — the quoted headline is already relative,
+// and the technical row in `tool_calls` inherits the same redacted string.
+function redactRoot(root: string, message: string): string {
+  if (!root) return message
+  const norm = root.replace(/\\/g, '/').replace(/\/$/, '')
+  if (!norm) return message
+  const escaped = norm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\//g, '[\\\\/]')
+  const re = new RegExp(`${escaped}([\\\\/][^"'\\s]*)?`, 'gi')
+  return message.replace(re, (_match, rest?: string) => {
+    if (!rest) return '.'
+    return rest.replace(/^[\\/]+/, '').replace(/\\/g, '/')
+  })
+}
+
+function detailOf(root: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return redactRoot(root, message)
+}
+
 function revalidate(root: string, target: string, access: 'read' | 'write'): void {
   assertInsideWorkspace(root, target)
   try {
@@ -88,9 +110,10 @@ function writeBufferAtomic(workspaceRoot: string, path: string, data: Buffer): n
       // noop — cleanup is best-effort only
     }
     throw new WorkspaceFsRefusalError(
-      `I could not write "${relative(workspaceRoot, path)}" — ${
-        error instanceof Error ? error.message : String(error)
-      }. Nothing was changed.`
+      `I could not write "${relative(workspaceRoot, path)}" — ${detailOf(
+        workspaceRoot,
+        error
+      )}. Nothing was changed.`
     )
   }
   return data.length
@@ -108,9 +131,7 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
         return readFileSync(path, 'utf8')
       } catch (error) {
         throw new WorkspaceFsReadError(
-          `I could not read "${relative(workspaceRoot, path)}" — ${
-            error instanceof Error ? error.message : String(error)
-          }.`
+          `I could not read "${relative(workspaceRoot, path)}" — ${detailOf(workspaceRoot, error)}.`
         )
       }
     },
@@ -120,9 +141,7 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
         return readFileSync(path)
       } catch (error) {
         throw new WorkspaceFsReadError(
-          `I could not read "${relative(workspaceRoot, path)}" — ${
-            error instanceof Error ? error.message : String(error)
-          }.`
+          `I could not read "${relative(workspaceRoot, path)}" — ${detailOf(workspaceRoot, error)}.`
         )
       }
     },
@@ -146,9 +165,10 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
         mkdirSync(path, { recursive: true })
       } catch (error) {
         throw new WorkspaceFsRefusalError(
-          `I could not create the folder "${relative(workspaceRoot, path)}" — ${
-            error instanceof Error ? error.message : String(error)
-          }. Nothing was changed.`
+          `I could not create the folder "${relative(workspaceRoot, path)}" — ${detailOf(
+            workspaceRoot,
+            error
+          )}. Nothing was changed.`
         )
       }
     },
@@ -171,9 +191,10 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
         renameSync(from, to)
       } catch (error) {
         throw new WorkspaceFsRefusalError(
-          `I could not move "${relative(workspaceRoot, from)}" — ${
-            error instanceof Error ? error.message : String(error)
-          }. Nothing was changed.`
+          `I could not move "${relative(workspaceRoot, from)}" — ${detailOf(
+            workspaceRoot,
+            error
+          )}. Nothing was changed.`
         )
       }
     },
@@ -196,9 +217,10 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
       } catch (error) {
         if (error instanceof WorkspaceFsRefusalError) throw error
         throw new WorkspaceFsRefusalError(
-          `I could not read "${relative(workspaceRoot, from)}" — ${
-            error instanceof Error ? error.message : String(error)
-          }. Nothing was changed.`
+          `I could not read "${relative(workspaceRoot, from)}" — ${detailOf(
+            workspaceRoot,
+            error
+          )}. Nothing was changed.`
         )
       }
       mkdirSync(dirname(to), { recursive: true })
@@ -207,9 +229,10 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
         copyFileSync(from, to)
       } catch (error) {
         throw new WorkspaceFsRefusalError(
-          `I could not copy "${relative(workspaceRoot, from)}" — ${
-            error instanceof Error ? error.message : String(error)
-          }. Nothing was changed.`
+          `I could not copy "${relative(workspaceRoot, from)}" — ${detailOf(
+            workspaceRoot,
+            error
+          )}. Nothing was changed.`
         )
       }
       return size
@@ -232,9 +255,10 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
           )
         }
         throw new WorkspaceFsRefusalError(
-          `I could not delete "${relative(workspaceRoot, path)}" — ${
-            error instanceof Error ? error.message : String(error)
-          }. Nothing was changed.`
+          `I could not delete "${relative(workspaceRoot, path)}" — ${detailOf(
+            workspaceRoot,
+            error
+          )}. Nothing was changed.`
         )
       }
     },
@@ -245,9 +269,7 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
         names = nodeReaddirSync(path)
       } catch (error) {
         throw new WorkspaceFsReadError(
-          `I couldn't list "${relative(workspaceRoot, path)}" — ${
-            error instanceof Error ? error.message : String(error)
-          }.`
+          `I couldn't list "${relative(workspaceRoot, path)}" — ${detailOf(workspaceRoot, error)}.`
         )
       }
       return names.map((name) => ({ name, type: tagEntryType(name, path) }))

@@ -70,4 +70,34 @@ describe('list_dir — read-only', () => {
     expect(listDirTool.describe({ path: 'D:\\workspace\\docs' }).title).toBe('List docs')
     expect(listDirTool.describe({ path: '/workspace' }).title).toBe('List workspace')
   })
+
+  it('a missing folder fails honestly — never an empty listing (Phase-1 item 2)', async () => {
+    // Live: T2 probed archive/ before it existed and the card claimed
+    // "0 entries / This folder is empty." The failure must ride the error
+    // shape with a complete sentence, and the sentence must not carry the
+    // absolute workspace path (AGENTS rule 6).
+    const outcome = await harness.registry.run({
+      tool: 'list_dir',
+      args: { path: 'archive' },
+      ctx: harness.ctx
+    })
+    expect(outcome.ok).toBe(false)
+    expect(outcome.status).toBe('executed')
+    expect(outcome.message).toContain("couldn't find")
+    expect(outcome.message).toContain('archive')
+    expect(outcome.message.toLowerCase()).not.toContain('empty')
+    expect(outcome.message).not.toContain(ws.root)
+  })
+
+  it('a file path fails as not-a-folder instead of listing nothing', async () => {
+    ws.write('notes.txt', 'hello')
+    const outcome = await harness.registry.run({
+      tool: 'list_dir',
+      args: { path: 'notes.txt' },
+      ctx: harness.ctx
+    })
+    expect(outcome.ok).toBe(false)
+    expect(outcome.message).toContain('not a folder')
+    expect(outcome.message).not.toContain(ws.root)
+  })
 })

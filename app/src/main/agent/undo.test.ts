@@ -36,6 +36,9 @@ function createFakeStore(): UndoStore & { rows: FakeRow[] } {
         .filter((r) => r.sessionId === sessionId && r.revertedAt === null)
         .sort((a, b) => b.order - a.order)
     },
+    allCheckpoints(sessionId) {
+      return rows.filter((r) => r.sessionId === sessionId).sort((a, b) => b.order - a.order)
+    },
     markReverted(id, at) {
       const row = rows.find((r) => r.id === id)
       if (row) row.revertedAt = at
@@ -44,6 +47,15 @@ function createFakeStore(): UndoStore & { rows: FakeRow[] } {
       // Mirrors the durable adapter (storage/checkpoints.ts): undo rows are
       // stored with a null toolCallId — their own solo group, never merged
       // into the undone call's group (docs/04 §3.4 "restored" states).
+      const stored = input.content
+      const digest =
+        stored === null
+          ? null
+          : stored.startsWith('b64:')
+            ? createHash('sha256')
+                .update(Buffer.from(stored.slice(4), 'base64'))
+                .digest('hex')
+            : sha(stored)
       const row: FakeRow = {
         id: `undo-${t()}`,
         sessionId: input.sessionId,
@@ -52,8 +64,8 @@ function createFakeStore(): UndoStore & { rows: FakeRow[] } {
         destPath: null,
         existed: input.existed,
         isDir: input.isDir,
-        content: input.content,
-        sha256: input.content !== null ? sha(input.content) : null,
+        content: stored,
+        sha256: digest,
         revertedAt: null,
         order: t()
       }
@@ -334,5 +346,108 @@ describe('undo matrix', () => {
     const result = undoCheckpoint(store, fs, id)
     expect(result.ok).toBe(true)
     expect(readFileSync(abs('bin.dat')).equals(raw)).toBe(true)
+  })
+
+  it('S5-002: undo-all after undo-redo-undo stays pristine (no re-apply)', () => {
+    // s5d clean-room: ONE edit, then per-item undo → redo → undo (disk
+    // verified pristine). Undo-all must NOT resurrect the edit.
+    ws.write('todo.txt', 'pristine\n')
+    const id = snap(store, {
+      path: abs('todo.txt'),
+      toolCallId: 'tc-edit',
+      content: 'pristine\n',
+      sha256: sha('pristine\n')
+    })
+    ws.write('todo.txt', 'call alice')
+    const first = undoCheckpoint(store, fs, id)
+    expect(first.ok).toBe(true)
+    expect(ws.read('todo.txt')).toBe('pristine\n')
+    if (!first.ok) throw new Error('expected success')
+    const second = undoCheckpoint(store, fs, first.undoneId)
+    expect(second.ok).toBe(true)
+    expect(ws.read('todo.txt')).toBe('call alice')
+    if (!second.ok) throw new Error('expected success')
+    const third = undoCheckpoint(store, fs, second.undoneId)
+    expect(third.ok).toBe(true)
+    expect(ws.read('todo.txt')).toBe('pristine\n')
+    const results = undoAllCheckpoints(store, fs, 's1')
+    expect(results.every((r) => r.ok)).toBe(true)
+    expect(ws.read('todo.txt')).toBe('pristine\n')
+  })
+
+  it('S5-002: undo-all after a redo restores pristine (no stuck edit)', () => {
+    // Disk edited with only a redo row active (original + first undo
+    // reverted): undo-all must rewind to the oldest snapshot, not no-op.
+    ws.write('todo.txt', 'pristine\n')
+    const id = snap(store, {
+      path: abs('todo.txt'),
+      toolCallId: 'tc-edit',
+      content: 'pristine\n',
+      sha256: sha('pristine\n')
+    })
+    ws.write('todo.txt', 'call alice')
+    const first = undoCheckpoint(store, fs, id)
+    expect(first.ok).toBe(true)
+    if (!first.ok) throw new Error('expected success')
+    const second = undoCheckpoint(store, fs, first.undoneId)
+    expect(second.ok).toBe(true)
+    expect(ws.read('todo.txt')).toBe('call alice')
+    const results = undoAllCheckpoints(store, fs, 's1')
+    expect(results.every((r) => r.ok)).toBe(true)
+    expect(ws.read('todo.txt')).toBe('pristine\n')
+  })
+
+  it('S5-002: double undo-all never deletes (idempotent second pass)', async () => {
+    // s5e escalation: a 2nd undo-all reverted the 1st's restore rows and
+    // deleted both moved files. Second pass must be a no-op.
+    const { renameSync } = await import('node:fs')
+    fs.mkdir(abs('sub'))
+    ws.write('a.txt', 'alpha')
+    const fromId = snap(store, {
+      path: abs('a.txt'),
+      toolCallId: 'tc-move',
+      destPath: abs('sub/a.txt'),
+      content: 'alpha',
+      sha256: sha('alpha')
+    })
+    snap(store, { path: abs('sub/a.txt'), toolCallId: 'tc-move', existed: false })
+    // Simulate the completed move: source gone, dest holds the bytes.
+    renameSync(abs('a.txt'), abs('sub/a.txt'))
+    const first = undoAllCheckpoints(store, fs, 's1')
+    expect(first.every((r) => r.ok)).toBe(true)
+    expect(ws.read('a.txt')).toBe('alpha')
+    expect(fs.existsSync(abs('sub/a.txt'))).toBe(false)
+    expect(store.getCheckpoint(fromId)?.revertedAt).not.toBeNull()
+    const second = undoAllCheckpoints(store, fs, 's1')
+    expect(second.every((r) => r.ok)).toBe(true)
+    expect(ws.read('a.txt')).toBe('alpha')
+    expect(fs.existsSync(abs('sub/a.txt'))).toBe(false)
+  })
+
+  it('S5-002: undo-all with mixed edit+create restores both (no resurrection)', () => {
+    // s5e v1/v4: after Ctrl+Z (edit) + /undo (create), undo-all re-applied
+    // both. Oldest-per-path must delete the creation and rewind the edit.
+    ws.write('note.txt', 'line one\nsecond line')
+    const editId = snap(store, {
+      path: abs('note.txt'),
+      toolCallId: 'tc-edit',
+      content: 'line one\n',
+      sha256: sha('line one\n')
+    })
+    ws.write('c.txt', 'hello')
+    const createId = snap(store, {
+      path: abs('c.txt'),
+      toolCallId: 'tc-create',
+      existed: false
+    })
+    ws.write('note.txt', 'line one\n')
+    expect(undoCheckpoint(store, fs, editId).ok).toBe(true)
+    expect(undoCheckpoint(store, fs, createId).ok).toBe(true)
+    expect(ws.read('note.txt')).toBe('line one\n')
+    expect(fs.existsSync(abs('c.txt'))).toBe(false)
+    const results = undoAllCheckpoints(store, fs, 's1')
+    expect(results.every((r) => r.ok)).toBe(true)
+    expect(ws.read('note.txt')).toBe('line one\n')
+    expect(fs.existsSync(abs('c.txt'))).toBe(false)
   })
 })

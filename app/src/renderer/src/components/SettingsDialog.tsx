@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Locale, StringKey } from '../chat/locale'
 import { useLocale } from './locale-context'
+import { notifySettingsChanged } from './settings-changed'
 import { SettingsPopoverSelect } from './SettingsPopoverSelect'
 
 // Settings modal (docs/04 §3.7): tabbed by category — Providers (built-ins +
@@ -108,6 +109,9 @@ function SettingsDialog({
       .then((next) => {
         setSnapshot(next)
         setError(null)
+        // S6-001: every post-mutation reload funnels through here — tell the
+        // composer model chip (and any future settings reader) to reload live.
+        notifySettingsChanged()
       })
       .catch(() => {
         setError(t('settings.loadFailed'))

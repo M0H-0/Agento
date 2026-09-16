@@ -5,42 +5,8 @@ import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown'
 import remarkGfm from 'remark-gfm'
 import { WORDS_PER_TICK, WORD_TICK_MS, nextDisplayed } from '../chat/word-pacing'
 import { stripAskUserJsonEcho } from '../chat/ask'
+import { codeHeaderText } from '../chat/code-label'
 import { useLocale } from './locale-context'
-
-// Plain-language names for fenced code blocks (docs/04 §8.3: "code — JavaScript
-// · copy"). Unlisted languages fall back to a capitalized form of the tag.
-const LANGUAGE_LABELS: Record<string, string> = {
-  js: 'JavaScript',
-  javascript: 'JavaScript',
-  jsx: 'JSX',
-  ts: 'TypeScript',
-  tsx: 'TSX',
-  typescript: 'TypeScript',
-  py: 'Python',
-  python: 'Python',
-  json: 'JSON',
-  html: 'HTML',
-  css: 'CSS',
-  sh: 'Shell',
-  bash: 'Shell',
-  zsh: 'Shell',
-  shell: 'Shell',
-  powershell: 'PowerShell',
-  sql: 'SQL',
-  yaml: 'YAML',
-  yml: 'YAML',
-  toml: 'TOML',
-  xml: 'XML',
-  md: 'Markdown',
-  markdown: 'Markdown',
-  diff: 'Diff'
-}
-
-function languageLabel(language: string): string {
-  return (
-    LANGUAGE_LABELS[language.toLowerCase()] ?? language.charAt(0).toUpperCase() + language.slice(1)
-  )
-}
 
 // docs/04 §8.3: fenced code blocks get a plain-language header and a copy
 // button. Clipboard only — navigator.clipboard, no new bridge surface.
@@ -66,9 +32,7 @@ function CodeBlockHeader({ language, code }: CodeHeaderProps): React.JSX.Element
 
   return (
     <div className="code-header">
-      <span>
-        {language ? `${t('markdown.code')} — ${languageLabel(language)}` : t('markdown.code')}
-      </span>
+      <span>{codeHeaderText(language, t('markdown.code'))}</span>
       <button type="button" className="code-copy" onClick={copy}>
         {t(copied ? 'markdown.copied' : 'markdown.copy')}
       </button>

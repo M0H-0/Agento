@@ -201,13 +201,27 @@ export interface ToolExecutionContext {
   /** Blocks on the user's decision for risk ≥ 2 (docs/06 §3); the caller wires the dialog. */
   requestApproval(request: ApprovalRequest): Promise<ApprovalDecision>
   /**
+   * One-shot ask_user grant (S3-005 — one confirmation per action): when the
+   * model routes via ask_user ("May I edit todo.txt?") and the user answers
+   * affirmatively, ask_user sets `granted = true`. The registry's approval
+   * stage consumes it (reset to false) and runs the next gated call WITHOUT
+   * a second dialog. Negative/ambiguous answers grant nothing (fail-closed —
+   * the dialog still appears if the model proceeds). Shared by reference
+   * across the run's ctx spreads; absent in contexts that never ask.
+   */
+  askApprovalGrant?: { granted: boolean }
+  /**
    * M3.3 coalescing projection (docs/03 §5): read-only tools report the size
    * of the enumeration they just produced (list_dir = file entries,
-   * search_files = matches). The approval hook uses the most recent value as
-   * the batch-count projection when the plan step's description states none.
+   * search_files = matches) plus the enumerated directory (absolute,
+   * sandbox-resolved). The approval hook projects the scoped count when the
+   * gated paths fall under that directory — S3-001: an Act-mode
+   * list-then-move batch shows its size on the FIRST dialog instead of a
+   * singular headline. The scope also kills phantoms: an unrelated earlier
+   * listing never inflates a later approval outside its directory.
    * Optional so test/harness contexts need not provide it.
    */
-  noteEnumeration?: (fileCount: number) => void
+  noteEnumeration?: (fileCount: number, scopePath?: string) => void
   /**
    * Blocks until the user replies to an ask_user question. The bridge is the
    * synthetic `tool-output-available` chunk over `chat:part` carrying

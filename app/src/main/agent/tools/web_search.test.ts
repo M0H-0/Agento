@@ -290,6 +290,48 @@ describe('web_search — Tavily primary + keyless fallback', () => {
     expect(outcome.ok).toBe(false)
     expect(outcome.message).toContain('500')
   })
+
+  it('self-caps an oversized ranked result below the wrapper budget (Phase-1 item 1)', async () => {
+    // 8 huge hits would blow past the wrapper's 8 KB drop-everything truncation —
+    // the tool must keep the top-ranked hits with an honest truncated flag instead.
+    const hugeHits = Array.from({ length: 8 }, (_, i) => ({
+      title: `Hit ${i} ` + 'T'.repeat(300),
+      url: `https://example.com/${i}/` + 'u'.repeat(200),
+      snippet: 'S'.repeat(2000)
+    }))
+    const outcome = await harness.registry.run({
+      tool: 'web_search',
+      args: { query: 'oversized query' },
+      ctx: {
+        ...harness.ctx,
+        web: {
+          fetch: async () => ({ status: 200, contentType: 'text/html', body: '<html></html>' }),
+          tavily: { search: async () => hugeHits }
+        }
+      }
+    })
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok || !outcome.result) throw new Error('expected result')
+    const result = outcome.result as {
+      query: string
+      results: { title: string; url: string; snippet: string }[]
+      truncated: boolean
+      provider: string
+    }
+    // Ranked structure preserved (not the wrapper's { truncated, size, hint } envelope).
+    expect(Array.isArray(result.results)).toBe(true)
+    expect(result.provider).toBe('tavily')
+    expect(result.truncated).toBe(true)
+    // Top rank kept.
+    expect(result.results[0].title).toContain('Hit 0')
+    // Fits below the wrapper's 8 KB budget.
+    const size = Buffer.byteLength(JSON.stringify(result), 'utf8')
+    expect(size).toBeLessThanOrEqual(8 * 1024)
+    // Zero raw-JSON risk: every snippet stays a string, no envelope leak.
+    for (const hit of result.results) {
+      expect(typeof hit.snippet).toBe('string')
+    }
+  })
 })
 
 describe('parseTavilyResults — unit', () => {

@@ -11,12 +11,14 @@ export interface WebSearchCardProps extends Omit<BaseToolCardProps, 'meta' | 'ch
   query: string
   results: { title: string; url: string; snippet: string }[]
   provider?: 'tavily' | 'duckduckgo'
+  truncated?: boolean
 }
 
 export function WebSearchCard({
   query,
   results,
   provider,
+  truncated,
   ...rest
 }: WebSearchCardProps): React.JSX.Element {
   const { locale, t } = useLocale()
@@ -28,10 +30,15 @@ export function WebSearchCard({
           two: t('cards.webResultsTwo'),
           many: t('cards.webResultsMany')
         })
-  const meta =
+  const engine =
     provider === undefined
-      ? count
-      : `${count} · ${t(provider === 'tavily' ? 'cards.webViaTavily' : 'cards.webViaKeyless')}`
+      ? null
+      : t(provider === 'tavily' ? 'cards.webViaTavily' : 'cards.webViaKeyless')
+  // Phase-1 item 1: a self-capped ranking stays a ranked card, but the meta
+  // says honestly that it is partial — never a silent cut.
+  const meta = [count, engine, truncated === true ? t('cards.truncatedPreview') : null]
+    .filter((part): part is string => part !== null)
+    .join(' · ')
   return (
     <BaseToolCard {...rest} meta={meta} defaultOpen>
       <div className="semantic-card">

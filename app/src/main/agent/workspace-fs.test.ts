@@ -134,6 +134,33 @@ describe('createWorkspaceFs — containment backstop', () => {
     }
   })
 
+  it('S3-006: fs error detail never leaks the absolute workspace root', () => {
+    // Live repro: a failed move_path card printed the raw ENOENT with both
+    // absolute rename ends. The errno detail must be redacted to relative.
+    const ws = createTempWorkspace()
+    try {
+      const fs = createWorkspaceFs(ws.root)
+      ws.write('a.txt', 'alpha')
+      mkdirSync(join(ws.root, 'sub'))
+      ws.write('sub/keep.txt', 'keep')
+      let message = ''
+      try {
+        // Dest is a non-empty dir: rmdirSync throws ENOTEMPTY naming it.
+        fs.movePath(join(ws.root, 'a.txt'), join(ws.root, 'sub'))
+      } catch (error) {
+        expect(error).toBeInstanceOf(WorkspaceFsRefusalError)
+        message = error instanceof Error ? error.message : String(error)
+      }
+      expect(message.length).toBeGreaterThan(0)
+      expect(message).toContain('a.txt')
+      expect(message).not.toContain(ws.root)
+      // No drive-letter remnant of the root either (C:\…\ on Windows).
+      expect(message).not.toMatch(/[A-Za-z]:\\/)
+    } finally {
+      ws.cleanup()
+    }
+  })
+
   it('round-trips invalid-UTF-8 bytes without corruption', () => {
     const ws = createTempWorkspace()
     try {

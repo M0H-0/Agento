@@ -15,6 +15,12 @@ import { containsAssistantAddressedText, wrapUntrusted } from '../untrusted'
 const SEARCH_ENDPOINT = 'https://html.duckduckgo.com/html/?q='
 const MAX_RESULTS = 8
 const MAX_SNIPPET_CHARS = 300
+// Phase-1 item 1: ranked outputs must never hit the wrapper's 8 KB drop-everything
+// truncation (registry.ts MAX_TOOL_OUTPUT_BYTES) — the wrapper envelope carries no
+// ranking, and the card would fall back to a generic notice. Self-cap below the
+// wrapper budget so an oversized result keeps its top-ranked hits with an honest
+// truncated flag instead.
+const WEB_SEARCH_OUTPUT_BUDGET_BYTES = 7_000
 
 export type WebSearchProvider = 'tavily' | 'duckduckgo'
 
@@ -163,14 +169,53 @@ function success(
       ? wrapUntrusted(`search result ${result.url}`, result.snippet)
       : result.snippet
   }))
+  // Self-cap: drop lowest-ranked hits until the serialized output fits the
+  // budget. Rank order is preserved (top hits kept); truncation is honest.
+  let kept = results
+  let truncated = parsedTotal > results.length
+  while (kept.length > 1) {
+    const candidate = {
+      query,
+      results: kept,
+      truncated,
+      provider
+    }
+    const size = Buffer.byteLength(JSON.stringify(candidate), 'utf8')
+    if (size <= WEB_SEARCH_OUTPUT_BUDGET_BYTES) break
+    kept = kept.slice(0, -1)
+    truncated = true
+  }
+  // Single huge hit that still exceeds the budget: trim its snippet to fit.
+  if (kept.length === 1) {
+    const single = kept[0]
+    if (single) {
+      let snippet = single.snippet
+      while (snippet.length > 0) {
+        const candidate = {
+          query,
+          results: [{ ...single, snippet }],
+          truncated: true,
+          provider
+        }
+        if (
+          Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= WEB_SEARCH_OUTPUT_BUDGET_BYTES
+        ) {
+          break
+        }
+        snippet = snippet.slice(0, Math.max(0, snippet.length - 500))
+      }
+      kept = [{ ...single, snippet }]
+      truncated = true
+    }
+  }
   return {
     ok: true,
     output: {
       query,
-      results,
-      truncated: parsedTotal > results.length,
+      results: kept,
+      truncated,
       provider,
-      ...(results.some((result) => containsAssistantAddressedText(result.snippet))
+      ...(kept.some((result) => containsAssistantAddressedText(result.snippet))
         ? { suspicious: true as const }
         : {})
     }

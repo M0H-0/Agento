@@ -4,7 +4,7 @@ import { APICallError, RetryError } from 'ai'
 import { MockLanguageModelV2, simulateReadableStream } from 'ai/test'
 import type { LanguageModelV2StreamPart } from '@ai-sdk/provider'
 import { z } from 'zod'
-import { createToolRegistry } from './registry'
+import { createToolRegistry, ToolFailureError } from './registry'
 import { buildRunContext, newRunId } from './context'
 import { friendlyProviderError, runPlanFirstTurn } from './plan-run'
 import type { PlanRunDeps, PlanRunOutcome } from './plan-run'
@@ -521,8 +521,9 @@ describe('runPlanFirstTurn — the plan-first loop', () => {
     // No plan phase at all — exactly the two execution turns (tool turn +
     // post-tool followup), and the gate was never consulted.
     expect(model.doStreamCalls.length).toBe(2)
-    // The execution text gives the persisted reply.
-    expect(outcome.assistantMessage?.parts).toEqual([{ type: 'text', text: 'done' }])
+    // The execution text gives the persisted reply (S5-001: alongside the
+    // executed tool's own persisted part).
+    expect(outcome.assistantMessage?.parts).toContainEqual({ type: 'text', text: 'done' })
   })
 })
 
@@ -573,5 +574,16 @@ describe('friendlyProviderError — copy classification + diagnosability (M3.8)'
       errors: [apiCall(429, 'rate limit')]
     })
     expect(friendlyProviderError(wrapped, 'plan')).toContain('rate-limiting')
+  })
+
+  it('a tool failure keeps its plain sentence — never provider copy (Phase-1 item 1)', () => {
+    const failure = new ToolFailureError(
+      'That page could not be fetched — getaddrinfo ENOTFOUND.',
+      'web_fetch'
+    )
+    const copy = friendlyProviderError(failure)
+    expect(copy).toContain('could not be fetched')
+    expect(copy).not.toContain('model provider')
+    expect(copy).not.toContain('connection')
   })
 })

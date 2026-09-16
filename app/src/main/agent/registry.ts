@@ -26,6 +26,25 @@ import { ToolRefusalError, resolveWorkspacePath } from './sandbox'
  *  constant. 8 KB is generous for tool metadata while keeping the context lean. */
 export const MAX_TOOL_OUTPUT_BYTES = 8 * 1024
 
+/**
+ * Thrown by the AI SDK tool wrapper when a tool refuses or fails. The chat
+ * pipeline's stream `onError` classifier must surface `message` verbatim — a
+ * tool failure is not a provider failure (Phase-1 item 1, 2026-09-14: live
+ * showed a DNS-failed web_fetch card wearing "Something went wrong talking to
+ * the model provider", which is a lie about what failed). The plain message
+ * was already written for the user; the technical detail stays in the
+ * tool_calls audit row.
+ */
+export class ToolFailureError extends Error {
+  constructor(
+    message: string,
+    readonly tool: string
+  ) {
+    super(message)
+    this.name = 'ToolFailureError'
+  }
+}
+
 export interface ToolRegistry {
   define<TInput, TOutput>(tool: ToolDefinition<TInput, TOutput>): void
   get(name: string): ToolDefinition | undefined
@@ -120,12 +139,20 @@ function truncatedResult(tool: string, result: ToolResult): ToolCallOutcome {
   if (size <= MAX_TOOL_OUTPUT_BYTES) {
     return { ok: result.ok, status: 'executed', tool, message: 'Done.', result: result.output }
   }
+  // Phase-1 item 1 honesty: the wrapper cannot preserve ranked structure when
+  // it truncates — it drops the payload. The envelope key is `outputTruncated`
+  // (NOT `truncated`): tools use a domain-level `truncated` flag for honest
+  // partial output (paged reads, capped searches), and sharing the key made the
+  // AI SDK boundary below drop those results too. The card renders this
+  // envelope as a plain-language notice (GenericToolCard), never raw JSON, and
+  // ranked tools (web_search) self-cap below this budget so this path stays a
+  // backstop. The full detail is NOT retained anywhere, so no copy claims it.
   return {
     ok: result.ok,
     status: 'executed',
     tool,
-    message: 'Done (result was large — the full detail is in the session log).',
-    result: { truncated: true, size, hint: 'Large tool result; check the session log.' }
+    message: 'Done (result was large — only the first part is shown).',
+    result: { outputTruncated: true, size, hint: 'This result was too large to show fully.' }
   }
 }
 export function createToolRegistry(): ToolRegistry {
@@ -247,7 +274,15 @@ export function createToolRegistry(): ToolRegistry {
     // snapshot, no mutation, run semantics left to the loop.
     const askRisk1 = risk.level === 1 && input.ctx.approvalPolicy?.askRisk1 === true
     const autoRisk2 = risk.level === 2 && input.ctx.approvalPolicy?.autoRisk2 === true
-    if ((risk.level >= 2 && !autoRisk2) || askRisk1) {
+    // S3-005 one-confirmation rule: an affirmative ask_user answer arms a
+    // one-shot grant (see ask_user.isAffirmativeAnswer) that this stage
+    // consumes INSTEAD of raising a second dialog. Never enters the
+    // coalescer, so a later same-shape call still asks on its own.
+    const askGranted = input.ctx.askApprovalGrant?.granted === true
+    if (askGranted && input.ctx.askApprovalGrant) {
+      input.ctx.askApprovalGrant.granted = false
+    }
+    if (((risk.level >= 2 && !autoRisk2) || askRisk1) && !askGranted) {
       const decision = await input.ctx.requestApproval({
         tool: tool.name,
         title: tool.describe(resolvedInput as never).title,
@@ -371,9 +406,11 @@ export function createToolRegistry(): ToolRegistry {
         // The AI SDK consumes whatever the execute returns as the tool
         // output (and renders it in the card body). Refusals/skips/
         // cancellations become a plain-language message object so the
-        // card is honest about what happened.
+        // card is honest about what happened. Failures throw
+        // ToolFailureError so the stream's onError classifier can pass the
+        // plain sentence through instead of provider copy.
         if (outcome.status === 'refused') {
-          throw new Error(outcome.message)
+          throw new ToolFailureError(outcome.message, name)
         }
         if (outcome.status === 'skipped') {
           return { __agentoOutcome: 'skipped', message: outcome.message }
@@ -382,13 +419,23 @@ export function createToolRegistry(): ToolRegistry {
           return { __agentoOutcome: 'cancelled', message: outcome.message }
         }
         if (outcome.ok === false) {
-          throw new Error(outcome.message)
+          throw new ToolFailureError(outcome.message, name)
         }
         // 'executed' (the success path) — `outcome.result` is the wrapper's
-        // shape (may be the `truncated` envelope); unwrap when present.
-        const result = outcome.result as { truncated?: boolean; hint?: string } | undefined
-        if (result && typeof result === 'object' && 'truncated' in result && result.truncated) {
-          return { truncated: true, hint: result.hint ?? 'Large result; see session log.' }
+        // shape (may be the `outputTruncated` envelope); pass it through when
+        // present. Tool-level `truncated` flags ride their domain output
+        // untouched — they are honest partial results, not the envelope.
+        const result = outcome.result as { outputTruncated?: boolean; hint?: string } | undefined
+        if (
+          result &&
+          typeof result === 'object' &&
+          'outputTruncated' in result &&
+          result.outputTruncated
+        ) {
+          return {
+            outputTruncated: true,
+            hint: result.hint ?? 'This result was too large to show fully.'
+          }
         }
         return result
       }

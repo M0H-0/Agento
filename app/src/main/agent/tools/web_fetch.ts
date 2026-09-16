@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { ToolDefinition } from '../types'
 import { containsAssistantAddressedText, wrapUntrusted } from '../untrusted'
+import { WebFetchRefusalError } from '../web-fetch-guard'
 
 // MVP tool (MVP_PLAN.md): fetch a web page over plain HTTP GET and return
 // readable text. No search engine, no JS rendering. The network call itself
@@ -123,6 +124,13 @@ export const webFetchTool: ToolDefinition<
         }
       }
     } catch (error) {
+      // The SSRF guard already wrote a complete sentence — wrapping it again
+      // produced "That page could not be fetched — That page could not be
+      // fetched — …" in the live Phase-1 item 1 run. Raw network errors keep
+      // the tool's framing.
+      if (error instanceof WebFetchRefusalError) {
+        return failure(input, error.message)
+      }
       return failure(
         input,
         error instanceof Error

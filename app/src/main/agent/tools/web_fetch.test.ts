@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { webFetchTool, htmlToText } from './web_fetch'
+import { WebFetchRefusalError } from '../web-fetch-guard'
 import { createHandlerHarness, createTempWorkspace } from '../testing/harness'
 import type { TempWorkspace } from '../testing/harness'
 
@@ -129,6 +130,26 @@ describe('web_fetch — read-only', () => {
     })
     expect(outcome.ok).toBe(false)
     expect(outcome.message).toContain('could not be fetched')
+    // Raw network errors get the tool's framing exactly once.
+    expect(outcome.message.match(/could not be fetched/g)).toHaveLength(1)
+  })
+
+  it('passes a complete SSRF-guard sentence through verbatim (no double framing)', async () => {
+    const guardCopy = 'That page could not be fetched — getaddrinfo ENOTFOUND no-such-host.invalid.'
+    const outcome = await harness.registry.run({
+      tool: 'web_fetch',
+      args: { url: 'https://no-such-host.invalid/' },
+      ctx: {
+        ...harness.ctx,
+        web: {
+          fetch: async () => {
+            throw new WebFetchRefusalError(guardCopy)
+          }
+        }
+      }
+    })
+    expect(outcome.ok).toBe(false)
+    expect(outcome.message).toBe(guardCopy)
   })
 })
 

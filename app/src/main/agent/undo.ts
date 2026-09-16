@@ -34,6 +34,12 @@ export interface UndoStore {
   getCheckpoint(id: string): UndoCheckpoint | undefined
   /** Newest-first, for undo-all replay order. */
   activeCheckpoints(sessionId: string): UndoCheckpoint[]
+  /** All rows newest-first (active + reverted) — undo-all needs the oldest
+   * pre-conversation snapshot per path, which is usually already reverted
+   * after per-item undos. Stores without history may return active only;
+   * the engine falls back to the active set (legacy single-pass behavior
+   * cannot hold in that case — see undoAllCheckpoints). */
+  allCheckpoints(sessionId: string): UndoCheckpoint[]
   markReverted(id: string, at: string): void
   appendUndoRow(input: {
     sessionId: string
@@ -176,41 +182,206 @@ export function undoCheckpoint(
 }
 
 /**
- * Undo all active checkpoints (docs/03 §8), group-aware. Rows sharing a
- * toolCallId are one mutation (M2.7: a move lands a source row + a dest
- * row) and must replay OLDEST-first within the group: undoing a
- * move-onto-existing dest row first would overwrite the dest with its stale
- * content, destroying the moved bytes the source row needs to rename back.
- * Groups replay newest-group-first; singletons behave as before. Refusals
- * never stop the replay — an evicted snapshot must not block the rest — and
- * every per-item outcome is reported so the panel stays honest.
+ * Undo all (docs/03 §8): restore every touched path to its pre-conversation
+ * state — the OLDEST snapshot per path — regardless of intermediate per-item
+ * undos/redos.
+ *
+ * Why not "revert every active row" (S5-002): per-item undo appends redoable
+ * restore rows, so the newest active row per path is often a redo capture
+ * (post-mutation state). Reverting it re-applies the mutation — and a second
+ * undo-all then reverts the first's restore rows, deleting files. Instead:
+ * for each path, compare the disk against the oldest row and restore only on
+ * mismatch; when the disk already matches, consume the active rows with no
+ * disk write (idempotent — a second undo-all is a no-op, never a delete).
+ *
+ * Move pairs stay atomic: a source row carrying destPath renames the dest
+ * back first, so source paths process before their destinations. Refusals
+ * never stop the replay and refused rows stay active (retryable).
  */
 export function undoAllCheckpoints(
   store: UndoStore,
   fs: WorkspaceFs,
   sessionId: string
 ): UndoResult[] {
-  // activeCheckpoints arrives newest-first; snapshot the list (undo appends
-  // rows as it goes, which must not join this replay).
-  const all = store.activeCheckpoints(sessionId)
-  const groups = new Map<string, UndoCheckpoint[]>()
-  const order: string[] = []
-  for (const cp of all) {
-    const key = cp.toolCallId ?? `solo:${cp.id}`
-    const group = groups.get(key)
-    if (group) group.push(cp)
+  // Full history newest-first (undo appends rows as it goes, which must not
+  // join this replay — snapshot both lists up front).
+  const history =
+    typeof store.allCheckpoints === 'function'
+      ? store.allCheckpoints(sessionId)
+      : store.activeCheckpoints(sessionId)
+  const active = store.activeCheckpoints(sessionId)
+  const activeIdsByPath = new Map<string, string[]>()
+  const activeOrder: string[] = []
+  for (const cp of active) {
+    const list = activeIdsByPath.get(cp.path)
+    if (list) list.push(cp.id)
     else {
-      groups.set(key, [cp])
-      order.push(key)
+      activeIdsByPath.set(cp.path, [cp.id])
+      activeOrder.push(cp.path)
+    }
+  }
+  // Oldest row per path: history is newest-first, so the LAST occurrence
+  // (earliest created) wins — always an original mutation, never an undo
+  // row (undo rows are appended later for an already-touched path).
+  const oldestByPath = new Map<string, UndoCheckpoint>()
+  for (let i = history.length - 1; i >= 0; i--) {
+    const cp = history[i] as UndoCheckpoint
+    if (!oldestByPath.has(cp.path)) oldestByPath.set(cp.path, cp)
+  }
+  // Source paths (move rows carrying destPath) first so the rename lands
+  // before the destination's own restore; remaining paths in newest-active
+  // order for determinism.
+  const sourcePaths: string[] = []
+  const otherPaths: string[] = []
+  const seen = new Set<string>()
+  for (const path of activeOrder) {
+    if (seen.has(path)) continue
+    seen.add(path)
+    const oldest = oldestByPath.get(path)
+    if (oldest?.destPath) sourcePaths.push(path)
+    else otherPaths.push(path)
+  }
+  for (const [path] of oldestByPath) {
+    if (!seen.has(path) && activeIdsByPath.has(path)) {
+      seen.add(path)
+      const oldest = oldestByPath.get(path)
+      if (oldest?.destPath) sourcePaths.push(path)
+      else otherPaths.push(path)
     }
   }
   const results: UndoResult[] = []
-  for (const key of order) {
-    const group = groups.get(key) as UndoCheckpoint[]
-    // Newest-first within the group → reverse into snapshot (oldest-first).
-    for (let i = group.length - 1; i >= 0; i--) {
-      results.push(undoCheckpoint(store, fs, (group[i] as UndoCheckpoint).id))
+  const markConsumed = (ids: string[]): void => {
+    const at = new Date().toISOString()
+    for (const id of ids) {
+      try {
+        store.markReverted(id, at)
+      } catch {
+        // Consume best-effort — the disk state is the arbiter.
+      }
     }
+  }
+  const diskMatches = (oldest: UndoCheckpoint): boolean => {
+    try {
+      if (oldest.isDir) {
+        if (!oldest.existed) return !fs.existsSync(oldest.path)
+        return fs.isDirectory(oldest.path)
+      }
+      if (!oldest.existed) return !fs.existsSync(oldest.path)
+      if (!fs.existsSync(oldest.path) || fs.isDirectory(oldest.path)) return false
+      if (oldest.content === null || oldest.sha256 === null) return false
+      const current = fs.readFileBytes(oldest.path)
+      const encoded = encodeSnapshotContent(current)
+      return sha256Hex(encoded) === oldest.sha256
+    } catch {
+      return false
+    }
+  }
+  const restorePath = (oldest: UndoCheckpoint): UndoResult => {
+    const ids = activeIdsByPath.get(oldest.path) ?? []
+    const checkpointId = oldest.id
+    // Already pre-conversation: consume redo rows, no disk write, no new row
+    // (a second undo-all must be a no-op, never a delete).
+    if (diskMatches(oldest)) {
+      markConsumed(ids)
+      return {
+        ok: true,
+        checkpointId,
+        undoneId: ids[0] ?? oldest.id,
+        action: 'Already restored.'
+      }
+    }
+    // Capture pre-restore state so this undo-all stays undoable per item.
+    const targetIsDir = (() => {
+      try {
+        return fs.isDirectory(oldest.path)
+      } catch {
+        return false
+      }
+    })()
+    const targetExisted = (() => {
+      try {
+        return fs.existsSync(oldest.path)
+      } catch {
+        return false
+      }
+    })()
+    let preContent: string | null = null
+    if (targetExisted && !targetIsDir) {
+      try {
+        preContent = encodeSnapshotContent(fs.readFileBytes(oldest.path))
+      } catch {
+        return refusal(
+          checkpointId,
+          "I could not read the current state of that path, so I won't guess at restoring it. Nothing was changed."
+        )
+      }
+    }
+    // Refusal pre-checks mirror undoCheckpoint: evicted/corrupt snapshots
+    // refuse with the row left active (retryable), never fabricating.
+    const destAlive =
+      oldest.destPath !== null &&
+      (() => {
+        try {
+          return fs.existsSync(oldest.destPath as string)
+        } catch {
+          return false
+        }
+      })()
+    if (!destAlive && oldest.existed && !oldest.isDir) {
+      const problem = verifyStoredContent(oldest)
+      if (problem === 'evicted') return refusal(checkpointId, EVICTED_COPY)
+      if (problem === 'corrupt') {
+        return refusal(
+          checkpointId,
+          'The stored snapshot for that change failed its integrity check, so I refused to write it back. Nothing was changed.'
+        )
+      }
+    }
+    let undoneId = ids[0] ?? oldest.id
+    try {
+      undoneId = store.appendUndoRow({
+        sessionId: oldest.sessionId,
+        toolCallId: null,
+        path: oldest.path,
+        existed: targetExisted,
+        isDir: targetIsDir,
+        content: preContent
+      }).id
+    } catch {
+      // Append best-effort — still attempt the restore below.
+    }
+    try {
+      if (destAlive && oldest.destPath) {
+        fs.movePath(oldest.destPath, oldest.path)
+        markConsumed(ids)
+        return { ok: true, checkpointId, undoneId, action: 'Restored the original name.' }
+      }
+      if (!oldest.existed) {
+        if (targetExisted) fs.deletePath(oldest.path)
+        markConsumed(ids)
+        return { ok: true, checkpointId, undoneId, action: 'Removed what was created.' }
+      }
+      if (oldest.isDir) {
+        if (!targetExisted) fs.mkdir(oldest.path)
+        markConsumed(ids)
+        return { ok: true, checkpointId, undoneId, action: 'Restored the folder.' }
+      }
+      const raw =
+        decodeSnapshotContent(oldest.content as string) ??
+        Buffer.from(oldest.content as string, 'utf8')
+      fs.writeFileBytes(oldest.path, raw)
+      markConsumed(ids)
+      return { ok: true, checkpointId, undoneId, action: 'Restored the previous content.' }
+    } catch (error) {
+      if (error instanceof WorkspaceFsRefusalError) return refusal(checkpointId, error.message)
+      throw error
+    }
+  }
+  for (const path of [...sourcePaths, ...otherPaths]) {
+    const oldest = oldestByPath.get(path)
+    if (!oldest) continue
+    if (!activeIdsByPath.has(path)) continue
+    results.push(restorePath(oldest))
   }
   return results
 }
