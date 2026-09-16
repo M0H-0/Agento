@@ -383,7 +383,11 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
     }
     // Scoped enumeration (S3-001): the gated paths fall under the listed
     // directory — works with or without plan steps, so Act-mode
-    // list-then-move batches project on the FIRST dialog.
+    // list-then-move batches project on the FIRST dialog. An enumeration
+    // NEVER applies outside its directory: a leftover listing (scoped or
+    // unscoped) must not inflate a later approval elsewhere into a phantom
+    // "(batch of N)" — and, worse, escalate a risk-2 batch to risk 3, which
+    // put the "Delete permanently" verb on a move dialog.
     if (
       lastEnumeration !== null &&
       lastEnumScope !== null &&
@@ -391,11 +395,7 @@ export function buildRunContext(deps: RunContextDeps): RunContextBundle {
     ) {
       return lastEnumeration
     }
-    // No plan step, no projection: a leftover enumeration from an earlier
-    // unrelated read (e.g. list_dir in plain Act mode) must not inflate a
-    // later single-file approval into a phantom "(batch of N)".
-    if (planSteps.length === 0) return null
-    return lastEnumeration
+    return null
   }
 
   // Open generations (approvalId per group key + generation): buffered calls

@@ -64,7 +64,7 @@ describe('approval promise (M3.2)', () => {
     expect(await pending).toBe('approve')
   })
 
-  it('falls back to the step enumeration when the plan states no number', async () => {
+  it('falls back to the scoped step enumeration when the plan states no number', async () => {
     const emitted: { channel: string; payload: unknown }[] = []
     const run = buildRunContext({
       sender: { emit: (channel, payload) => emitted.push({ channel, payload }) },
@@ -73,12 +73,77 @@ describe('approval promise (M3.2)', () => {
       workspaceRoot: 'C:/ws'
     })
     run.setPlanSteps([{ id: 's1', description: 'Move every .txt file', tool: 'move' }])
-    run.ctx.noteEnumeration?.(6)
-    const pending = run.ctx.requestApproval(req)
+    run.ctx.noteEnumeration?.(6, 'C:/ws')
+    const pending = run.ctx.requestApproval({
+      tool: 'move_path',
+      title: 'Move a.txt',
+      riskLevel: 2,
+      reason: 'move',
+      paths: ['C:/ws/a.txt', 'C:/ws/dest/a.txt']
+    })
     const event = emitted.find(
       (e) => (e.payload as { type?: string }).type === 'approval/requested'
     )
     expect((event?.payload as { count?: number }).count).toBe(6)
+    expect(run.resolveApproval(run._pendingApprovalIds()[0] as string, 'approve')).toBe(true)
+    expect(await pending).toBe('approve')
+  })
+
+  it('never escalates a risk-2 batch from an out-of-scope enumeration (Delete-verb bug)', async () => {
+    // Live repro: a batch-move dialog showed "Delete permanently" — a
+    // leftover enumeration (> 25) leaked through the unscoped fallback and
+    // escalated the move group to risk 3. The dialog must stay risk 2 with
+    // no phantom count.
+    const emitted: { channel: string; payload: unknown }[] = []
+    const run = buildRunContext({
+      sender: { emit: (channel, payload) => emitted.push({ channel, payload }) },
+      sessionId: 's-no-phantom-escalation',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    run.setPlanSteps([{ id: 's1', description: 'Move every .txt file', tool: 'move' }])
+    run.ctx.noteEnumeration?.(30, 'C:/ws/invoices')
+    const pending = run.ctx.requestApproval({
+      tool: 'move_path',
+      title: 'Move todo.txt',
+      riskLevel: 2,
+      reason: 'move',
+      paths: ['C:/ws/todo.txt', 'C:/ws/done/todo.txt']
+    })
+    const event = emitted.find(
+      (e) => (e.payload as { type?: string }).type === 'approval/requested'
+    )
+    expect(event).toBeDefined()
+    expect((event?.payload as { riskLevel?: number }).riskLevel).toBe(2)
+    expect((event?.payload as { count?: number }).count).toBeUndefined()
+    expect((event?.payload as { body?: string }).body).not.toContain('batch of')
+    expect(run.resolveApproval(run._pendingApprovalIds()[0] as string, 'approve')).toBe(true)
+    expect(await pending).toBe('approve')
+  })
+
+  it('ignores an unscoped enumeration even when plan steps exist', async () => {
+    const emitted: { channel: string; payload: unknown }[] = []
+    const run = buildRunContext({
+      sender: { emit: (channel, payload) => emitted.push({ channel, payload }) },
+      sessionId: 's-unscoped-with-plan',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    run.setPlanSteps([{ id: 's1', description: 'Move every .txt file', tool: 'move' }])
+    run.ctx.noteEnumeration?.(30)
+    const pending = run.ctx.requestApproval({
+      tool: 'move_path',
+      title: 'Move todo.txt',
+      riskLevel: 2,
+      reason: 'move',
+      paths: ['C:/ws/todo.txt', 'C:/ws/done/todo.txt']
+    })
+    const event = emitted.find(
+      (e) => (e.payload as { type?: string }).type === 'approval/requested'
+    )
+    expect(event).toBeDefined()
+    expect((event?.payload as { riskLevel?: number }).riskLevel).toBe(2)
+    expect((event?.payload as { count?: number }).count).toBeUndefined()
     expect(run.resolveApproval(run._pendingApprovalIds()[0] as string, 'approve')).toBe(true)
     expect(await pending).toBe('approve')
   })
