@@ -228,7 +228,7 @@ export async function semanticSearch(
     for (let i = 0; i < texts.length; i += EMBED_BATCH) {
       const batch = texts.slice(i, i + EMBED_BATCH)
       const batchVectors = await deps.embedTexts(batch)
-      if (batchVectors.length !== batch.length) {
+      if (!Array.isArray(batchVectors) || batchVectors.length !== batch.length) {
         throw new Error('The embedding service returned the wrong number of vectors.')
       }
       vectors.push(...batchVectors)
@@ -246,10 +246,27 @@ export async function semanticSearch(
   }
 
   // Pass 3 — embed the query and rank every cached chunk by cosine similarity.
-  const [queryVector] = await deps.embedTexts([query])
+  // Validated like Pass 2: a missing/short query vector used to explode later
+  // as a cryptic TypeError inside cosine() instead of the honest copy above.
+  const queryVectors = await deps.embedTexts([query])
+  const queryVector = queryVectors[0]
+  if (
+    !Array.isArray(queryVectors) ||
+    queryVectors.length !== 1 ||
+    !Array.isArray(queryVector) ||
+    queryVector.length === 0
+  ) {
+    throw new Error('The embedding service returned the wrong number of vectors.')
+  }
   const ranked: { filePath: string; chunk: CacheChunk }[] = []
   for (const [filePath, entry] of Object.entries(cache.entries)) {
     for (const chunk of entry.chunks) ranked.push({ filePath, chunk })
+  }
+  // A stale cache (older model dims) must fail honestly, not rank NaN.
+  for (const { chunk } of ranked) {
+    if (!Array.isArray(chunk.vector) || chunk.vector.length !== queryVector.length) {
+      throw new Error('The embedding service returned an unexpected response.')
+    }
   }
   return ranked
     .map(({ filePath, chunk }) => ({ filePath, chunk, score: cosine(queryVector, chunk.vector) }))

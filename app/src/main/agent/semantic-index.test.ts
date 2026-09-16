@@ -144,6 +144,43 @@ describe('semanticSearch — indexer + ranking', () => {
     const results = await semanticSearch(deps, root, 'pricing', 99)
     expect(results.length).toBe(2)
   })
+
+  it('fails honestly when the embedder returns too few batch vectors', async () => {
+    const { deps } = makeDeps(['pricing'])
+    const fs = createWorkspaceFs(root)
+    fs.writeFileAtomic(join(root, 'pricing.md'), 'Pricing overview.')
+    deps.embedTexts = async () => []
+
+    await expect(semanticSearch(deps, root, 'pricing')).rejects.toThrow('wrong number of vectors')
+  })
+
+  it('fails honestly when the query embed returns no vector', async () => {
+    const { deps } = makeDeps(['pricing'])
+    const fs = createWorkspaceFs(root)
+    fs.writeFileAtomic(join(root, 'pricing.md'), 'Pricing overview.')
+    let calls = 0
+    deps.embedTexts = async (texts: string[]) => {
+      calls += 1
+      if (calls === 1) return texts.map(() => [1, 0])
+      return []
+    }
+
+    await expect(semanticSearch(deps, root, 'pricing')).rejects.toThrow('wrong number of vectors')
+  })
+
+  it('fails honestly on stale-cache dimension mismatch', async () => {
+    const { deps } = makeDeps(['pricing'])
+    const fs = createWorkspaceFs(root)
+    fs.writeFileAtomic(join(root, 'pricing.md'), 'Pricing overview.')
+    let calls = 0
+    deps.embedTexts = async (texts: string[]) => {
+      calls += 1
+      if (calls === 1) return texts.map(() => [1, 0])
+      return texts.map(() => [1, 0, 0])
+    }
+
+    await expect(semanticSearch(deps, root, 'pricing')).rejects.toThrow('unexpected response')
+  })
 })
 
 describe('chunkText — windows', () => {

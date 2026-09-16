@@ -83,18 +83,27 @@ export function createDocument(
 }
 
 /** POST /embed/embed {texts} → {vectors} (MVP step 5). The generous timeout
- * covers the first-call ~90 MB model download plus a full-workspace batch. */
+ * covers the first-call ~90 MB model download plus a full-workspace batch.
+ * Unwraps the `{vectors}` envelope — returning the raw body (the pre-fix
+ * shape) breaks every caller with a length mismatch. */
 export function embedTexts(texts: string[]): Promise<number[][]> {
-  return postJson('/embed/embed', { texts }, 300_000)
+  return postJson<{ vectors: unknown }>('/embed/embed', { texts }, 300_000).then((body) => {
+    if (body === null || typeof body !== 'object' || !Array.isArray(body.vectors)) {
+      throw new Error('The embedding service returned an unexpected response.')
+    }
+    return body.vectors as number[][]
+  })
 }
 
 /** MVP step 5: pull the embedding model into the local cache at app boot
  * (once the sidecar is healthy) so the first semantic search never waits on
  * a download. Best-effort — failures are swallowed by design. */
 export function warmEmbeddingModel(): Promise<unknown> {
-  return postJson('/embed/embed', { texts: ['warmup'] }, 300_000).catch((error: unknown) => {
-    console.error('[semantic] embedding model warmup failed:', error)
-  })
+  return postJson<{ vectors: unknown }>('/embed/embed', { texts: ['warmup'] }, 300_000).catch(
+    (error: unknown) => {
+      console.error('[semantic] embedding model warmup failed:', error)
+    }
+  )
 }
 
 /** POST /intent/classify {message} → {intent, confidence} (MVP step 6).
