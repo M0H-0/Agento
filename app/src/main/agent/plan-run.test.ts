@@ -366,6 +366,79 @@ describe('runPlanFirstTurn — the plan-first loop', () => {
     expect(outcome.heldFinish?.type).toBe('finish')
   })
 
+  it('think-tagged text deltas never reach the thread or persistence', async () => {
+    // Demo-breaker: thinking models on OpenAI-compatible providers emit raw
+    // `<think>…</think>` deliberation (naming internal tools) inside text
+    // deltas. It must be stripped before the thread and the persisted
+    // message — the tag is split across deltas here on purpose.
+    executed = 0
+    const run = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-thinkstrip',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    const registry = createToolRegistry()
+    registry.define(emitPlanTool)
+    registry.define(stubAction)
+    const thinkChunks: LanguageModelV2StreamPart[] = [
+      { type: 'stream-start', warnings: [] },
+      { type: 'text-start', id: 'act-text-1' },
+      {
+        type: 'text-delta',
+        id: 'act-text-1',
+        delta: '<think>Let me consider calling emit_plan with care…'
+      },
+      { type: 'text-delta', id: 'act-text-1', delta: 'still deliberating…</th' },
+      { type: 'text-delta', id: 'act-text-1', delta: 'ink>All done.' },
+      { type: 'text-end', id: 'act-text-1' },
+      {
+        type: 'finish',
+        finishReason: 'stop',
+        usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 }
+      }
+    ]
+    const turns = twoMockTurns()
+    const streams = [
+      turns.plan,
+      turns.exec,
+      { stream: simulateReadableStream({ chunks: thinkChunks }) }
+    ]
+    const model = new MockLanguageModelV2({
+      provider: 'mock',
+      modelId: 'plan-run-test-thinkstrip',
+      doStream: async () => {
+        const next = streams.shift()
+        if (!next) throw new Error('unexpected extra doStream call')
+        return next as never
+      }
+    })
+    const sentParts: UIMessageChunk[] = []
+    const outcome = await runPlanFirstTurn({
+      model,
+      system: 'test system',
+      messages: USER_MESSAGES,
+      registry,
+      ctx: run.ctx,
+      requestPlanStart: () => Promise.resolve({ approved: true }),
+      sendPart: (part) => sentParts.push(part),
+      onPlanCreated: () => undefined,
+      signal: new AbortController().signal
+    })
+    expect(outcome.planApproved).toBe(true)
+    const threadText = sentParts
+      .filter((p) => p.type === 'text-delta')
+      .map((p) => (p as { delta: string }).delta)
+      .join('')
+    expect(threadText).toBe('All done.')
+    expect(threadText).not.toContain('emit_plan')
+    const persistedText = (outcome.assistantMessage?.parts ?? [])
+      .filter((p) => p.type === 'text')
+      .map((p) => (p as { text: string }).text)
+      .join('')
+    expect(persistedText).toBe('All done.')
+  })
+
   it('M3.8: both attempts answer in text → only the RETRY is delivered, never doubled', async () => {
     // The doubled greeting: with a single shared accumulator the first
     // attempt's partial text leaked into the final message. The retry is the

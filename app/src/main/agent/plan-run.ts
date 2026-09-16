@@ -3,6 +3,7 @@ import type { LanguageModel, LanguageModelUsage, ModelMessage, UIMessage, UIMess
 import { convertToModelMessages } from 'ai'
 import { AssistantMessageAccumulator } from './assistant-accumulator'
 import { stripStepReasoning } from './prepare-step'
+import { createThinkStripper, thinkTailParts } from './think-strip'
 import { ToolFailureError } from './registry'
 import type { ToolRegistry } from './registry'
 import type { ToolExecutionContext } from './types'
@@ -433,6 +434,24 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
   // the finish for the settle point, treat error-on-abort as the abort
   // signature, drop streaming tool-input deltas (the append-only argsText
   // invariant — M2.5 gate finding), and drop emit_plan parts (see header).
+  // Raw `<think>…</think>` deliberation is stripped from text deltas before
+  // either sink sees it — thinking models on OpenAI-compatible providers
+  // emit it as text, and it must never reach the thread or persistence.
+  // One instance per run, fed in stream order (tags may split across deltas).
+  const thinkStrip = createThinkStripper()
+  let thinkTailSeq = 0
+  // Release a stream-end held fragment (visible text ending in `<…`) through
+  // the live sinks — without this the trailing chars would be dropped.
+  const flushThinkTailLive = (): void => {
+    thinkTailSeq += 1
+    const triple = thinkTailParts(`think-tail-${thinkTailSeq}`, thinkStrip.flush())
+    if (triple) {
+      for (const tailPart of triple) {
+        accumulator.addChunk(tailPart)
+        deps.sendPart(tailPart)
+      }
+    }
+  }
   //
   // IMPORTANT (M3.1 mechanism finding): the UI stream MUST be consumed to the
   // terminal `finish` with the SAME observable sequence chat.ts used (per-part
@@ -444,7 +463,16 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
   const forwardStream = async (result: {
     toUIMessageStream: (opts: { onError: (e: unknown) => string }) => AsyncIterable<UIMessageChunk>
   }): Promise<void> => {
-    for await (const part of result.toUIMessageStream({ onError: friendlyProviderError })) {
+    for await (const raw of result.toUIMessageStream({ onError: friendlyProviderError })) {
+      // Think-tag strip FIRST: raw deliberation must reach neither the
+      // accumulator nor the thread. Empty remainders are dropped entirely
+      // (text-start/end still flow, rendering nothing on their own).
+      let part = raw
+      if (raw.type === 'text-delta') {
+        const visible = thinkStrip.push(raw.delta)
+        if (visible.length === 0) continue
+        part = { ...raw, delta: visible }
+      }
       accumulator.addChunk(part)
       if (part.type === 'finish') {
         heldFinish = part
@@ -471,6 +499,7 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
       }
       deps.sendPart(part)
     }
+    flushThinkTailLive()
   }
 
   const baseModelMessages = convertToModelMessagesSafe(replayable(deps.messages))
@@ -568,8 +597,26 @@ export async function runPlanFirstTurn(deps: PlanRunDeps): Promise<PlanRunOutcom
           if (part.type === 'tool-output-available' && emitPlanCallIds.has(part.toolCallId)) {
             continue
           }
-          if (part.type === 'text-start' || part.type === 'text-delta') hadText = true
+          if (part.type === 'text-delta') {
+            // Think-tag strip: held deliberation must never commit to the
+            // thread, persistence, or plan-JSON recovery — and think-only
+            // text must not count as a reply (hadText).
+            const visible = thinkStrip.push(part.delta)
+            if (visible.length === 0) continue
+            heldParts.push({ ...part, delta: visible })
+            hadText = true
+            continue
+          }
+          if (part.type === 'text-start') hadText = true
           heldParts.push(part)
+        }
+        // Stream-end held fragment (visible text ending in `<…`) joins the
+        // held buffer — dropping it here would lose trailing chars on commit.
+        thinkTailSeq += 1
+        const tailTriple = thinkTailParts(`think-tail-${thinkTailSeq}`, thinkStrip.flush())
+        if (tailTriple) {
+          heldParts.push(...tailTriple)
+          hadText = true
         }
         // An error part marks the attempt failed; remember its copy for the
         // final failure (a retry that succeeds discards it via the caller).
@@ -989,6 +1036,9 @@ export async function runPlanModeTurn(
   let discoveryUsage: LanguageModelUsage | undefined
   let discoveryMessages: ModelMessage[] = []
   const emitPlanCallIds = new Set<string>()
+  // Think-tag strip (one instance per run — tags may split across deltas).
+  const thinkStrip = createThinkStripper()
+  let thinkTailSeq = 0
   const baseModelMessages = convertToModelMessagesSafe(replayable(deps.messages))
 
   // Held discovery (2026-09-13 fix): discovery parts are buffered and only
@@ -1072,8 +1122,19 @@ export async function runPlanModeTurn(
           if (part.type === 'tool-output-available' && emitPlanCallIds.has(part.toolCallId)) {
             continue
           }
+          if (part.type === 'text-delta') {
+            // Think-tag strip: held deliberation never commits to the thread.
+            const visible = thinkStrip.push(part.delta)
+            if (visible.length === 0) continue
+            discoveryHeld.push({ ...part, delta: visible })
+            continue
+          }
           discoveryHeld.push(part)
         }
+        // Stream-end held fragment joins the held buffer like any visible text.
+        thinkTailSeq += 1
+        const discoveryTail = thinkTailParts(`think-tail-${thinkTailSeq}`, thinkStrip.flush())
+        if (discoveryTail) discoveryHeld.push(...discoveryTail)
         if (!aborted && !discoveryError) {
           try {
             discoveryMessages = (await discoveryResult.response).messages
@@ -1209,8 +1270,26 @@ export async function runPlanModeTurn(
           if (part.type === 'tool-output-available' && emitPlanCallIds.has(part.toolCallId)) {
             continue
           }
-          if (part.type === 'text-start' || part.type === 'text-delta') hadText = true
+          if (part.type === 'text-delta') {
+            // Think-tag strip: held deliberation must never commit to the
+            // thread, persistence, or plan-JSON recovery — and think-only
+            // text must not count as a reply (hadText).
+            const visible = thinkStrip.push(part.delta)
+            if (visible.length === 0) continue
+            heldParts.push({ ...part, delta: visible })
+            hadText = true
+            continue
+          }
+          if (part.type === 'text-start') hadText = true
           heldParts.push(part)
+        }
+        // Stream-end held fragment (visible text ending in `<…`) joins the
+        // held buffer — dropping it here would lose trailing chars on commit.
+        thinkTailSeq += 1
+        const planTailTriple = thinkTailParts(`think-tail-${thinkTailSeq}`, thinkStrip.flush())
+        if (planTailTriple) {
+          heldParts.push(...planTailTriple)
+          hadText = true
         }
         const firstError = heldErrors[0]
         if (firstError && firstError.type === 'error') errorText = firstError.errorText
@@ -1464,6 +1543,21 @@ export async function runActTurn(
   let stepLimitReached = false
   let capturedUsage: LanguageModelUsage | undefined
   const emitPlanCallIds = new Set<string>()
+  // Think-tag strip (one instance per run — tags may split across deltas).
+  const thinkStrip = createThinkStripper()
+  let thinkTailSeq = 0
+  // Release a stream-end held fragment (visible text ending in `<…`) through
+  // the live sinks — without this the trailing chars would be dropped.
+  const flushThinkTailLive = (): void => {
+    thinkTailSeq += 1
+    const triple = thinkTailParts(`think-tail-${thinkTailSeq}`, thinkStrip.flush())
+    if (triple) {
+      for (const tailPart of triple) {
+        accumulator.addChunk(tailPart)
+        deps.sendPart(tailPart)
+      }
+    }
+  }
   let cancelled = false
   // Real tool-call counter (every wrapper outcome: executed/refused/skipped/
   // cancelled). `stepsTaken` counts provider round-trips — a prose-only run
@@ -1509,7 +1603,14 @@ export async function runActTurn(
   const forwardLive = async (result: {
     toUIMessageStream: (opts: { onError: (e: unknown) => string }) => AsyncIterable<UIMessageChunk>
   }): Promise<void> => {
-    for await (const part of result.toUIMessageStream({ onError: friendlyProviderError })) {
+    for await (const raw of result.toUIMessageStream({ onError: friendlyProviderError })) {
+      // Think-tag strip FIRST (same demo-breaker rule as the plan path).
+      let part = raw
+      if (raw.type === 'text-delta') {
+        const visible = thinkStrip.push(raw.delta)
+        if (visible.length === 0) continue
+        part = { ...raw, delta: visible }
+      }
       accumulator.addChunk(part)
       if (part.type === 'finish') {
         heldFinish = part
@@ -1531,6 +1632,7 @@ export async function runActTurn(
       if (part.type === 'tool-output-available' && emitPlanCallIds.has(part.toolCallId)) continue
       deps.sendPart(part)
     }
+    flushThinkTailLive()
   }
 
   try {
