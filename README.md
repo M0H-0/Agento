@@ -10,7 +10,7 @@
 
 Tell Agento what you want done in plain language — "sort these invoices into folders", "summarize this contract", "find who still owes a reply" — and it plans the work, asks before anything risky, shows every step in plain words, verifies its own results, and lets you undo anything it touched. It runs entirely on your machine: no accounts, no telemetry, no cloud in the middle. Your data never passes through any server except the model provider you chose. Built for Windows first.
 
-> **Under active development.** The chat core works today; the agent core — plans, approvals, snapshots, undo — is landing next.
+> **Under active development.** Chat, plans, approvals, snapshots, and undo work today; document intelligence and eval are still landing.
 
 ## Highlights
 
@@ -29,7 +29,7 @@ Tell Agento what you want done in plain language — "sort these invoices into f
 
 ## Roadmap
 
-- **Agent core** — file tools behind a plan → approve → execute flow, with snapshot-based undo for every change
+- **Agent core** ✅ — file tools behind a plan → approve → execute flow, with snapshot-based undo for every change (shipped)
 - **Document understanding** — read, edit, convert, and summarize `.docx .pdf .pptx .xlsx .csv .md .txt` via Docling
 - **Web research** — fetch and summarize pages; optional search-API integration
 - **Local models** — fully offline via Ollama
@@ -40,7 +40,7 @@ Tell Agento what you want done in plain language — "sort these invoices into f
 **Prerequisites:** [Node.js 24 LTS](https://nodejs.org/) · npm (bundled) · Python 3.12 + [uv](https://docs.astral.sh/uv/) *(optional — powers the intelligence sidecar; chat works without it and the status dot reflects its health)*
 
 ```powershell
-git clone <repo-url> agento
+git clone https://github.com/M0H-0/Agento.git agento
 cd agento\app
 npm install
 npm run dev
