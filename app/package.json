@@ -5,7 +5,7 @@
   "description": "Agento — local-first desktop AI agent for Windows",
   "main": "./out/main/index.js",
   "author": "Agento",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "format": "prettier --write .",

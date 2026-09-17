@@ -95,4 +95,4 @@ agento/
 
 ## License
 
-Not yet published under an OSS license — a permissive one (MIT or Apache-2.0) will be added with the first public release. All third-party dependencies are permissively licensed (MIT / Apache-2.0 / BSD / ISC).
+MIT — see [LICENSE](LICENSE). All third-party dependencies are permissively licensed (MIT / Apache-2.0 / BSD / ISC).
