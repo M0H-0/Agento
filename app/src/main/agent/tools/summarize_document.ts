@@ -2,7 +2,7 @@ import { basename } from 'node:path'
 import { z } from 'zod'
 import type { ToolDefinition } from '../types'
 import { wrapUntrusted } from '../untrusted'
-import { readDocumentText } from '../document-text'
+import { readDocumentText, relativeDocError } from '../document-text'
 
 // MVP tool (MVP_PLAN.md): summarize a document. Extraction rides the same
 // ladder as read_document (text direct, .pdf/.docx/.pptx/.xlsx via the
@@ -59,10 +59,11 @@ export const summarizeDocumentTool: ToolDefinition<
         }
       }
     } catch (error) {
+      const raw = error instanceof Error ? error.message : 'That document could not be summarized.'
       return {
         ok: false,
         output: { path: input.path, summary: '', truncated: false },
-        error: error instanceof Error ? error.message : 'That document could not be summarized.'
+        error: relativeDocError(ctx, input.path, raw)
       }
     }
   }

@@ -61,9 +61,17 @@ const NUMBER_WORDS: Record<string, number> = {
 // "move 42 files" / "all six .txt files" → 42 / 6. Digits first (exact),
 // then number words. Null when the text states no batch size.
 export function parseCountFromText(text: string): number | null {
-  const digit = text.match(
-    /(\d+)\s*(files?|items?|documents?|notes?|pdfs?|images?|photos?|matches|entries)/i
-  )
+  const normalized = text
+    .replace(/[٠-٩]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (digit) => String(digit.charCodeAt(0) - 0x06f0))
+    .replace(/[\u064B-\u0653\u0670\u0640]/g, '')
+  const digit =
+    normalized.match(
+      /(\d+)\s*(?:(?:text|audio|remaining)\s+)?(?:files?|items?|documents?|notes?|pdfs?|images?|photos?|matches|entries|spreadsheets?|presentations?|videos?|archives?|ملفات|ملفا?|مستندات|مستندا?|صور|عناصر)/i
+    ) ??
+    normalized.match(
+      /(?:ملفات(?:\s+PDF)?|المستندات|جداول البيانات|العروض التقديمية|الصور|الفيديوهات|الملفات الصوتية|الملفات النصية|الأرشيفات|الملفات الأخرى)\s*\((\d+)\)/i
+    )
   if (digit?.[1]) {
     const n = Number.parseInt(digit[1], 10)
     if (Number.isSafeInteger(n) && n > 0) return n
@@ -136,10 +144,16 @@ export function createApprovalCoalescer(
       if (existing.projected === null && projected !== undefined && projected !== null) {
         existing.projected = projected
       }
-      try {
-        hooks?.onBuffered?.(req.tool, displayCountFor(existing), existing.generation)
-      } catch {
-        // count projection is best-effort — the shared decision is the contract
+      // Live-count re-emits only while the group is still undecided. Past the
+      // decision a re-emit would reopen an already-resolved dialog in the
+      // renderer (live: a post-approval buffered delete re-rendered the modal
+      // and drew a second operator click on one logical approval).
+      if (existing.decision === null) {
+        try {
+          hooks?.onBuffered?.(req.tool, displayCountFor(existing), existing.generation)
+        } catch {
+          // count projection is best-effort — the shared decision is the contract
+        }
       }
       if (existing.decision !== null) return Promise.resolve(existing.decision)
       // Buffered: await the open group's shared promise (never executes

@@ -40,7 +40,7 @@ export function WebSearchCard({
     .filter((part): part is string => part !== null)
     .join(' · ')
   return (
-    <BaseToolCard {...rest} meta={meta} defaultOpen>
+    <BaseToolCard {...rest} meta={meta}>
       <div className="semantic-card">
         <div className="semantic-card__query">“{query}”</div>
         {results.length === 0 ? (

@@ -179,4 +179,25 @@ describe('read_document — read-only', () => {
     expect(outcome.ok).toBe(false)
     expect(outcome.message).toContain('gone.txt')
   })
+
+  it('never leaks the absolute workspace root in a sidecar 404 (relative only)', async () => {
+    // 2026-09-17 live: the card read `No document at
+    // "D:\Project\...\Documents\Q4-pricing-draft.docx"`. The sidecar now
+    // sends the basename and the tool redacts any rooted remainder.
+    const outcome = await harness.registry.run({
+      tool: 'read_document',
+      args: { path: 'Documents/missing.docx' },
+      ctx: {
+        ...harness.ctx,
+        documents: {
+          extract: async (absPath: string) => {
+            throw new Error(`No document at "${absPath}".`)
+          }
+        }
+      }
+    })
+    expect(outcome.ok).toBe(false)
+    expect(outcome.message).not.toContain(harness.ctx.workspaceRoot)
+    expect(outcome.message).toContain('missing.docx')
+  })
 })

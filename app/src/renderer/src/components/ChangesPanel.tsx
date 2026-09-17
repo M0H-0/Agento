@@ -38,16 +38,21 @@ function groupEntries(entries: ChangeEntry[]): ChangeGroup[] {
   return order.map((key) => ({ key, rows: groups.get(key) as ChangeEntry[] }))
 }
 
+type T = (key: StringKey, params?: Record<string, string | number>) => string
+
+// Confirm prompts name the file only ("Restore a.pdf?") — the row above it
+// already carries the full relative path.
 function fileName(path: string): string {
   const parts = path.split('/').filter((part) => part.length > 0)
   return parts.length > 0 ? (parts[parts.length - 1] as string) : path
 }
 
-type T = (key: StringKey, params?: Record<string, string | number>) => string
-
 function titleForGroup(t: T, group: ChangeGroup): string {
   // The oldest row (snapshot order) describes the mutation best: for a move
-  // it is the source row carrying the destination.
+  // it is the source row carrying the destination. Both sides are RELATIVE
+  // paths already (bridge rule), so the destination folder stays visible —
+  // a move into a folder must not read as "Moved a.pdf to a.pdf" (live
+  // 2026-09-17: an organize run looked like a row of no-ops).
   const first = group.rows[group.rows.length - 1] as ChangeEntry
   switch (first.tool) {
     case 'write_file':
@@ -59,13 +64,13 @@ function titleForGroup(t: T, group: ChangeGroup): string {
     case 'move_path': {
       const dest = group.rows.find((row) => row.relativeDestPath)?.relativeDestPath
       return dest
-        ? t('changes.movedTo', { from: fileName(first.relativePath), to: fileName(dest) })
+        ? t('changes.movedTo', { from: first.relativePath, to: dest })
         : t('changes.movedFile')
     }
     case 'copy_path': {
       const dest = group.rows.find((row) => row.relativeDestPath)?.relativeDestPath
       return dest
-        ? t('changes.copiedTo', { from: fileName(first.relativePath), to: fileName(dest) })
+        ? t('changes.copiedTo', { from: first.relativePath, to: dest })
         : t('changes.copiedFile')
     }
     case 'create_document':
@@ -209,6 +214,13 @@ export function ChangesPanel({
 
   const groups = groupEntries(entries)
 
+  // Header badge counts CHANGES (grouped mutations), the same unit the History
+  // section reports ("18 changes") — it used to show the raw checkpoint-row
+  // count, so a 12-move run read "Changes 30" in the header and "18 changes"
+  // below it (a move writes two rows). `activeCount` still gates the actions
+  // (all rows reverted → nothing to undo).
+  const changeCount = groups.length
+
   // Time travel ("restore to here"): rewind an ordered list of checkpoint ids
   // through the same per-row `changes:undo` channel the per-item undo uses —
   // no new IPC. The order comes from the caller (newest group first); a
@@ -238,7 +250,7 @@ export function ChangesPanel({
     <aside className="changes-panel" aria-label={t('changes.title')}>
       <h2 className="changes-panel__title">
         {t('changes.title')}{' '}
-        {activeCount > 0 ? <span className="changes-panel__count">{activeCount}</span> : null}
+        {activeCount > 0 ? <span className="changes-panel__count">{changeCount}</span> : null}
       </h2>
       {activeCount > 0 ? (
         <div className="changes-panel__actions">

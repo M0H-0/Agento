@@ -21,7 +21,7 @@ export function WebFetchCard({
     ? `${t('cards.truncatedPreview')}${pageTitle ? ` — ${pageTitle}` : ''}`
     : pageTitle
   return (
-    <BaseToolCard {...rest} meta={meta || undefined} defaultOpen>
+    <BaseToolCard {...rest} meta={meta || undefined}>
       <pre className="tool-card__pre">{text || t('cards.noPageText')}</pre>
     </BaseToolCard>
   )

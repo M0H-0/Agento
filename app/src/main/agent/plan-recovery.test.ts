@@ -658,6 +658,34 @@ describe('buildFallbackOrganizePlan — grounded organize plans when the model o
     expect(steps!.map((s) => s.tool)).not.toContain('write_file')
   })
 
+  it('writes Arabic step descriptions for an Arabic request (folder names stay literal)', () => {
+    const steps = buildFallbackOrganizePlan(
+      'مجلد التنزيلات عندي فوضوي. رتّب الملفات إلى مجلدات حسب النوع، وأعطني ملخصًا قصيرًا لمستندات التسعير.',
+      LISTING
+    )
+    expect(steps).not.toBeNull()
+    expect(steps![0].description).toMatch(/أنشئ مجلد/)
+    expect(steps![0].description).toContain('PDFs')
+    const pdfMove = steps!.find((s) => s.tool === 'move_path' && s.description.includes('PDFs'))
+    expect(pdfMove?.description).toMatch(/انقل.*\(2\).*PDFs/)
+    expect(steps!.slice(-2)[0].description).toMatch(/التسعير/)
+    expect(steps!.slice(-1)[0].description).toContain('pricing_summary.txt')
+  })
+
+  it('keeps English step descriptions for an English request', () => {
+    const steps = buildFallbackOrganizePlan('organize my files by type', LISTING)
+    expect(steps).not.toBeNull()
+    expect(steps![0].description).toMatch(/Create a folder/)
+    const pdfMove = steps!.find((s) => s.tool === 'move_path' && s.description.includes('PDFs'))
+    expect(pdfMove?.description).toMatch(/Move the 2 PDF files into PDFs/)
+  })
+
+  it('writes Arabic descriptions for an Arabic document fallback', () => {
+    const steps = buildFallbackDocumentPlan('أنشئ ملف txt فيه قصة قصيرة')
+    expect(steps).not.toBeNull()
+    expect(steps![0].description).toMatch(/اكتب/)
+  })
+
   it.each(['hello', 'make a txt file with a story', 'summarize this report for me'])(
     'returns null for non-organize %j',
     (text) => {

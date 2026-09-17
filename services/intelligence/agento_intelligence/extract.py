@@ -40,7 +40,9 @@ def extract_text(path: str) -> tuple[str, bool]:
     """Extract plain text from a document. Returns (text, truncated)."""
     target = Path(path)
     if not target.is_file():
-        raise ExtractionError(f'No document at "{path}".', 404)
+        # Basename only: the caller passes an absolute workspace path, and the
+        # detail rides the card sentence verbatim — the root must never leak.
+        raise ExtractionError(f'No document at "{target.name}".', 404)
 
     try:
         if target.stat().st_size > MAX_SOURCE_BYTES:
@@ -50,7 +52,7 @@ def extract_text(path: str) -> tuple[str, bool]:
                 413,
             )
     except OSError as error:
-        raise ExtractionError(f'No document at "{path}" — {error}.', 404) from error
+        raise ExtractionError(f'No document at "{target.name}" — {error}.', 404) from error
 
     suffix = target.suffix.lower()
     if suffix == ".pdf":

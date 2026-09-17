@@ -355,7 +355,18 @@ export function createToolRegistry(): ToolRegistry {
     const callCtx: ToolExecutionContext = input.toolCallId
       ? { ...input.ctx, activeToolCallId: input.toolCallId }
       : input.ctx
-    const result = await tool.execute(resolvedInput as never, callCtx)
+    let result: ToolResult
+    try {
+      result = await tool.execute(resolvedInput as never, callCtx)
+    } catch (error) {
+      return {
+        ok: false,
+        status: 'executed',
+        tool: tool.name,
+        message: error instanceof Error ? error.message : 'That step failed.',
+        error: error instanceof Error ? error.message : 'That step failed.'
+      }
+    }
     if (!result.ok) {
       return {
         ok: false,

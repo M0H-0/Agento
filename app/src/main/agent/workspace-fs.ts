@@ -65,7 +65,17 @@ function redactRoot(root: string, message: string): string {
 }
 
 function detailOf(root: string, error: unknown): string {
+  const code = (error as NodeJS.ErrnoException)?.code
+  if (code === 'ENOENT') {
+    return 'it may have been moved or renamed'
+  }
+  if (code === 'EACCES' || code === 'EPERM') {
+    return 'permission was denied by the operating system'
+  }
   const message = error instanceof Error ? error.message : String(error)
+  if (/ENOENT:\s*no such file or directory/i.test(message)) {
+    return 'it may have been moved or renamed'
+  }
   return redactRoot(root, message)
 }
 
@@ -130,6 +140,12 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
       try {
         return readFileSync(path, 'utf8')
       } catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code
+        if (code === 'ENOENT' || !existsSync(path)) {
+          throw new WorkspaceFsReadError(
+            `I couldn't find "${relative(workspaceRoot, path)}" — it may have been moved or renamed.`
+          )
+        }
         throw new WorkspaceFsReadError(
           `I could not read "${relative(workspaceRoot, path)}" — ${detailOf(workspaceRoot, error)}.`
         )
@@ -140,6 +156,12 @@ export function createWorkspaceFs(workspaceRoot: string): WorkspaceFs {
       try {
         return readFileSync(path)
       } catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code
+        if (code === 'ENOENT' || !existsSync(path)) {
+          throw new WorkspaceFsReadError(
+            `I couldn't find "${relative(workspaceRoot, path)}" — it may have been moved or renamed.`
+          )
+        }
         throw new WorkspaceFsReadError(
           `I could not read "${relative(workspaceRoot, path)}" — ${detailOf(workspaceRoot, error)}.`
         )

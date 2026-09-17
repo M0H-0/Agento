@@ -19,7 +19,7 @@ export function SummarizeDocumentCard({
 }: SummarizeDocumentCardProps): React.JSX.Element {
   const { t } = useLocale()
   return (
-    <BaseToolCard {...rest} meta={truncated ? t('cards.docBeginning') : undefined} defaultOpen>
+    <BaseToolCard {...rest} meta={truncated ? t('cards.docBeginning') : undefined}>
       <pre className="tool-card__pre">{summary || t('cards.noSummary')}</pre>
     </BaseToolCard>
   )

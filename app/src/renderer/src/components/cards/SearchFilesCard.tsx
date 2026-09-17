@@ -28,7 +28,7 @@ export function SearchFilesCard({
   })
   const meta = `${count}${truncated ? ` ${t('cards.truncated')}` : ''}`
   return (
-    <BaseToolCard {...rest} meta={meta} defaultOpen>
+    <BaseToolCard {...rest} meta={meta}>
       {matches.length === 0 ? (
         <div className="tool-card__empty">{t('cards.noFilesContain', { q: query })}</div>
       ) : (

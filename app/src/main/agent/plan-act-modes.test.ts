@@ -5,7 +5,12 @@ import type { LanguageModelV2StreamPart } from '@ai-sdk/provider'
 import { z } from 'zod'
 import { createToolRegistry } from './registry'
 import { buildRunContext, newRunId } from './context'
-import { isGoAheadMessage, runActTurn, runPlanModeTurn } from './plan-run'
+import {
+  buildFallbackOrganizePlan,
+  isGoAheadMessage,
+  runActTurn,
+  runPlanModeTurn
+} from './plan-run'
 import { emitPlanTool } from './tools/emit_plan'
 import type { PlanStep } from './tools/emit_plan'
 import type { ToolDefinition } from './types'
@@ -171,6 +176,30 @@ describe('isGoAheadMessage — the Act saved-plan trigger', () => {
   ])('rejects %j', (text) => {
     expect(isGoAheadMessage(text)).toBe(false)
   })
+
+  // 2026-09-17: the Arabic read-only footer says «تابع» — the trigger must
+  // accept it (live: "انطلق، نفّذ الخطة" parked the run in Plan).
+  it.each([
+    'تابع',
+    'انطلق',
+    'نفذ',
+    'ابدأ',
+    'انطلق، نفّذ الخطة',
+    'نفذ الخطة',
+    'تابع تنفيذ الخطة',
+    'نعم، نفذ',
+    'موافق، تابع',
+    'توكل على الله'
+  ])('accepts Arabic %j', (text) => {
+    expect(isGoAheadMessage(text)).toBe(true)
+  })
+
+  it.each(['', 'ما هي الخطة؟', 'نعم', 'موافق', 'احذف كل شيء', 'تابع واحذف التقارير'])(
+    'rejects Arabic %j',
+    (text) => {
+      expect(isGoAheadMessage(text)).toBe(false)
+    }
+  )
 })
 
 describe('registry include/exclude filter — the mode boundary primitive', () => {
@@ -202,6 +231,53 @@ describe('registry include/exclude filter — the mode boundary primitive', () =
 })
 
 describe('runActTurn — execution without a planning phase', () => {
+  it('saved Arabic organize plan blocks its three moves on one counted approval', async () => {
+    const plans = buildFallbackOrganizePlan('رتّب الملفات حسب النوع', [
+      {
+        entries: ['a.pdf', 'b.pdf', 'c.pdf'].map((name) => ({ name, type: 'file' as const }))
+      }
+    ])!
+    const approvals: { approvalId: string; count?: number }[] = []
+    const run = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-saved-arabic',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws',
+      onApprovalRequested: (event) => approvals.push(event)
+    })
+    run.setPlanSteps(plans)
+    const registry = createToolRegistry()
+    const execute = vi.fn()
+    registry.define({
+      ...stubTool('move_path', 'write', execute),
+      risk: () => ({ level: 2, reason: 'move' })
+    })
+    const model = scriptedModel([
+      stubTurn('move_path'),
+      stubTurn('move_path'),
+      stubTurn('move_path'),
+      textTurn('تم نقل الملفات الثلاثة.')
+    ])
+    const pending = runActTurn({
+      model,
+      system: 'test system',
+      messages: [{ id: 'u1', role: 'user', parts: [{ type: 'text', text: 'انطلق، نفّذ الخطة' }] }],
+      planHandoff: plans,
+      registry,
+      ctx: run.ctx,
+      sendPart: () => undefined,
+      signal: new AbortController().signal
+    })
+    await vi.waitFor(() => expect(approvals).toHaveLength(1))
+    expect(approvals[0].count).toBe(3)
+    expect(execute).not.toHaveBeenCalled()
+    expect(run.resolveApproval(approvals[0].approvalId, 'approve')).toBe(true)
+    const outcome = await pending
+    expect(approvals).toHaveLength(1)
+    expect(execute).toHaveBeenCalledTimes(3)
+    expect(outcome.terminalSent).toBe(false)
+  })
+
   it('never offers emit_plan and executes the stub through the wrapper', async () => {
     let executed = 0
     const run = buildRunContext({
@@ -293,6 +369,90 @@ describe('runActTurn — execution without a planning phase', () => {
       .at(-1)
     expect(terminalError).toContain("didn't take any actions")
     expect(outcome.aborted).toBe(false)
+  })
+
+  it('does not resume old mutations when the latest Arabic turn only asks for observations', async () => {
+    const run = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-observation',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    const registry = createToolRegistry()
+    const execute = vi.fn()
+    registry.define(stubTool('stub_action', 'write', execute))
+    const model = scriptedModel([
+      textTurn('لم ألاحظ شيئًا آخر.'),
+      stubTurn('stub_action'),
+      textTurn('Resumed organizing.')
+    ])
+    const sentParts: UIMessageChunk[] = []
+    const outcome = await runActTurn({
+      model,
+      system: 'test system',
+      messages: [
+        ...USER_MESSAGES,
+        { id: 'u2', role: 'user', parts: [{ type: 'text', text: 'create a report.txt file' }] },
+        { id: 'u3', role: 'user', parts: [{ type: 'text', text: 'delete report.txt' }] },
+        {
+          id: 'u4',
+          role: 'user',
+          parts: [{ type: 'text', text: 'هل لاحظت أي شيء آخر في ملفاتي؟' }]
+        }
+      ],
+      registry,
+      ctx: run.ctx,
+      sendPart: (part) => sentParts.push(part),
+      signal: new AbortController().signal
+    })
+    expect(execute).not.toHaveBeenCalled()
+    expect(model.doStreamCalls).toHaveLength(1)
+    expect(outcome.terminalSent).toBe(false)
+    expect(sentParts.some((part) => part.type === 'error')).toBe(false)
+  })
+
+  it.each([0, 3])('stops on a terminal stream error after %i actions', async (actions) => {
+    const run = buildRunContext({
+      sender: { emit: () => undefined },
+      sessionId: 's-terminal',
+      runId: newRunId(),
+      workspaceRoot: 'C:/ws'
+    })
+    const registry = createToolRegistry()
+    const execute = vi.fn()
+    const verify = vi.fn(async () => ({ verdict: 'skipped' as const }))
+    registry.define(stubTool('stub_action', 'write', execute))
+    const model = scriptedModel([
+      ...Array.from({ length: actions }, () => stubTurn('stub_action')),
+      {
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'error', error: new Error('stream interrupted') }
+          ] as LanguageModelV2StreamPart[]
+        })
+      },
+      stubTurn('stub_action'),
+      textTurn('Resumed after error.')
+    ])
+    const sentParts: UIMessageChunk[] = []
+    const outcome = await runActTurn({
+      model,
+      system: 'test system',
+      messages: USER_MESSAGES,
+      registry,
+      ctx: run.ctx,
+      sendPart: (part) => sentParts.push(part),
+      signal: new AbortController().signal,
+      verify
+    })
+    expect(execute).toHaveBeenCalledTimes(actions)
+    expect(model.doStreamCalls).toHaveLength(actions + 1)
+    expect(verify).not.toHaveBeenCalled()
+    expect(outcome.terminalSent).toBe(true)
+    expect(sentParts.filter((part) => part.type === 'error')).toHaveLength(1)
+    expect(sentParts.filter((part) => part.type === 'tool-input-available')).toHaveLength(actions)
+    expect(sentParts.at(-1)?.type).toBe('error')
   })
 
   it('a Q&A reply with zero tool calls stays a normal reply, not an error', async () => {

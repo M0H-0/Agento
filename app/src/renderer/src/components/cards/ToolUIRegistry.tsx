@@ -359,6 +359,37 @@ function asEditDocument(value: unknown): {
   }
 }
 
+function fileName(path: string): string {
+  const parts = path.split(/[/\\]/).filter((part) => part.length > 0)
+  return parts.length > 0 ? (parts[parts.length - 1] as string) : path
+}
+
+// Destination-folder visibility (live 2026-09-17): the move/copy cards reduced
+// BOTH sides to file names, so a move into a folder rendered "Moved a.pdf to
+// a.pdf" and an organize run looked like 30 no-ops on screen. A model-supplied
+// relative path keeps its folder; the absolute result path (or anything
+// unusable) still degrades to the file name, so no raw absolute path is ever
+// shown (docs/04 plain-language / relative-only bridge rule).
+function displayPath(candidate: unknown, absolute: string): string {
+  if (typeof candidate === 'string') {
+    const raw = candidate.trim()
+    const relative = raw.length > 0 && !/^[a-zA-Z]:/.test(raw) && raw[0] !== '/' && raw[0] !== '\\'
+    if (relative) return raw.replace(/\\/g, '/')
+  }
+  return fileName(absolute)
+}
+
+function displayPaths(
+  args: unknown,
+  result: { from: string; to: string }
+): { from: string; to: string } {
+  const record = isRecord(args) ? args : {}
+  return {
+    from: displayPath(record.from, result.from),
+    to: displayPath(record.to, result.to)
+  }
+}
+
 function asMovePath(value: unknown): {
   from: string
   to: string
@@ -571,6 +602,7 @@ function renderMovePathCard(part: AuiToolPart, title: string): React.JSX.Element
       status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
+      {...displayPaths(part.args, result)}
     />
   )
 }
@@ -584,6 +616,7 @@ function renderCopyPathCard(part: AuiToolPart, title: string): React.JSX.Element
       status={statusForPart(part)}
       toolCallId={part.toolCallId}
       {...result}
+      {...displayPaths(part.args, result)}
     />
   )
 }

@@ -92,6 +92,13 @@ function createWindow(): void {
     }
   })
 
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[renderer] process gone:', details)
+  })
+  mainWindow.webContents.on('unresponsive', () => {
+    console.warn('[renderer] window unresponsive')
+  })
+
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (process.env['ELECTRON_RENDERER_URL']) {
@@ -263,4 +270,12 @@ app.on('window-all-closed', () => {
 // is left holding port 7891 (docs/02 §2.4).
 app.on('before-quit', () => {
   killSidecar()
+})
+
+process.on('uncaughtException', (err) => {
+  console.error('[main] uncaughtException:', err)
+})
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[main] unhandledRejection:', reason)
 })

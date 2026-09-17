@@ -21,14 +21,14 @@ const result = streamText({
   messages: toModelMessages(session.history),
   tools: registry.toAiSdkTools(ctx),        // §5 — every tool, wrapper applied
   abortSignal: session.controller.signal,   // wired to the UI stop button
-  stopWhen: [stepCountIs(MAX_STEPS)],       // hard guard, default 25
+  stopWhen: [stepCountIs(MAX_STEPS)],       // hard guard, default 150
 });
 // result.toUIMessageStream() is forwarded over IPC verbatim (docs/02 §2.1)
 ```
 
 Mechanics layered on top:
 
-- **Step guard:** `MAX_STEPS` reached → loop stops, UI explains ("I stopped after 25 actions — say 'continue' if you want more").
+- **Step guard:** `MAX_STEPS` (150) reached → loop stops, UI explains ("I stopped after 150 actions — say 'continue' if you want more"). The count is provider round-trips, and an organize run issues roughly one call per round-trip, so the guard has to sit well above a folder's file count: the previous value (25) cut a 42-file organize at 25 actions with files still unsorted and the plan's later steps unreachable (demo rehearsal 2026-09-17). The note is sent as the run's **terminal** part — posted after a `finish` it never rendered, because the renderer transport closes the stream on the first terminal part.
 - **Token guard:** `result.usage` → `usage` events → stored + shown; a per-session cap (settings) pauses with an explanation.
 - **Cancellation:** `AbortController` per run; safe anywhere because mutations are snapshotted before they happen.
 - **Retries:** provider retries are the SDK's job; tool failures are handled by verification (§6), not blind retries.
@@ -37,8 +37,8 @@ Mechanics layered on top:
 ### Plan mode flow
 
 1. Held discovery with read-only tools (one short sentence, no file/story content), then a structured plan (Zod): `steps[]`, each a plain-language description + expected tool. Read-tool cards stream live as progress; the prose stays held until the outcome is known — dropped on plan success (the panel carries the plan), committed as the answer on Q&A.
-2. `plan/created` event → PlanPanel (read-only chip; footer names the Act handoff instead of N-of-M); the plan persists to `plan_steps` and survives restarts via `session:plan`. The thread always closes with exactly one visible plan summary plus the Act handoff — always synthesized, model narration dropped (2026-09-16: the model narrated a full essay before emitting, so the plan arrived under a wall of prose; now the thread is tool cards + summary). Nothing executes — there is no plan-start gate in this path.
-3. In Act, "go ahead" executes the saved plan stepwise, each step traced to its tool calls (`plan/step_updated`).
+2. `plan/created` event → PlanPanel (read-only chip; footer names the Act handoff instead of N-of-M); the plan persists to `plan_steps` and survives restarts via `session:plan`. The thread always closes with exactly one visible plan summary plus the Act handoff — always synthesized, model narration dropped (2026-09-16: the model narrated a full essay before emitting, so the plan arrived under a wall of prose; now the thread is tool cards + summary). The summary follows the request's language (2026-09-17: an Arabic request gets an Arabic summary with the «تابع» handoff, and the deterministic organize/document fallbacks emit Arabic step descriptions — folder names stay literal). Nothing executes — there is no plan-start gate in this path.
+3. In Act, "go ahead" (or an Arabic affirmative — تابع/انطلق/نفّذ الخطة family, `isGoAheadMessage`) executes the saved plan stepwise, each step traced to its tool calls (`plan/step_updated`). The Act run mints a new runId, so the renderer rebinds step/verify/approval events to the saved plan instead of dropping them as stale (2026-09-17: the checklist parked on pending forever); the first traced event flips the panel from the read-only footer to the N-of-M progress line. Binding is **target-aware** (`agent/step-binding.ts`): tool name alone is not enough, because an organize plan carries one `move_path` step per file type — name-only matching ticked the Presentations/Text/Documents/Images steps after a few PDF moves (live: "6 of 9 steps done" with zero files moved for them). A call now binds to the same-tool step whose description names one of the call's path targets, or to the tool's only step; anything ambiguous stays unbound rather than showing an unearned ✓ (docs/04 §3.3). Read tools form one family: the organize fallback proposes the single pricing-read step as `read_file`, but a `.docx` is correctly read with `read_document` (live Mistral 2026-09-17: the read succeeded yet the step stayed ○ while the write step ticked ✓) — any two `read_*` tools match, so the single read step binds whichever one ran.
 
 Plans are advisory structure for humans, not a straitjacket: if execution reveals a wrong plan, the model emits a revised plan (new `plan/created`, panel notes "updated") instead of silently deviating.
 
@@ -108,13 +108,13 @@ defineTool({
 | Tool | Input (abridged) | Risk |
 |---|---|---|
 | `list_dir` · `read_file` · `search_files` | `{path}` · `{path}` · `{query, glob?}` | 0 |
-| `read_document` · `summarize_document` | `{path}` — `.pdf/.docx/.pptx/.xlsx` via sidecar extract, `.txt/.md/.csv` direct, images via the run's vision model (§5.1) | 0 |
+| `read_document` · `summarize_document` | `{path}` — `.pdf/.docx/.pptx/.xlsx` via sidecar extract, `.txt/.md/.csv` direct, images via the run's vision model (§5.1); failure sentences are workspace-relative only — the sidecar's 404 carries the basename and the tools redact any rooted remainder (2026-09-17) | 0 |
 | `web_fetch` · `web_search`¹ | `{url}` · `{query, count?}` | 0 |
 | `search_history`² · `summarize_history` | `{query, limit?}` · `{focus?, max_messages?}` — same-session recall: semantic paraphrase search (on-device MiniLM, keyword fallback, output names `engine`) + on-demand LLM summary (recent turns, `ctx.llm`, 12k-char prompt / 4k-char summary caps) | 0 |
 | `create_dir` | `{path}` | 1 |
 | `write_file` · `edit_file` | `{path, content}` · `{path, old_text, new_text}` — never binary documents: `.docx/.pptx/.xlsx/.pdf` through `write_file` refuse with a redirect to `create_document`/`convert_document` (a text write there would be a corrupt file) | 1 new · 2 overwrite |
 | `convert_document` | `{path, target: docx\|pdf\|md\|txt}` — the "make it a .docx/.pdf" path (never an online service or script): `docx` via sidecar create, `pdf` via hidden-window `printToPDF` (docs/02 §2.6, wrapped + paginated HTML, RTL auto-detect), `md`/`txt` via extract; dest is the swapped-extension sibling, snapshotted explicitly (computed, not an input key); renders the WriteFileCard | 1 new · 2 overwrite |
-| `move_path` · `copy_path` | `{from, to}` | 2 onto existing · 3 in bulk groups |
+| `move_path` · `copy_path` | `{from, to}` | 2 onto existing · 3 in bulk groups — `move_path` answers success when the source is already exactly where asked (idempotent re-runs, 2026-09-17); any other missing source keeps the honest refusal plus the current-location hint |
 | `edit_document` | `{path, edits[]}` (anchor-text, docs/05 §2; `.docx`/`.pptx` splice, `.xlsx` whole-cell, `.md`/`.txt` direct) | 2 |
 | `create_document` | `{path, title, items[]}` (one per paragraph/slide/row, docs/05 §2; renders the WriteFileCard) | 1 new · 2 overwrite |
 | `delete_path` | `{path}` | 3 |
@@ -180,12 +180,16 @@ CREATE TABLE tool_calls (
 CREATE TABLE plan_steps (
   id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
   plan_version INTEGER NOT NULL DEFAULT 1, position INTEGER NOT NULL,
+  wire_id TEXT,                              -- migration 0008: the model-supplied step id
   description TEXT NOT NULL, tool TEXT, risk_level INTEGER DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending',     -- pending|in_progress|done|failed|awaiting_approval|skipped
   verification_score REAL, verified INTEGER, missed_segments_json TEXT,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
-CREATE TABLE checkpoints (                    -- append-only; undo writes a new row
+CREATE TABLE checkpoints (                    -- append-only; undo writes a new row (failed executions are the one
+                                                  -- exception: ok:false means disk is untouched, so that call's
+                                                  -- pre-execution rows are removed instead of lingering as phantom
+                                                  -- undo entries)
   id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
   tool_call_id TEXT REFERENCES tool_calls(id),
   path TEXT NOT NULL, dest_path TEXT,             -- set by move_path: undo restores the original name
@@ -225,6 +229,7 @@ documents, and the web. The user is not necessarily technical. Reply in clear,
 plain language; add detail only when asked or clearly wanted.
 
 LANGUAGE
+- Reply in the user's language: if they write in Arabic, answer in Arabic (including plan step descriptions); otherwise match the language they used.
 - Narrate as you work: "I'm reading the report" not "calling read_file".
 - In plans, describe steps in plain words: "Move the PDF invoices into a folder called Finance".
 - Never put raw JSON, tool names, or error dumps in a reply; the interface shows technical detail elsewhere.
@@ -245,6 +250,7 @@ RULES
 - Never mention internal tokens, headers, service names, or ports in a reply. If a tool reports the intelligence service is unavailable, say plainly it is unavailable and continue with what you can do.
 - Stay inside the user's chosen workspace folder; if a task seems to need files outside it, say so and ask.
 - File paths are relative to the workspace root — "." is the root itself. Never invent absolute paths.
+- If the user names a file, locate it with search_files or list_dir before reading — never guess which folder it is in.
 - There is no terminal or shell. Code-related requests are fulfilled by writing code into files.
 - Never offer scripts, commands, or do-it-yourself instructions for the user to run — you do the work with your own tools. Do not end an actionable request by asking whether to proceed; the app handles approvals.
 - ask_user pauses the run until the user replies in the thread — only the user can answer it. Never answer an ask_user yourself, never assume a reply, and offer only short, concrete, mutually exclusive options; never an option like "proceed with your best judgment".

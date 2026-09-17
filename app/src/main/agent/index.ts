@@ -8,6 +8,9 @@ export { buildRunContext, newRunId } from './context'
 export type { PlanStepRef, RunContextBundle, RunContextDeps, Sender } from './context'
 export { stripStepReasoning } from './prepare-step'
 export {
+  buildFallbackDocumentPlan,
+  buildFallbackOrganizePlan,
+  isArabicText,
   isGoAheadMessage,
   isLikelyMutatingRequest,
   runActTurn,
@@ -26,7 +29,7 @@ export { webSearchTool, parseSearchResults, parseTavilyResults } from './tools/w
 export type { WebSearchProvider } from './tools/web_search'
 export { semanticSearchTool } from './tools/semantic_search'
 export { semanticSearch, cachePathForWorkspace } from './semantic-index'
-export { readDocumentText } from './document-text'
+export { readDocumentText, relativeDocError } from './document-text'
 export { searchFilesTool } from './tools/search_files'
 export { searchHistoryTool } from './tools/search_history'
 export { summarizeHistoryTool } from './tools/summarize_history'

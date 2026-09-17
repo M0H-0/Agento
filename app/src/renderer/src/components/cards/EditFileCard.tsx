@@ -18,7 +18,7 @@ export function EditFileCard({
 }: EditFileCardProps): React.JSX.Element {
   const { t } = useLocale()
   return (
-    <BaseToolCard {...rest} defaultOpen>
+    <BaseToolCard {...rest}>
       <div className="tool-card__excerpt">
         <span className="tool-card__excerpt-label">{t('cards.before')}</span>
         <pre className="tool-card__pre">{beforeExcerpt}</pre>

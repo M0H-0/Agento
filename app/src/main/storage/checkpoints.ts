@@ -162,6 +162,24 @@ export function recordCheckpoint(input: RecordCheckpointInput): CheckpointRow {
   return row
 }
 
+// A failed execution leaves no checkpoint: the snapshot fires
+// pre-execution, but ok:false means nothing changed, so the row would be a
+// phantom undo entry (live: a duplicate delete's honest refusal rendered a
+// second "Deleted file" row with a meaningless undo link — and an existed=0
+// row could mislead the per-path oldest-snapshot replay). Scoped to the one
+// call's rows; successful mutations are untouched.
+export function deleteCheckpointsByToolCall(sessionId: string, toolCallId: string): number {
+  const rows = getDrizzle()
+    .select({ id: checkpoints.id })
+    .from(checkpoints)
+    .where(and(eq(checkpoints.sessionId, sessionId), eq(checkpoints.toolCallId, toolCallId)))
+    .all()
+  for (const row of rows) {
+    getDrizzle().delete(checkpoints).where(eq(checkpoints.id, row.id)).run()
+  }
+  return rows.length
+}
+
 // Backfill the after-excerpt once the mutation executed (the checkpoint is
 // written pre-execution; the card needs both sides, docs/03 §5).
 export function setCheckpointAfterExcerpts(

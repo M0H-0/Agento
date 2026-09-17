@@ -4,7 +4,7 @@
 # files with REAL readable content so report screenshots look authentic:
 # Arabic-text PDFs printed by Edge headless (proper shaping + logical-order
 # text that the app's pypdf extraction reads correctly), Word/Excel/PowerPoint
-# with data, and real rendered images (Pillow). 42 files total, deliberately
+# with data, and real rendered images (Pillow). 25 files total, deliberately
 # messy: Arabic and English names, spaces, duplicates, nested folders.
 #
 # Run (system python has all deps):
@@ -167,10 +167,12 @@ def main() -> None:
         created.append(p)
         return p
 
-    # --- 8 Arabic PDFs (invoices + reports) ---------------------------------
-    services = ["خدمات استشارية شهرية", "تصميم واجهات المستخدم", "إدارة حملة إعلانية",
-                "تدريب فريق العمل", "صيانة أنظمة قواعد البيانات"]
-    for n in range(1, 6):  # 5 invoices
+    # --- 5 Arabic PDFs (invoices + reports) ----------------------------------
+    # Kept lean on purpose (2026-09-17): the Act organize run issues ~one tool
+    # call per provider round-trip, and Ollama Cloud throttles long runs, so
+    # the demo fixture stays small enough to finish in one go.
+    services = ["خدمات استشارية شهرية", "تصميم واجهات المستخدم", "إدارة حملة إعلانية"]
+    for n in range(1, 4):  # 3 invoices
         html = INVOICE_AR.format(month=n + 2, day=5 + n * 3, service=services[n - 1],
                                  amount=1200 + n * 350)
         reg(print_pdf(html, TARGET / f"فاتورة نورثويند 2026-{n+2:02d}.pdf"))
@@ -178,21 +180,17 @@ def main() -> None:
                                    intro="يقدم هذا التقرير قراءة تحليلية لأداء الشركة خلال الربع الثاني.",
                                    topic="مؤشرات التشغيل والإيرادات", growth="9", mrr="41,500"),
                   TARGET / "تقرير الأداء الربع الثاني.pdf"))
-    reg(print_pdf(REPORT_AR.format(title="دراسة جدوى التوسع إلى السوق المصري",
-                                   intro="تقييم أولي لفرص التوسع الإقليمي ومتطلباته التشغيلية والمالية.",
-                                   topic="السوق المستهدفة وقنوات التوزيع", growth="14", mrr="58,000"),
-                  TARGET / "دراسة جدوى التوسع.pdf"))
     reg(print_pdf("<h2>محطات العام وأرقامه المالية والتشغيلية في نظرة واحدة.</h2>",
                   TARGET / "التقرير السنوي المختصر.pdf"))
-    # --- 3 English PDFs ------------------------------------------------------
-    for n in range(1, 4):
+    # --- 2 English PDFs ------------------------------------------------------
+    for n in range(1, 3):
         html = (f"<h2>Invoice 2026-{n+8:02d}</h2><p>Northwind Traders Ltd.</p>"
                 f"<p>Consulting services ....... ${1500 + n * 200}.00</p>"
                 f"<p>Total due ................ ${1500 + n * 200}.00 — net 30 days.</p>")
         reg(print_pdf(html, TARGET / f"Invoice_2026-{n+8:02d}_northwind.pdf"))
 
-    # --- 6 DOCX --------------------------------------------------------------
-    for n in range(1, 5):
+    # --- 3 DOCX --------------------------------------------------------------
+    for n in range(1, 3):
         reg(make_docx(TARGET / f"ملاحظات اجتماع التسعير ({n}).docx",
                       f"ملاحظات اجتماع الأسبوع {n}",
                       NOTES_AR.format(n=n).split("\n")))
@@ -200,17 +198,11 @@ def main() -> None:
                   ["Tier 1: $900/mo retainer + $15/seat",
                    "Tier 2: $1,800/mo retainer + $12/seat",
                    "Annual prepay: 2 months free"]))
-    reg(make_docx(TARGET / "قائمة مهام المشروع.docx", "قائمة مهام المشروع",
-                  ["إغلاق حسابات الشهر", "مراجعة عقد المورد الجديد",
-                   "تحديث خطة الحملة", "جدولة اجتماع الفريق الأسبوعي"]))
 
-    # --- 2 PPTX + 2 XLSX -----------------------------------------------------
+    # --- 1 PPTX + 2 XLSX -----------------------------------------------------
     reg(make_pptx(TARGET / "عرض التسعير الجديد.pptx", "عرض التسعير الجديد",
                   [("الطبقات الثلاث", ["أساسية 900$", "متقدمة 1800$", "مؤسسية حسب الطلب"]),
                    ("المقارنة مع المنافسين", ["أرخص 20% من المتوسط", "ميزات فريدة في الأتمتة"])]))
-    reg(make_pptx(TARGET / "Lecture 07 - Data Basics.pptx", "Lecture 07 — Data Basics",
-                  [("What is data?", ["facts vs signals", "structured vs unstructured"]),
-                   ("Databases 101", ["tables, rows, keys", "SQL in 3 slides"])]))
     reg(make_xlsx(TARGET / "ميزانية 2026.xlsx", "الربع الأول",
                   ["البند", "المخطط", "الفعلي"],
                   [["التسويق", 12000, 11400], ["الرواتب", 45000, 45000],
@@ -220,20 +212,14 @@ def main() -> None:
                   [["Acme Corp", "US", 2400], ["Brightline", "UK", 1800],
                    ["شركة النور", "SY", 950]]))
 
-    # --- 7 images ------------------------------------------------------------
+    # --- 3 images ------------------------------------------------------------
     reg(make_image(TARGET / "images" / "banner final v2.png", "Banner v2", (30, 90, 120), (10, 40, 60)))
-    reg(make_image(TARGET / "images" / "banner final v3 (actually final).png", "Banner v3", (120, 40, 90), (60, 10, 40)))
-    reg(make_image(TARGET / "images" / "screenshots" / "error 2026-09-01 14-32.png", "Error log capture", (60, 60, 70), (20, 20, 25)))
     reg(make_image(TARGET / "images" / "screenshots" / "dashboard preview.png", "Dashboard preview", (20, 100, 80), (5, 45, 35)))
-    reg(make_image(TARGET / "images" / "chart - pricing tiers.png", "Chart: pricing tiers", (200, 120, 30), (120, 60, 10)))
     reg(make_image(TARGET / "صورة المنتج الجديد.png", "Product photo", (90, 90, 110), (40, 40, 55)))
-    reg(make_image(TARGET / "team photo retreat.jpg", "Team retreat 2026", (150, 90, 40), (80, 40, 15)))
 
-    # --- 14 text / markdown / csv --------------------------------------------
-    for n in range(1, 5):
-        p = TARGET / (f"ملاحظات-أسبوع-{n}.md" if n % 2 == 0 else f"notes-week-{n}.txt")
-        p.write_text(NOTES_AR.format(n=n) if n % 2 else NOTES_EN.format(n=n), encoding="utf-8")
-        reg(p)
+    # --- 8 text / markdown / csv ---------------------------------------------
+    reg(TARGET / "notes-week-1.txt")
+    (TARGET / "notes-week-1.txt").write_text(NOTES_EN.format(n=1), encoding="utf-8")
     reg(TARGET / "todo.txt")
     (TARGET / "todo.txt").write_text("- ترتيب هذا المجلد\n- إيجاد كل ملف يخص التسعير\n- إرسال الفواتير المتأخرة\n", encoding="utf-8")
     reg(TARGET / "readme final FINAL.md")
@@ -241,9 +227,6 @@ def main() -> None:
     reg(TARGET / "بيانات العملاء.csv")
     (TARGET / "بيانات العملاء.csv").write_text(
         "الاسم,المدينة,الهاتف\nأحمد خليل,دمشق,0932123456\nسارة عمر,حلب,0944987654\nليلى حداد,حمص,0955112233\n", encoding="utf-8")
-    reg(TARGET / "expenses.csv")
-    (TARGET / "expenses.csv").write_text(
-        "date,category,amount\n2026-07-03,software,120\n2026-07-11,travel,340\n2026-08-02,office,90\n", encoding="utf-8")
     reg(TARGET / "أرشيف" / "خطة العام القديمة.txt")
     (TARGET / "أرشيف" / "خطة العام القديمة.txt").write_text("خطة 2024 — للأرشفة فقط، لا تعديل.\n", encoding="utf-8")
     reg(TARGET / "أرشيف" / "meeting notes old (copy).txt")
@@ -253,9 +236,6 @@ def main() -> None:
     reg(TARGET / "Invoice_2026-09_northwind (copy).pdf")
     shutil.copyfile(TARGET / "Invoice_2026-09_northwind.pdf",
                     TARGET / "Invoice_2026-09_northwind (copy).pdf")
-    reg(TARGET / "شكاوى واقتراحات.txt")
-    (TARGET / "شكاوى واقتراحات.txt").write_text(
-        "شكوى: تأخر الرد على التذكرة 4482.\nاقتراح: إضافة فاتورة PDF عربية تلقائياً.\n", encoding="utf-8")
     reg(TARGET / "pricing keywords.txt")
     (TARGET / "pricing keywords.txt").write_text(
         "pricing, tiered pricing, retainer, per-seat fees, Q4 campaign\n", encoding="utf-8")

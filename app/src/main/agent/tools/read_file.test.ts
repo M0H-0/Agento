@@ -82,4 +82,16 @@ describe('read_file — read-only', () => {
     expect(outcome.ok).toBe(false)
     expect(outcome.error).toBe('schema validation')
   })
+
+  it('returns a plain-language refusal for a missing file', async () => {
+    const outcome = await harness.registry.run({
+      tool: 'read_file',
+      args: { path: 'nonexistent.txt' },
+      ctx: harness.ctx
+    })
+    expect(outcome.ok).toBe(false)
+    expect(outcome.message).toContain(
+      "I couldn't find that file — it may have been moved or renamed."
+    )
+  })
 })

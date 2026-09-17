@@ -57,6 +57,13 @@
       "when": 1789073337331,
       "tag": "0007_sessions-title-renamed",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789614725941,
+      "tag": "0008_charming_roulette",
+      "breakpoints": true
     }
   ]
 }

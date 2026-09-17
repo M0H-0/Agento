@@ -52,6 +52,7 @@ export function recordPlanSteps(input: {
     sessionId: input.sessionId,
     planVersion: input.planVersion,
     position: index + 1,
+    wireId: step.id,
     description: step.description,
     tool: step.tool,
     riskLevel: step.riskLevel,
@@ -77,10 +78,13 @@ export function getLatestPlan(sessionId: string): PlanStepInput[] {
     .get()
   const version = versionRow?.max ?? null
   if (version === null) return []
-  // The model-supplied wire step id has no column (docs/03 §8) — synthesize a
-  // stable per-position id so Act's step binding and the panel keep working.
-  return getDrizzle()
+  // The model-supplied wire step id rides the wire_id column (migration
+  // 0008) so Act's step binding emits the SAME ids the plan/created panel
+  // shows. Rows predating the migration carry NULL and keep the positional
+  // synthesis as a fallback.
+  const rows = getDrizzle()
     .select({
+      wireId: planSteps.wireId,
       description: planSteps.description,
       tool: planSteps.tool,
       riskLevel: planSteps.riskLevel
@@ -89,11 +93,27 @@ export function getLatestPlan(sessionId: string): PlanStepInput[] {
     .where(and(eq(planSteps.sessionId, sessionId), eq(planSteps.planVersion, version)))
     .orderBy(asc(planSteps.position))
     .all()
-    .map((row, index) => ({
-      id: `plan-v${version}-s${index + 1}`,
-      description: row.description,
-      tool: row.tool ?? 'unknown',
-      riskLevel: typeof row.riskLevel === 'number' ? row.riskLevel : 0,
-      requiresApproval: (row.riskLevel ?? 0) >= 2
-    }))
+  return toPlanStepInputs(rows, version)
+}
+
+// Pure mapping (exported for unit tests — the DB stays behind better-sqlite3,
+// which cannot load under vitest): wire ids round-trip verbatim so the Act
+// handoff's step binding addresses the panel's own step ids; pre-migration
+// NULLs fall back to the stable positional synthesis.
+export function toPlanStepInputs(
+  rows: {
+    wireId: string | null
+    description: string
+    tool: string | null
+    riskLevel: number | null
+  }[],
+  version: number
+): PlanStepInput[] {
+  return rows.map((row, index) => ({
+    id: row.wireId ?? `plan-v${version}-s${index + 1}`,
+    description: row.description,
+    tool: row.tool ?? 'unknown',
+    riskLevel: typeof row.riskLevel === 'number' ? row.riskLevel : 0,
+    requiresApproval: (row.riskLevel ?? 0) >= 2
+  }))
 }

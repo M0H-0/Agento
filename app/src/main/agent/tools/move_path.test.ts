@@ -85,6 +85,25 @@ describe('move_path — rename through the wrapper', () => {
     expect(outcome.message).toMatch(/couldn't find/i)
   })
 
+  it('succeeds idempotently when the file is already where asked (re-run safe)', async () => {
+    // 2026-09-17: re-running an organize plan parked a red "couldn't find"
+    // card on every already-moved file. Same from→to twice is success.
+    ws.write('gone.txt', 'already moved')
+    const first = await harness.registry.run({
+      tool: 'move_path',
+      args: { from: 'gone.txt', to: 'PDFs/gone.txt' },
+      ctx: harness.ctx
+    })
+    expect(first.ok).toBe(true)
+    const second = await harness.registry.run({
+      tool: 'move_path',
+      args: { from: 'gone.txt', to: 'PDFs/gone.txt' },
+      ctx: harness.ctx
+    })
+    expect(second.ok).toBe(true)
+    expect(ws.read('PDFs/gone.txt')).toBe('already moved')
+  })
+
   it('names the current location when the source was already moved', async () => {
     // Stale plan state: the file now lives under PDFs/ — the refusal must say
     // so (lookup only; nothing is auto-moved).

@@ -19,7 +19,7 @@ export function ReadDocumentCard({
 }: ReadDocumentCardProps): React.JSX.Element {
   const { t } = useLocale()
   return (
-    <BaseToolCard {...rest} meta={truncated ? t('cards.truncatedPreview') : undefined} defaultOpen>
+    <BaseToolCard {...rest} meta={truncated ? t('cards.truncatedPreview') : undefined}>
       <pre className="tool-card__pre">{text || t('cards.noDocText')}</pre>
     </BaseToolCard>
   )

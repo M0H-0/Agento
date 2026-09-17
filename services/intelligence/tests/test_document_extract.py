@@ -194,8 +194,13 @@ def test_extract_legacy_office_is_422(server, tmp_path):
 
 
 def test_extract_missing_file(server, tmp_path):
-    status, body = _post("/document/extract", {"path": str(tmp_path / "nope.pdf")})
+    missing = tmp_path / "nope.pdf"
+    status, body = _post("/document/extract", {"path": str(missing)})
     assert status == 404
+    # 2026-09-17: the absolute workspace path must never ride the detail —
+    # the card sentence shows it verbatim. Basename only.
+    assert str(tmp_path) not in body["detail"]
+    assert "nope.pdf" in body["detail"]
 
 
 def test_extract_unsupported_suffix(server, tmp_path):

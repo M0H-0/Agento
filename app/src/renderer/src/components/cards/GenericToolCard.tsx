@@ -42,8 +42,10 @@ export function GenericToolCard({
     typeof (result as { hint?: unknown }).hint === 'string'
       ? ((result as { hint: string }).hint as string)
       : undefined
+  // Collapsed by default (docs/04 §3.1) like every other card — except when it
+  // carries a failure sentence, which stays visible without a click.
   return (
-    <BaseToolCard {...rest} defaultOpen>
+    <BaseToolCard {...rest} defaultOpen={errorText !== undefined}>
       {/* The error line is the one surface for a failure sentence. When the
           result is the same single-key {"error": …} the tool returned, the
           Result block would print the sentence twice — it is suppressed below

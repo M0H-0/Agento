@@ -39,26 +39,52 @@ export const readFileTool: ToolDefinition<
   risk: () => ({ level: 0, reason: 'Read-only' }),
   describe: (input) => ({ title: `Read ${basename(input.path)}`, group: 'files' }),
   execute: async (input, ctx) => {
-    const full = ctx.fs.readFileSync(input.path)
-    // Split on line boundaries; `split` of `"a\nb\n"` returns ["a","b",""]
-    // — the trailing empty is the expected "no content after the last \n"
-    // marker. We strip it so totalLines is honest (3 lines, not 4).
-    const lines = full.split(/\r?\n/)
-    const lastIsEmpty = lines.length > 0 && lines[lines.length - 1] === ''
-    const meaningful = lastIsEmpty ? lines.slice(0, -1) : lines
-    const start = input.startLine ?? 0
-    const max = input.maxLines ?? 2000
-    const end = Math.min(meaningful.length, start + max)
-    const slice = meaningful.slice(start, end).join('\n')
-    return {
-      ok: true,
-      output: {
-        path: input.path,
-        content: wrapUntrusted(`file ${basename(input.path)}`, slice),
-        startLine: start,
-        endLine: end,
-        totalLines: meaningful.length,
-        truncated: end < meaningful.length
+    const emptyOutput = {
+      path: input.path,
+      content: '',
+      startLine: 0,
+      endLine: 0,
+      totalLines: 0,
+      truncated: false
+    }
+    try {
+      if (!ctx.fs.existsSync(input.path)) {
+        return {
+          ok: false,
+          output: emptyOutput,
+          error: "I couldn't find that file — it may have been moved or renamed."
+        }
+      }
+      const full = ctx.fs.readFileSync(input.path)
+      // Split on line boundaries; `split` of `"a\nb\n"` returns ["a","b",""]
+      // — the trailing empty is the expected "no content after the last \n"
+      // marker. We strip it so totalLines is honest (3 lines, not 4).
+      const lines = full.split(/\r?\n/)
+      const lastIsEmpty = lines.length > 0 && lines[lines.length - 1] === ''
+      const meaningful = lastIsEmpty ? lines.slice(0, -1) : lines
+      const start = input.startLine ?? 0
+      const max = input.maxLines ?? 2000
+      const end = Math.min(meaningful.length, start + max)
+      const slice = meaningful.slice(start, end).join('\n')
+      return {
+        ok: true,
+        output: {
+          path: input.path,
+          content: wrapUntrusted(`file ${basename(input.path)}`, slice),
+          startLine: start,
+          endLine: end,
+          totalLines: meaningful.length,
+          truncated: end < meaningful.length
+        }
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        output: emptyOutput,
+        error:
+          error instanceof Error
+            ? error.message
+            : "I couldn't find that file — it may have been moved or renamed."
       }
     }
   }

@@ -414,7 +414,8 @@ def edit_document(path: str, edits: list[dict]) -> tuple[str, str, int]:
     """
     target = Path(path)
     if not target.is_file():
-        raise ExtractionError(f'No document at "{path}".', 404)
+        # Basename only — same absolute-path-leak doctrine as extract.py.
+        raise ExtractionError(f'No document at "{target.name}".', 404)
     try:
         if target.stat().st_size > MAX_SOURCE_BYTES:
             raise ExtractionError(
@@ -423,7 +424,7 @@ def edit_document(path: str, edits: list[dict]) -> tuple[str, str, int]:
                 413,
             )
     except OSError as error:
-        raise ExtractionError(f'No document at "{path}" — {error}.', 404) from error
+        raise ExtractionError(f'No document at "{target.name}" — {error}.', 404) from error
 
     suffix = target.suffix.lower()
     if suffix not in (".docx", ".pptx", ".xlsx"):

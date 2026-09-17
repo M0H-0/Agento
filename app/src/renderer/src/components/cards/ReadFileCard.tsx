@@ -24,7 +24,7 @@ export function ReadFileCard({
   const range = { a: startLine + 1, b: endLine, c: totalLines }
   const meta = t(truncated ? 'cards.linesOfTruncated' : 'cards.linesOf', range)
   return (
-    <BaseToolCard {...rest} meta={meta} defaultOpen>
+    <BaseToolCard {...rest} meta={meta}>
       <pre className="tool-card__pre">{content || t('cards.emptyFile')}</pre>
     </BaseToolCard>
   )

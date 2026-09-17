@@ -8,6 +8,18 @@ describe('parseCountFromText (M3.3 projection)', () => {
     expect(parseCountFromText('delete 3 items')).toBe(3)
   })
 
+  it.each([
+    ['انقل ملفات PDF (3) إلى PDFs', 3],
+    ['انقل المستندات (٣٥) إلى Documents', 35],
+    ['انقل ۱۲ ملفًا إلى Text', 12],
+    ['انقل ٤٢ ملفات إلى Archive', 42],
+    ['Move the 4 spreadsheets into Spreadsheets', 4],
+    ['Move the 2 presentations into Presentations', 2],
+    ['Move the 3 text files into Text', 3]
+  ])('parses saved-plan count in %s', (text, count) => {
+    expect(parseCountFromText(text as string)).toBe(count)
+  })
+
   it('parses number words', () => {
     expect(parseCountFromText('Move all six .txt files into Archive')).toBe(6)
     expect(parseCountFromText('organize the twelve notes')).toBe(12)
@@ -123,5 +135,27 @@ describe('approval coalescing stub (M3.3)', () => {
     })
     expect(await coalescer.request(req())).toBe('approve')
     expect(await coalescer.request(req())).toBe('approve')
+  })
+
+  it('post-decision arrivals never re-emit the dialog count', async () => {
+    const seen: number[] = []
+    const coalescer = createApprovalCoalescer(async (): Promise<'approve'> => 'approve', {
+      onBuffered: (_tool: string, displayCount: number | null): void =>
+        void seen.push(displayCount ?? 0)
+    })
+    const req = (): ApprovalRequest => ({
+      tool: 'delete_path',
+      title: 'Delete',
+      riskLevel: 3 as const,
+      reason: 'delete',
+      paths: ['C:/ws/a.txt']
+    })
+    // First call opens and resolves the group (no buffering, no re-emit).
+    expect(await coalescer.request(req())).toBe('approve')
+    expect(seen).toEqual([])
+    // A late duplicate (same run, next step) resolves silently — re-emitting
+    // here reopened an already-approved modal in the renderer.
+    expect(await coalescer.request(req())).toBe('approve')
+    expect(seen).toEqual([])
   })
 })

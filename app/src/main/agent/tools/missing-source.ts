@@ -15,23 +15,30 @@ import type { ToolExecutionContext } from '../types'
 // stands), never to a new failure.
 const MAX_LOOKUP_FILES = 2000
 
+// Same-name lookup shared by the hint and the move idempotency check —
+// absolute workspace paths, sorted. Empty when the name is unknown or the
+// walk fails (callers degrade to no hint, never to a new failure).
+export function findSameNameMatches(ctx: ToolExecutionContext, missingAbsPath: string): string[] {
+  const name = basename(missingAbsPath)
+  if (!name) return []
+  let candidates: string[]
+  try {
+    candidates = ctx.fs.walkFiles(ctx.workspaceRoot, MAX_LOOKUP_FILES)
+  } catch {
+    return []
+  }
+  const lowered = name.toLowerCase()
+  return candidates
+    .filter((candidate) => (candidate.split(/[\\/]/).pop() ?? '').toLowerCase() === lowered)
+    .sort()
+}
+
 export function currentLocationHint(
   ctx: ToolExecutionContext,
   missingAbsPath: string,
   verb: 'move' | 'copy'
 ): string | null {
-  const name = basename(missingAbsPath)
-  if (!name) return null
-  let candidates: string[]
-  try {
-    candidates = ctx.fs.walkFiles(ctx.workspaceRoot, MAX_LOOKUP_FILES)
-  } catch {
-    return null
-  }
-  const lowered = name.toLowerCase()
-  const matches = candidates
-    .filter((candidate) => (candidate.split(/[\\/]/).pop() ?? '').toLowerCase() === lowered)
-    .sort()
+  const matches = findSameNameMatches(ctx, missingAbsPath)
   if (matches.length === 0) return null
   const first = matches[0] as string
   // Forward slashes: the sandbox accepts both separators, and the hint reads

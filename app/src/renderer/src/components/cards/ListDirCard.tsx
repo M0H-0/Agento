@@ -17,7 +17,7 @@ export function ListDirCard({ entries, ...rest }: ListDirCardProps): React.JSX.E
     many: t('cards.entriesMany')
   })
   return (
-    <BaseToolCard {...rest} meta={meta} defaultOpen={entries.length <= 12}>
+    <BaseToolCard {...rest} meta={meta}>
       {entries.length === 0 ? (
         <div className="tool-card__empty">{t('cards.folderEmpty')}</div>
       ) : (

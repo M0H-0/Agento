@@ -90,6 +90,13 @@ export const planSteps = sqliteTable('plan_steps', {
     .references(() => sessions.id),
   planVersion: integer('plan_version').notNull().default(1),
   position: integer('position').notNull(),
+  // The model-supplied wire step id (migration 0008): step-status tracing
+  // (plan/step_updated) keys by it, so the Act go-ahead handoff must return
+  // the SAME ids the plan/created event carried — synthesized per-position
+  // ids broke the panel counter (live: "0 of 43 steps done" with 6 traced
+  // outcomes). NULL for rows written before the migration (read falls back
+  // to the positional synthesis).
+  wireId: text('wire_id'),
   description: text('description').notNull(),
   tool: text('tool'),
   riskLevel: integer('risk_level').default(0),

@@ -36,7 +36,19 @@ import type { PlanStep } from './tools/emit_plan'
 // panel reads.
 
 /** Default step guard carried over from chat.ts (docs/03 §2). */
-const MAX_STEPS = 25
+// Hard guard against a runaway tool loop (docs/03 §2).
+//
+// Was 25 — too low for the product's flagship task: an "organize my folder"
+// run issues roughly ONE tool call per provider round-trip, so a 42-file
+// folder needs ~6 creates + ~41 moves + discovery ≈ 46 calls. Live (demo
+// rehearsal 2026-09-17) the Act run stopped dead at exactly 25 calls with
+// files still unsorted and the plan's later steps never reached, while the
+// user got no explanation (the "say continue" note was posted after the
+// terminal part and dropped by the renderer transport — fixed in the same
+// change). 150 keeps the guard meaningful (a stuck loop is still bounded) and
+// covers a few hundred files; the now-visible continue note is the escape
+// hatch beyond it.
+const MAX_STEPS = 150
 
 // docs/04 §5 copy rules: provider failures never surface as raw codes or
 // stack traces. Google signals a rejected key as 400 INVALID_ARGUMENT
@@ -209,14 +221,20 @@ export function buildFallbackDocumentPlan(text: string): PlanStep[] | null {
   if (targets.length === 0) return null
   // Source is the plain-text format when requested, else the first target.
   const source: 'txt' | 'md' | 'docx' | 'pdf' = wantsTxt ? 'txt' : wantsMd ? 'md' : targets[0]
-  const topic = 'the requested content'
+  // 2026-09-17: Arabic requests get Arabic step descriptions.
+  const arabic = isArabicText(text)
+  const topic = arabic ? 'المحتوى المطلوب' : 'the requested content'
   const steps: PlanStep[] = [
     {
       id: '1',
       description:
         source === 'txt' || source === 'md'
-          ? `Write ${topic} to a .${source} file`
-          : `Create the .${source} file with ${topic}`,
+          ? arabic
+            ? `اكتب ${topic} في ملف .${source}`
+            : `Write ${topic} to a .${source} file`
+          : arabic
+            ? `أنشئ ملف .${source} بالمحتوى المطلوب`
+            : `Create the .${source} file with ${topic}`,
       tool: source === 'docx' ? 'create_document' : 'write_file',
       riskLevel: 1,
       requiresApproval: false
@@ -227,7 +245,7 @@ export function buildFallbackDocumentPlan(text: string): PlanStep[] | null {
     if (target === source) continue
     steps.push({
       id: String(id++),
-      description: `Convert it to .${target}`,
+      description: arabic ? `حوّله إلى .${target}` : `Convert it to .${target}`,
       tool: 'convert_document',
       riskLevel: 1,
       requiresApproval: false
@@ -322,6 +340,22 @@ function bucketLabel(folder: string, count: number): string {
   return count === 1 ? bucket.one : bucket.many
 }
 
+// Arabic bucket labels for the organize fallback (2026-09-17): folder NAMES
+// stay English (they are literal paths), but the description around them is
+// Arabic. Counts ride in parentheses — Arabic plural rules need none.
+const AR_BUCKET_LABELS: Record<string, string> = {
+  PDFs: 'ملفات PDF',
+  Documents: 'المستندات',
+  Spreadsheets: 'جداول البيانات',
+  Presentations: 'العروض التقديمية',
+  Images: 'الصور',
+  Videos: 'الفيديوهات',
+  Audio: 'الملفات الصوتية',
+  Text: 'الملفات النصية',
+  Archives: 'الأرشيفات',
+  Others: 'الملفات الأخرى'
+}
+
 // Deterministic organize fallback (2026-09-16): the mirror of
 // buildFallbackDocumentPlan for the other stereotyped failure — "organize my
 // files by type (+ summarize the pricing docs)" recurring as prose-without-a-
@@ -362,10 +396,15 @@ export function buildFallbackOrganizePlan(
     groups.set(folder, (groups.get(folder) ?? 0) + 1)
   }
   const folders = [...groups.keys()]
+  // 2026-09-17: Arabic requests get Arabic step descriptions (folder names
+  // stay literal English — they are paths, not prose).
+  const arabic = isArabicText(text)
   const steps: PlanStep[] = [
     {
       id: '1',
-      description: `Create a folder for each file type: ${folders.join(', ')}`,
+      description: arabic
+        ? `أنشئ مجلدًا لكل نوع ملف: ${folders.join('، ')}`
+        : `Create a folder for each file type: ${folders.join(', ')}`,
       tool: 'create_dir',
       riskLevel: 1,
       requiresApproval: false
@@ -375,7 +414,9 @@ export function buildFallbackOrganizePlan(
   for (const [folder, count] of groups) {
     steps.push({
       id: String(id++),
-      description: `Move the ${count} ${bucketLabel(folder, count)} into ${folder}`,
+      description: arabic
+        ? `انقل ${AR_BUCKET_LABELS[folder] ?? 'الملفات'} (${count}) إلى ${folder}`
+        : `Move the ${count} ${bucketLabel(folder, count)} into ${folder}`,
       tool: 'move_path',
       riskLevel: 2,
       requiresApproval: true
@@ -387,14 +428,16 @@ export function buildFallbackOrganizePlan(
   if (wantsSummary) {
     steps.push({
       id: String(id++),
-      description: 'Read the pricing documents',
+      description: arabic ? 'اقرأ مستندات التسعير' : 'Read the pricing documents',
       tool: 'read_file',
       riskLevel: 0,
       requiresApproval: false
     })
     steps.push({
       id: String(id++),
-      description: 'Write the short pricing summary to pricing_summary.txt',
+      description: arabic
+        ? 'اكتب ملخص التسعير المختصر في pricing_summary.txt'
+        : 'Write the short pricing summary to pricing_summary.txt',
       tool: 'write_file',
       riskLevel: 1,
       requiresApproval: false
@@ -514,8 +557,18 @@ export function canonicalizePlanTools(steps: PlanStep[]): PlanStep[] {
 // narration is dropped (it used to arrive as a wall of prose above the
 // plan), so the thread is always tool cards + this summary + Act handoff
 // (the same shape the document-fallback path already sends).
-function planSummaryChunks(steps: PlanStep[], textId: string): UIMessageChunk[] {
-  const summary = `Here's my plan:\n${steps.map((s, i) => `${i + 1}. ${s.description}`).join('\n')}\n\nReview it on the right — switch to Act and say "go ahead" to run it.`
+// 2026-09-17: the summary follows the request's language — an Arabic request
+// gets an Arabic summary with the Arabic handoff («تابع», matching the Arabic
+// read-only footer and isGoAheadMessage), never the English text.
+function planSummaryChunks(
+  steps: PlanStep[],
+  textId: string,
+  lang: 'ar' | 'en' = 'en'
+): UIMessageChunk[] {
+  const summary =
+    lang === 'ar'
+      ? `هذه خطتي:\n${steps.map((s, i) => `${i + 1}. ${s.description}`).join('\n')}\n\nراجعها على اليمين — بدّل إلى التنفيذ وقل «تابع» لتنفيذها.`
+      : `Here's my plan:\n${steps.map((s, i) => `${i + 1}. ${s.description}`).join('\n')}\n\nReview it on the right — switch to Act and say "go ahead" to run it.`
   return [
     { type: 'text-start', id: textId },
     { type: 'text-delta', id: textId, delta: summary },
@@ -612,11 +665,56 @@ export function friendlyProviderError(error: unknown, phase?: 'plan'): string {
 
 export type PlanRunMode = 'plan' | 'act'
 
+/** True when the text contains Arabic script — the request's language for
+ * user-facing syntheses (plan summaries, fallback closes). UI-chrome locale
+ * is separate; this follows what the user actually wrote. */
+export function isArabicText(text: string): boolean {
+  return /[\u0600-\u06FF]/.test(text)
+}
+
+const EN_GO_AHEAD_RE =
+  /^\s*(go ahead|go-ahead|yes[,\s]+go ahead|execute the plan|carry out the plan|do the plan|start)\s*[.!]*\s*$/i
+
+// Arabic go-ahead tokens (2026-09-17): the Arabic read-only footer tells the
+// user to say «تابع», so the Act trigger must accept it — plus the other
+// short affirmations users actually send (live: "انطلق، نفّذ الخطة" parked
+// the run because only English matched). Tashkeel/tatweel-stripped and
+// alef-normalized like the mutating-request heuristic above, so نفّذ matches
+// نفذ and ابدأ matches ابدا. At least one ACTION verb is required — a bare
+// "نعم"/"موافق" is ambiguous (mirrors English rejecting bare "yes"), and any
+// trailing words outside the affirmation + verbs + plan-object shape reject
+// (mirrors English rejecting "go ahead and also rewrite everything").
+const AR_GO_AFFIRM = new Set(['نعم', 'اجل', 'تمام', 'موافق', 'حاضر', 'طيب'])
+const AR_GO_VERBS = new Set(['انطلق', 'نفذ', 'تابع', 'ابدا', 'توكل', 'اكمل', 'استمر'])
+const AR_GO_OBJECTS = new Set(['الخطه', 'التنفيذ', 'تنفيذ', 'علي الله', 'علي بركه الله'])
+
+function isArabicGoAhead(text: string): boolean {
+  if (!isArabicText(text)) return false
+  const norm = text
+    .replace(/[\u064B-\u0653\u0670\u0640]/g, '')
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+  // Keep core Arabic letters only (U+0621–U+064A) — Arabic punctuation
+  // (، ؛ ؟) and Latin become separators, never token glue.
+  const tokens = norm
+    .replace(/[^\u0621-\u064A\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+  if (tokens.length === 0) return false
+  let i = 0
+  if (AR_GO_AFFIRM.has(tokens[0] as string)) i += 1
+  if (i >= tokens.length || !AR_GO_VERBS.has(tokens[i] as string)) return false
+  i += 1
+  // Doubled verbs ("انطلق نفذ الخطه").
+  if (i < tokens.length && AR_GO_VERBS.has(tokens[i] as string)) i += 1
+  const rest = tokens.slice(i).join(' ')
+  return rest === '' || AR_GO_OBJECTS.has(rest) || rest === 'تنفيذ الخطه'
+}
+
 /** Affirmative continuations that execute the session's saved plan in Act mode. */
 export function isGoAheadMessage(text: string): boolean {
-  return /^\s*(go ahead|go-ahead|yes[,\s]+go ahead|execute the plan|carry out the plan|do the plan|start)\s*[.!]*\s*$/i.test(
-    text
-  )
+  return EN_GO_AHEAD_RE.test(text) || isArabicGoAhead(text)
 }
 
 export interface PlanRunDeps {
@@ -681,6 +779,13 @@ export interface PlanRunOutcome {
 // input (Groq: "property 'reasoning_content' is unsupported") — reasoning
 // never persists either (the accumulator keeps text only). Strip it from
 // assistant messages before building model messages.
+function latestUserText(messages: UIMessage[]): string {
+  const latest = messages.filter((message) => message.role === 'user').at(-1)
+  return (latest?.parts ?? [])
+    .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+    .join(' ')
+}
+
 function replayable(messages: UIMessage[]): UIMessage[] {
   return messages.map((message) =>
     message.role === 'assistant'
@@ -1404,18 +1509,15 @@ export async function runPlanModeTurn(
       deps.sendPart(part)
     }
   }
+  const userTextForDiscovery = latestUserText(deps.messages)
+  // 2026-09-17: synthesized thread text follows the request's language.
+  const requestLang: 'ar' | 'en' = isArabicText(userTextForDiscovery) ? 'ar' : 'en'
   const commitPlanSummary = (steps: PlanStep[], textId: string): void => {
-    for (const part of planSummaryChunks(steps, textId)) {
+    for (const part of planSummaryChunks(steps, textId, requestLang)) {
       accumulator.addChunk(part)
       deps.sendPart(part)
     }
   }
-  const userTextForDiscovery = deps.messages
-    .filter((m) => m.role === 'user')
-    .flatMap((m) => m.parts)
-    .filter((p) => p.type === 'text')
-    .map((p) => (p as { text: string }).text)
-    .join(' ')
   const discoveryMutating = isLikelyMutatingRequest(userTextForDiscovery)
   // Directory listings seen during discovery (2026-09-16): the organize
   // fallback grounds its plan in these instead of inventing folders.
@@ -1435,7 +1537,7 @@ export async function runPlanModeTurn(
       try {
         const discoveryResult = streamText({
           model: deps.model,
-          system: `${deps.system}\nYou are in read-only planning mode. Inspect what you need with the available tools, then answer briefly in text (one short sentence): what you found and what you will put in the plan. Do not write file or story content — describe only. Do not claim to change anything.`,
+          system: `${deps.system}\nYou are in read-only planning mode. Inspect what you need with the available tools, then answer briefly in text (one short sentence) in the user's language (Arabic if they write in Arabic): what you found and what you will put in the plan. Do not write file or story content — describe only. Do not claim to change anything.`,
           messages: baseModelMessages,
           tools: deps.registry.toAiSdkTools(
             { ...deps.ctx },
@@ -1747,7 +1849,7 @@ export async function runPlanModeTurn(
         // The thread would otherwise stay empty (just the user bubble) —
         // the panel gets the structured plan, the thread gets one plain
         // summary line per step so the run visibly answered.
-        for (const part of planSummaryChunks(fallback, 'fallback-plan-summary')) {
+        for (const part of planSummaryChunks(fallback, 'fallback-plan-summary', requestLang)) {
           accumulator.addChunk(part)
           deps.sendPart(part)
         }
@@ -1778,7 +1880,7 @@ export async function runPlanModeTurn(
         ...historyListings(deps.messages)
       ])
       if (organize) {
-        for (const part of planSummaryChunks(organize, 'fallback-organize-summary')) {
+        for (const part of planSummaryChunks(organize, 'fallback-organize-summary', requestLang)) {
           accumulator.addChunk(part)
           deps.sendPart(part)
         }
@@ -1988,12 +2090,7 @@ export async function runActTurn(
   // go-ahead and a plain Act request (live: models sometimes narrate the
   // claim and never call anything). Function scope so the catch block can
   // reuse it for the forced-refusal mapping.
-  const actUserTexts = deps.messages
-    .filter((m) => m.role === 'user')
-    .flatMap((m) => m.parts)
-    .filter((p) => p.type === 'text')
-    .map((p) => (p as { text: string }).text)
-    .join(' ')
+  const actUserTexts = latestUserText(deps.messages)
   const expectsActions =
     (deps.planHandoff && deps.planHandoff.length > 0) || isLikelyMutatingRequest(actUserTexts)
   const ctxWithCancel: ToolExecutionContext = {
@@ -2035,9 +2132,14 @@ export async function runActTurn(
         continue
       }
       if (part.type === 'tool-output-available' && emitPlanCallIds.has(part.toolCallId)) continue
-      deps.sendPart(part)
+      if (part.type === 'error') {
+        if (!terminalSent) deps.sendPart(part)
+        terminalSent = true
+        continue
+      }
+      if (!terminalSent) deps.sendPart(part)
     }
-    flushThinkTailLive()
+    if (!terminalSent) flushThinkTailLive()
   }
 
   try {
@@ -2101,7 +2203,7 @@ export async function runActTurn(
     // wrapper still guards every call, so forcing *a* tool cannot force a
     // mutation. Covers both an explicit go-ahead and a plain Act request
     // (live: models sometimes narrate the claim and never call anything).
-    if (!aborted && !cancelled && callsMade === 0 && expectsActions) {
+    if (!terminalSent && !aborted && !cancelled && callsMade === 0 && expectsActions) {
       await runOnce({
         systemSuffix:
           deps.planHandoff && deps.planHandoff.length > 0
@@ -2110,7 +2212,7 @@ export async function runActTurn(
         toolChoice: 'required'
       })
     }
-    if (!aborted && !cancelled && callsMade === 0 && expectsActions) {
+    if (!terminalSent && !aborted && !cancelled && callsMade === 0 && expectsActions) {
       if (!terminalSent) {
         deps.sendPart({
           type: 'error',
@@ -2126,8 +2228,14 @@ export async function runActTurn(
     // part — error parts never persist) so the thread always ends with an
     // honest assistant sentence. Prefer the last tool failure's plain-language
     // message; otherwise state completion briefly.
-    if (!aborted && !cancelled && callsMade > 0 && !accumulator.hasText()) {
-      const fallback = lastFailureMessage ?? 'Done — the results are in the cards above.'
+    if (!terminalSent && !aborted && !cancelled && callsMade > 0 && !accumulator.hasText()) {
+      // 2026-09-17: the generic completion line follows the request's
+      // language; a specific tool-failure message keeps its own wording.
+      const fallback =
+        lastFailureMessage ??
+        (isArabicText(actUserTexts)
+          ? 'تم — النتائج في البطاقات أعلاه.'
+          : 'Done — the results are in the cards above.')
       const textId = 'act-fallback-close'
       const fallbackParts: UIMessageChunk[] = [
         { type: 'text-start', id: textId },
@@ -2139,8 +2247,8 @@ export async function runActTurn(
         deps.sendPart(part)
       }
     }
-    if (!aborted && stepsTaken >= maxSteps) stepLimitReached = true
-    if (deps.verify && !aborted) {
+    if (!terminalSent && !aborted && stepsTaken >= maxSteps) stepLimitReached = true
+    if (deps.verify && !terminalSent && !aborted && !cancelled) {
       try {
         const userMessages = deps.messages.filter((m) => m.role === 'user')
         const lastText = userMessages[userMessages.length - 1]

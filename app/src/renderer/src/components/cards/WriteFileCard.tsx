@@ -22,7 +22,7 @@ export function WriteFileCard({
   const { t } = useLocale()
   const meta = size >= 1024 ? `${Math.round(size / 102.4) / 10} KB` : `${size} B`
   return (
-    <BaseToolCard {...rest} meta={meta} defaultOpen>
+    <BaseToolCard {...rest} meta={meta}>
       <div className="tool-card__excerpt">
         <span className="tool-card__excerpt-label">
           {beforeExcerpt === null ? t('cards.newFile') : t('cards.replacedContent')}

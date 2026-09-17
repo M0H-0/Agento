@@ -23,7 +23,7 @@ export function EditDocumentCard({
   const { t } = useLocale()
   const meta = `${editsApplied} ${t('cards.editsApplied')}`
   return (
-    <BaseToolCard {...rest} meta={meta} defaultOpen>
+    <BaseToolCard {...rest} meta={meta}>
       <div className="tool-card__excerpt">
         <span className="tool-card__excerpt-label">{t('cards.before')}</span>
         <pre className="tool-card__pre">{beforeExcerpt}</pre>

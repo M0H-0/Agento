@@ -1,8 +1,26 @@
 import { basename } from 'node:path'
 import { z } from 'zod'
 import type { ToolDefinition } from '../types'
+import type { ToolExecutionContext } from '../types'
 import { WorkspaceFsRefusalError } from '../workspace-fs'
-import { currentLocationHint } from './missing-source'
+import { currentLocationHint, findSameNameMatches } from './missing-source'
+
+// Idempotent re-run (2026-09-17): an earlier step — or an earlier run —
+// already moved the file exactly where asked (live: re-running an organize
+// plan wore a red "couldn't find that file" card for an already-moved file).
+// When the source is gone but the destination holds a same-name file, the
+// end state already holds, so answer success instead of failing. Anything
+// else keeps the honest refusal + current-location hint.
+function alreadyAtDestination(ctx: ToolExecutionContext, fromAbs: string, toAbs: string): boolean {
+  if (!ctx.fs.existsSync(toAbs)) return false
+  const norm = (p: string): string => p.replace(/\\/g, '/').toLowerCase()
+  const wanted = norm(toAbs)
+  try {
+    return findSameNameMatches(ctx, fromAbs).some((m) => norm(m) === wanted)
+  } catch {
+    return false
+  }
+}
 
 // P0 mutating tool (M2.7, docs/03 §5 inventory): move/rename a file or folder.
 // Always risk 2 — the source location disappears, so the run blocks on the
@@ -36,6 +54,9 @@ export const movePathTool: ToolDefinition<
       return { ok: true, output: { from: input.from, to: input.to, overwritten: false } }
     }
     if (!ctx.fs.existsSync(input.from)) {
+      if (alreadyAtDestination(ctx, input.from, input.to)) {
+        return { ok: true, output: { from: input.from, to: input.to, overwritten: false } }
+      }
       // Stale plan state (an earlier step already moved/renamed it): name the
       // file's current location when a same-name file still exists, so the
       // model can self-correct next step. Lookup only, never auto-executed.
@@ -53,13 +74,21 @@ export const movePathTool: ToolDefinition<
       if (error instanceof WorkspaceFsRefusalError) {
         // Race backstop: the source vanished between the probe above and the
         // facade call — same hint applies when it reads as a missing source.
-        const hint = /couldn't find/i.test(error.message)
-          ? currentLocationHint(ctx, input.from, 'move')
-          : null
+        if (/couldn't find/i.test(error.message)) {
+          if (alreadyAtDestination(ctx, input.from, input.to)) {
+            return { ok: true, output: { from: input.from, to: input.to, overwritten: false } }
+          }
+          const hint = currentLocationHint(ctx, input.from, 'move')
+          return {
+            ok: false,
+            output: { from: input.from, to: input.to, overwritten: false },
+            error: hint ? `${error.message} ${hint}` : error.message
+          }
+        }
         return {
           ok: false,
           output: { from: input.from, to: input.to, overwritten: false },
-          error: hint ? `${error.message} ${hint}` : error.message
+          error: error.message
         }
       }
       throw error

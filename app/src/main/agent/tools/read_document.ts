@@ -2,7 +2,7 @@ import { basename } from 'node:path'
 import { z } from 'zod'
 import type { ToolDefinition } from '../types'
 import { wrapUntrusted } from '../untrusted'
-import { readDocumentText } from '../document-text'
+import { readDocumentText, relativeDocError } from '../document-text'
 
 // MVP tool (MVP_PLAN.md): read a document as plain text. Binary formats
 // (.pdf/.docx/.pptx/.xlsx) ride the intelligence sidecar; text files
@@ -42,10 +42,11 @@ export const readDocumentTool: ToolDefinition<
         }
       }
     } catch (error) {
+      const raw = error instanceof Error ? error.message : 'That document could not be read.'
       return {
         ok: false,
         output: { path: input.path, text: '', truncated: false },
-        error: error instanceof Error ? error.message : 'That document could not be read.'
+        error: relativeDocError(ctx, input.path, raw)
       }
     }
   }

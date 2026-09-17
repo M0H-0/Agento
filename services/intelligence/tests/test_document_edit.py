@@ -136,11 +136,14 @@ def test_edit_multi_match_is_422(server, tmp_path):
 
 
 def test_edit_missing_file_is_404(server, tmp_path):
-    status, _body = _post(
+    status, body = _post(
         "/document/edit",
         {"path": str(tmp_path / "nope.docx"), "edits": [{"anchor": "a", "replacement": "b"}]},
     )
     assert status == 404
+    # 2026-09-17: basename only — the absolute path must never ride the detail.
+    assert str(tmp_path) not in body["detail"]
+    assert "nope.docx" in body["detail"]
 
 
 def test_edit_non_docx_is_422(server, tmp_path):

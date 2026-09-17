@@ -68,6 +68,10 @@ interface PlanPanelState {
   runId: string
   steps: PlanStep[]
   updated: boolean
+  // True once an Act run starts tracing against this plan (step/verify/
+  // approval events) — the footer flips from the read-only handoff to the
+  // N-of-M progress line. A fresh plan/created is never executing.
+  executing: boolean
   statuses: Record<string, string>
   verification: Record<string, { score: number | null; verified: boolean }>
   errors: Record<string, string>
@@ -879,6 +883,7 @@ function App(): React.JSX.Element {
                 runId: event.runId,
                 steps: event.steps,
                 updated: true,
+                executing: false,
                 statuses: {},
                 verification: {},
                 errors: {}
@@ -887,6 +892,7 @@ function App(): React.JSX.Element {
                 runId: event.runId,
                 steps: event.steps,
                 updated: false,
+                executing: false,
                 statuses: {},
                 verification: {},
                 errors: {}
@@ -904,9 +910,15 @@ function App(): React.JSX.Element {
                 : translate(L, 'app.workingPlan')
         )
         setPlan((prev) => {
-          if (!prev || prev.runId !== event.runId) return prev
+          if (!prev) return prev
+          // An Act "go ahead" runs under a NEW runId against the SAVED plan:
+          // adopt it (stale runs are already dropped by the seq guard above)
+          // so the checklist actually traces execution instead of parking on
+          // pending forever.
           return {
             ...prev,
+            runId: event.runId,
+            executing: true,
             statuses: { ...prev.statuses, [event.stepId]: event.status },
             verification:
               event.verification !== undefined
@@ -926,10 +938,12 @@ function App(): React.JSX.Element {
         // per-step `not verified` badge in PlanPanel is untouched.
         setRunStatus(event.isComplete ? translate(L, 'app.verifiedDone') : '')
         setPlan((prev) => {
-          if (!prev || prev.runId !== event.runId) return prev
+          if (!prev) return prev
           const key = event.stepId === 'run' ? (prev.steps[0]?.id ?? 'run') : event.stepId
           return {
             ...prev,
+            runId: event.runId,
+            executing: true,
             verification: {
               ...prev.verification,
               [key]: { score: event.score, verified: event.isComplete }
@@ -946,7 +960,13 @@ function App(): React.JSX.Element {
         setApprovalError(null)
         // No false owning-step glyph: the approval request carries no
         // authoritative stepId yet, so the panel must not mark step 0 as
-        // awaiting. The dialog itself is the approval surface.
+        // awaiting. The dialog itself is the approval surface. Still rebind
+        // to the executing run so the following step updates trace.
+        setPlan((prev) =>
+          prev && prev.runId !== event.runId
+            ? { ...prev, runId: event.runId, executing: true }
+            : prev
+        )
       } else if (event.type === 'approval/resolved') {
         const L = localeRef.current
         setRunStatus(
@@ -1034,6 +1054,7 @@ function App(): React.JSX.Element {
             runId: `restored-${session.id}`,
             steps: savedPlan,
             updated: false,
+            executing: false,
             statuses: {},
             verification: {},
             errors: {}
@@ -1256,7 +1277,7 @@ function App(): React.JSX.Element {
             <PlanPanel
               steps={plan.steps}
               updated={plan.updated}
-              readOnly
+              readOnly={!plan.executing}
               statuses={plan.statuses}
               verification={plan.verification}
               errors={plan.errors}

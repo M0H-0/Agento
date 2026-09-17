@@ -1,4 +1,4 @@
-import { extname } from 'node:path'
+import { extname, relative } from 'node:path'
 import type { ToolExecutionContext } from './types'
 
 // Shared extraction ladder for the MVP document tools (MVP_PLAN.md steps 2–3).
@@ -30,6 +30,23 @@ const MAX_IMAGE_BYTES = 10_000_000
 
 export function needsSidecarExtraction(path: string): boolean {
   return SIDECAR_SUFFIXES.has(extname(path).toLowerCase())
+}
+
+// Relative-path redress (2026-09-17, AGENTS.md rule 6): tool inputs arrive
+// sandbox-resolved (absolute), and the sidecar echoes that absolute path in
+// its 404 detail — which used to ride the card sentence verbatim into the
+// thread (live: `No document at "D:\Project\...Documents\Q4-....docx"`).
+// Rewrite the absolute input — and any other rooted occurrence of the
+// workspace — to the workspace-relative form before answering.
+export function relativeDocError(ctx: ToolExecutionContext, absPath: string, raw: string): string {
+  try {
+    const rel = (relative(ctx.workspaceRoot, absPath) || absPath).replace(/\\/g, '/')
+    let out = raw.split(absPath).join(rel)
+    if (ctx.workspaceRoot) out = out.split(ctx.workspaceRoot).join('.')
+    return out
+  } catch {
+    return raw
+  }
 }
 
 /** MIME type when the path is a readable image, undefined otherwise. */

@@ -5,6 +5,7 @@ import type { LanguageModel, UIMessage, UIMessageChunk } from 'ai'
 import { generateText } from 'ai'
 import { assertPublicHttpUrl } from '../agent/web-fetch-guard'
 import { generateSessionTitle } from '../agent/title'
+import { selectStep } from '../agent/step-binding'
 import { buildLanguageModel, providerRequiresKey } from '../providers'
 import {
   getPermissionDefaults,
@@ -23,6 +24,7 @@ import {
 import { insertUsage } from '../storage/usage'
 import { getLatestPlan, nextPlanVersion, recordPlanSteps } from '../storage/plan-steps'
 import {
+  deleteCheckpointsByToolCall,
   recordCheckpoint,
   recordToolCall,
   setCheckpointAfterExcerpts
@@ -155,9 +157,24 @@ function createToolCallAuditSink(
     toolCallId: string | null
     status: 'in_progress' | 'done' | 'failed' | 'skipped'
     message?: string
+    /** The call's arguments — the step binder matches the call's target. */
+    callInput?: unknown
   }) => void
 ): ToolOutcomeEntry {
   return (entry) => {
+    // Failed executions snapshot first and refuse after: without cleanup the
+    // pre-execution row survives as a phantom Changes entry (an undo link to
+    // a change that never happened). ok:false means disk is untouched, so
+    // drop exactly this call's rows. Success paths below are unaffected.
+    if (!entry.ok && entry.toolCallId) {
+      try {
+        deleteCheckpointsByToolCall(sessionId, entry.toolCallId)
+      } catch (error) {
+        console.error('[checkpoints] dropping failed-call snapshot failed:', error)
+      }
+      checkpointIdsByToolCall.delete(entry.toolCallId)
+      checkpointContentByToolCall.delete(entry.toolCallId)
+    }
     onStepUpdate?.({
       tool: entry.tool,
       toolCallId: entry.toolCallId,
@@ -167,7 +184,8 @@ function createToolCallAuditSink(
           : entry.status === 'skipped' || entry.status === 'cancelled'
             ? 'skipped'
             : 'failed',
-      message: entry.ok ? undefined : entry.message
+      message: entry.ok ? undefined : entry.message,
+      callInput: entry.input
     })
     try {
       recordToolCall({
@@ -914,25 +932,18 @@ export function registerChatIpc(): void {
       checkpointIdsByToolCall,
       checkpointContentByToolCall,
       verifyActions,
-      ({ tool, toolCallId, status, message }) => {
-        // Step binding: prefer an explicit toolCallId mapping, else the
-        // first *pending* fuzzy match. Never fall back to step 0 for an
-        // unmatched tool — a false badge is worse than no badge.
-        const normalize = (value: string): string => value.toLowerCase().replace(/[^a-z]/g, '')
-        const matches = (candidateTool: string): boolean => {
-          const a = normalize(candidateTool)
-          const b = normalize(tool)
-          return a === b || a.startsWith(b) || b.startsWith(a)
-        }
-        let step: PlanStep | undefined
-        if (toolCallId) {
-          const mappedId = toolCallToStepId.get(toolCallId)
-          if (mappedId) step = currentPlanSteps.find((s) => s.id === mappedId)
-        }
-        if (!step) {
-          const pending = currentPlanSteps.filter((s) => !doneStepIds.has(s.id) && matches(s.tool))
-          step = pending[0] ?? currentPlanSteps.find((s) => matches(s.tool))
-        }
+      ({ tool, toolCallId, status, message, callInput }) => {
+        // Step binding (agent/step-binding.ts): tool name + the call's own
+        // target. Name-only matching ticked unrelated same-tool steps in an
+        // organize plan (live: Documents/Images ✓ with zero files moved), and
+        // a missing badge is honest where a wrong one is not.
+        const step = selectStep({
+          steps: currentPlanSteps,
+          outcome: { tool, input: callInput },
+          doneIds: doneStepIds,
+          boundStepId: toolCallId ? (toolCallToStepId.get(toolCallId) ?? null) : null
+        })
+        // Never fall back to step 0 for an unmatched tool.
         if (!step) return
         if (toolCallId && !toolCallToStepId.has(toolCallId)) {
           toolCallToStepId.set(toolCallId, step.id)
@@ -1132,6 +1143,19 @@ export function registerChatIpc(): void {
         } catch {
           sendPart(event.sender, sessionId, { type: 'error', errorText: PERSIST_FAILED_COPY })
         }
+      } else if (outcome.stepLimitReached) {
+        // The step-limit note IS this run's terminal. It used to be posted
+        // AFTER the finish, but the renderer transport closes the stream on
+        // the first terminal part (finish/error/abort) and drops whatever
+        // follows — so a truncated run ended silently (live 2026-09-17: a
+        // 42-file organize cut at 25 actions with no explanation on screen).
+        // An error part is terminal, so the copy is guaranteed to land.
+        try {
+          if (outcome.assistantMessage) appendMessage(sessionId, outcome.assistantMessage)
+          sendPart(event.sender, sessionId, { type: 'error', errorText: STEP_LIMIT_COPY })
+        } catch {
+          sendPart(event.sender, sessionId, { type: 'error', errorText: PERSIST_FAILED_COPY })
+        }
       } else {
         try {
           if (outcome.assistantMessage) appendMessage(sessionId, outcome.assistantMessage)
@@ -1140,14 +1164,6 @@ export function registerChatIpc(): void {
           sendPart(event.sender, sessionId, { type: 'error', errorText: PERSIST_FAILED_COPY })
         }
       }
-    }
-
-    // The step-limit note is sent as an additional error part AFTER the
-    // terminal so the user can read it without the natural finish claiming
-    // success. We treat it as informational — not a terminal — so the loop
-    // status is consistent with a normal reply.
-    if (outcome.stepLimitReached) {
-      sendPart(event.sender, sessionId, { type: 'error', errorText: STEP_LIMIT_COPY })
     }
   })
 }
